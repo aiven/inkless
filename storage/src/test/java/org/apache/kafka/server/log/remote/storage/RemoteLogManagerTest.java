@@ -3416,6 +3416,76 @@ public class RemoteLogManagerTest {
     }
 
     @Test
+    public void testConsolidatingTimeRetentionWaitsForCrossTierStart()
+            throws RemoteStorageException, ExecutionException, InterruptedException, IOException {
+        // Inkless: a switched partition has no cross-tier start until its first diskless prune. Until then
+        // a retention.ms breach on the classic prefix must not delete anything or report a log start. Once
+        // the start exists, the same breach deletes the expired segment and reports the new start.
+        Map<String, Long> logProps = new HashMap<>();
+        logProps.put("retention.bytes", -1L);
+        logProps.put("retention.ms", 1L);
+        LogConfig mockLogConfig = new LogConfig(logProps);
+        when(mockLog.config()).thenReturn(mockLogConfig);
+
+        List<EpochEntry> epochEntries = List.of(epochEntry0);
+        checkpoint.write(epochEntries);
+        LeaderEpochFileCache cache = new LeaderEpochFileCache(tp, checkpoint, scheduler);
+        when(mockLog.leaderEpochCache()).thenReturn(cache);
+        when(mockLog.topicPartition()).thenReturn(leaderTopicIdPartition.topicPartition());
+        when(mockLog.logEndOffset()).thenReturn(200L);
+        when(mockLog.logStartOffset()).thenReturn(200L);        // seal trap
+        when(mockLog.onlyLocalLogSegmentsSize()).thenReturn(512L);
+
+        List<RemoteLogSegmentMetadata> metadataList = listRemoteLogSegmentMetadataByTime(
+                leaderTopicIdPartition, 2, 1, 100, 1024, epochEntries, RemoteLogSegmentState.COPY_SEGMENT_FINISHED);
+        when(remoteLogMetadataManager.listRemoteLogSegments(leaderTopicIdPartition))
+                .thenAnswer(ans -> metadataList.iterator());
+        when(remoteLogMetadataManager.listRemoteLogSegments(leaderTopicIdPartition, 0))
+                .thenAnswer(ans -> metadataList.iterator());
+        when(remoteLogMetadataManager.updateRemoteLogSegmentMetadata(any(RemoteLogSegmentMetadataUpdate.class)))
+                .thenReturn(CompletableFuture.runAsync(() -> { }));
+        doNothing().when(remoteStorageManager).deleteLogSegmentData(any(RemoteLogSegmentMetadata.class));
+
+        AtomicLong reported = new AtomicLong(-1L);
+        AtomicLong storedStart = new AtomicLong(-1L);
+        try (RemoteLogManager rlm = new RemoteLogManager(config, brokerId, logDir, clusterId, time,
+                tp -> Optional.of(mockLog),
+                (topicPartition, offset) -> reported.set(offset),
+                brokerTopicStats, metrics, endPoint,
+                topicPartition -> storedStart.get() < 0
+                        ? OptionalLong.empty()
+                        : OptionalLong.of(storedStart.get()),
+                topicPartition -> true) {
+            @Override
+            public RemoteStorageManager createRemoteStorageManager() {
+                return remoteStorageManager;
+            }
+            @Override
+            public RemoteLogMetadataManager createRemoteLogMetadataManager() {
+                return remoteLogMetadataManager;
+            }
+            @Override
+            long findLogStartOffset(TopicIdPartition topicIdPartition, UnifiedLog log) {
+                throw new AssertionError("The reclaim floor must not be inferred from RLMM metadata");
+            }
+        }) {
+            doReturn(true).when(remoteLogMetadataManager).isReady(any(TopicIdPartition.class));
+            RemoteLogManager.RLMExpirationTask task = rlm.new RLMExpirationTask(leaderTopicIdPartition);
+
+            assertThrows(RetriableRemoteStorageException.class, task::cleanupExpiredRemoteLogSegments);
+            verify(remoteStorageManager, never()).deleteLogSegmentData(any(RemoteLogSegmentMetadata.class));
+            assertEquals(-1L, reported.get());
+
+            storedStart.set(0L);
+            task.cleanupExpiredRemoteLogSegments();
+        }
+
+        verify(remoteStorageManager).deleteLogSegmentData(metadataList.get(0));
+        verify(remoteStorageManager, never()).deleteLogSegmentData(metadataList.get(1));
+        assertEquals(100L, reported.get());
+    }
+
+    @Test
     public void testConsolidatingMidSegmentOverrideKeepsStraddlingSegment()
             throws RemoteStorageException, ExecutionException, InterruptedException, IOException {
         // Inkless (mid-segment delete_before): when the cross-tier earliest X lands INSIDE a segment, only

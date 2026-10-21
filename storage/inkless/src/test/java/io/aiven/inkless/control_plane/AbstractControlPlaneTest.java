@@ -1984,15 +1984,108 @@ public abstract class AbstractControlPlaneTest {
             verifyHandoff(false);
         }
 
-        private void verifyHandoff(final boolean commitBatchAtSeal) {
+        @Test
+        void earliestIsClassicStartBeforeFirstPrune() {
+            initSwitchedLog();
+            commitDisklessBatchAtSeal();
+
+            // The remote log manager defers expiration while this read is empty.
+            assertThat(controlPlane.getCrossTierLogStart(tidp)).isEmpty();
+            assertThat(controlPlane.listOffsets(List.of(
+                new ListOffsetsRequest(tidp, EARLIEST_TIMESTAMP)
+            ))).containsExactly(ListOffsetsResponse.success(tidp, NO_TIMESTAMP, classicLogStart));
+        }
+
+        @Test
+        void laterPruneKeepsClassicStart() {
+            initSwitchedLog();
+            commitDisklessBatchAtSeal();
+            controlPlane.pruneDisklessLogs(List.of(new PruneDisklessLogsRequest(tidp, seal - 1)));
+
+            assertThat(controlPlane.pruneDisklessLogs(List.of(
+                new PruneDisklessLogsRequest(tidp, seal + 9)
+            ))).containsExactly(new PruneDisklessLogsResponse(tidp, seal + 10, PruneDisklessLogsError.NONE));
+
+            assertThat(controlPlane.getCrossTierLogStart(tidp)).hasValue(classicLogStart);
+            assertThat(controlPlane.listOffsets(List.of(
+                new ListOffsetsRequest(tidp, EARLIEST_TIMESTAMP),
+                new ListOffsetsRequest(tidp, EARLIEST_LOCAL_TIMESTAMP)
+            ))).containsExactly(
+                ListOffsetsResponse.success(tidp, NO_TIMESTAMP, classicLogStart),
+                ListOffsetsResponse.success(tidp, NO_TIMESTAMP, seal + 10)
+            );
+        }
+
+        @Test
+        void remoteRetentionAdvancesEarliestAfterFirstPrune() {
+            initSwitchedLog();
+            controlPlane.pruneDisklessLogs(List.of(new PruneDisklessLogsRequest(tidp, seal - 1)));
+
+            final long expiredUpTo = 50;
+            assertThat(controlPlane.advanceCrossTierLogStartOffset(List.of(
+                new AdvanceCrossTierLogStartOffsetRequest(topicId, 0, expiredUpTo)
+            ))).containsExactly(AdvanceCrossTierLogStartOffsetResponse.success(expiredUpTo));
+
+            assertThat(controlPlane.getCrossTierLogStart(tidp)).hasValue(expiredUpTo);
+            assertThat(controlPlane.listOffsets(List.of(
+                new ListOffsetsRequest(tidp, EARLIEST_TIMESTAMP)
+            ))).containsExactly(ListOffsetsResponse.success(tidp, NO_TIMESTAMP, expiredUpTo));
+        }
+
+        @Test
+        void deleteRecordsBeforeFirstPruneSurvivesThePrune() {
+            initSwitchedLog();
+            commitDisklessBatchAtSeal();
+
+            final long deletedUpTo = 50;
+            assertThat(controlPlane.deleteRecords(List.of(
+                new DeleteRecordsRequest(tidp, deletedUpTo)
+            ))).containsExactly(DeleteRecordsResponse.success(deletedUpTo));
+            // The broker advances the cross-tier start after a successful DeleteRecords on a consolidating partition.
+            assertThat(controlPlane.advanceCrossTierLogStartOffset(List.of(
+                new AdvanceCrossTierLogStartOffsetRequest(topicId, 0, deletedUpTo)
+            ))).containsExactly(AdvanceCrossTierLogStartOffsetResponse.success(deletedUpTo));
+
+            controlPlane.pruneDisklessLogs(List.of(new PruneDisklessLogsRequest(tidp, seal - 1)));
+
+            assertThat(controlPlane.getCrossTierLogStart(tidp)).hasValue(deletedUpTo);
+            assertThat(controlPlane.listOffsets(List.of(
+                new ListOffsetsRequest(tidp, EARLIEST_TIMESTAMP)
+            ))).containsExactly(ListOffsetsResponse.success(tidp, NO_TIMESTAMP, deletedUpTo));
+        }
+
+        @Test
+        void deleteRecordsWithoutCrossTierAdvanceBeforeFirstPrune() {
+            initSwitchedLog();
+            commitDisklessBatchAtSeal();
+
+            final long deletedUpTo = 50;
+            controlPlane.deleteRecords(List.of(new DeleteRecordsRequest(tidp, deletedUpTo)));
+            controlPlane.pruneDisklessLogs(List.of(new PruneDisklessLogsRequest(tidp, seal - 1)));
+
+            assertThat(controlPlane.getCrossTierLogStart(tidp)).hasValue(deletedUpTo);
+            assertThat(controlPlane.listOffsets(List.of(
+                new ListOffsetsRequest(tidp, EARLIEST_TIMESTAMP)
+            ))).containsExactly(ListOffsetsResponse.success(tidp, NO_TIMESTAMP, deletedUpTo));
+        }
+
+        private void initSwitchedLog() {
             assertThat(controlPlane.initDisklessLog(List.of(
                 new InitDisklessLogRequest(topicId, topicName, 0, classicLogStart, seal, List.of())
             ))).containsExactly(InitDisklessLogResponse.success());
+        }
+
+        private void commitDisklessBatchAtSeal() {
+            controlPlane.commitFile("switched-prune-cross-tier", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT,
+                BROKER_ID, FILE_SIZE, List.of(
+                    CommitBatchRequest.of(0, tidp, 0, 10, seal, seal + 9, 1000, TimestampType.CREATE_TIME)));
+        }
+
+        private void verifyHandoff(final boolean commitBatchAtSeal) {
+            initSwitchedLog();
 
             if (commitBatchAtSeal) {
-                controlPlane.commitFile("switched-prune-cross-tier", ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT,
-                    BROKER_ID, FILE_SIZE, List.of(
-                        CommitBatchRequest.of(0, tidp, 0, 10, seal, seal + 9, 1000, TimestampType.CREATE_TIME)));
+                commitDisklessBatchAtSeal();
             }
 
             assertThat(controlPlane.pruneDisklessLogs(List.of(
