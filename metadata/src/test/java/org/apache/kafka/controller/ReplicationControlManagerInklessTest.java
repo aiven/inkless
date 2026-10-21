@@ -35,6 +35,7 @@ import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestData.Re
 import org.apache.kafka.common.message.AlterPartitionReassignmentsResponseData;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsResponseData.ReassignablePartitionResponse;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsResponseData.ReassignableTopicResponse;
+import org.apache.kafka.common.message.AlterPartitionRequestData.BrokerState;
 import org.apache.kafka.common.message.CreatePartitionsRequestData.CreatePartitionsAssignment;
 import org.apache.kafka.common.message.CreatePartitionsRequestData.CreatePartitionsTopic;
 import org.apache.kafka.common.message.CreatePartitionsResponseData.CreatePartitionsTopicResult;
@@ -65,6 +66,7 @@ import org.apache.kafka.metadata.PartitionRegistration;
 import org.apache.kafka.metadata.Replicas;
 import org.apache.kafka.server.common.ApiMessageAndVersion;
 import org.apache.kafka.server.common.MetadataVersion;
+import org.apache.kafka.server.common.TopicIdPartition;
 import org.apache.kafka.server.config.ServerConfigs;
 
 import org.junit.jupiter.api.Nested;
@@ -1799,6 +1801,379 @@ public class ReplicationControlManagerInklessTest {
             PartitionRegistration partition = replication.getPartition(createResult.topicId(), 0);
             assertEquals(List.of(0), Replicas.toList(partition.replicas));
             assertEquals(List.of(0), Replicas.toList(partition.isr));
+        }
+
+        @Test
+        public void testReassignSwitchedPartitionStagesTargetInsteadOfGrantingIsr() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setMetadataVersion(MetadataVersion.latestTesting())
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .build();
+
+            ReplicationControlManager replication = ctx.replicationControl;
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+
+            // Classic topic switched to diskless with a committed seal, so records below offset 100
+            // exist only in the local logs of brokers 0 and 1.
+            String topic = "switched";
+            Uuid topicId = ctx.createTestTopic(topic, new int[][] {new int[] {0, 1}}, Map.of(), (short) 0)
+                .topicId();
+            ctx.alterTopicConfig(topic, DISKLESS_ENABLE_CONFIG, "true");
+            setClassicToDisklessStartOffset(ctx, topicId, 100L);
+
+            // Swap broker 1 for broker 2. Broker 2 holds none of the classic prefix.
+            ControllerResult<AlterPartitionReassignmentsResponseData> alterResult =
+                replication.alterPartitionReassignments(
+                    new AlterPartitionReassignmentsRequestData().setTopics(List.of(
+                        new ReassignableTopic().setName(topic).setPartitions(List.of(
+                            new ReassignablePartition().setPartitionIndex(0)
+                                .setReplicas(List.of(0, 2)))))));
+            ctx.replay(alterResult.records());
+
+            PartitionRegistration partition = replication.getPartition(topicId, 0);
+            assertFalse(Replicas.contains(partition.isr, 2),
+                "Broker 2 must not be granted ISR by the reassignment: it holds none of the classic "
+                    + "prefix below the seal and has to earn ISR through AlterPartition");
+            assertTrue(Replicas.contains(partition.addingReplicas, 2),
+                "Broker 2 should be staged as an adding replica");
+            assertTrue(Replicas.contains(partition.removingReplicas, 1),
+                "Broker 1 should be staged as a removing replica, not dropped immediately");
+            assertNotEquals(NONE_REASSIGNING, replication.listPartitionReassignments(List.of(
+                new ListPartitionReassignmentsTopics().setName(topic)
+                    .setPartitionIndexes(List.of(0))), Long.MAX_VALUE),
+                "The reassignment stays in progress until the new replica catches up");
+            assertEquals(100L, partition.classicToDisklessStartOffset,
+                "The seal should be untouched by the reassignment");
+
+            // Once broker 2 has caught up and the leader reports it in sync, the reassignment must
+            // complete -- otherwise routing switched partitions through the staged path would leave
+            // them reassigning forever.
+            ctx.alterPartition(new TopicIdPartition(topicId, 0), 0,
+                List.of(
+                    new BrokerState().setBrokerId(0).setBrokerEpoch(defaultBrokerEpoch(0)),
+                    new BrokerState().setBrokerId(1).setBrokerEpoch(defaultBrokerEpoch(1)),
+                    new BrokerState().setBrokerId(2).setBrokerEpoch(defaultBrokerEpoch(2))),
+                LeaderRecoveryState.RECOVERED);
+
+            PartitionRegistration completed = replication.getPartition(topicId, 0);
+            assertEquals(List.of(0, 2), Replicas.toList(completed.replicas),
+                "Reassignment should have completed to the target replica set");
+            assertEquals(List.of(), Replicas.toList(completed.addingReplicas));
+            assertEquals(List.of(), Replicas.toList(completed.removingReplicas));
+            assertEquals(NONE_REASSIGNING, replication.listPartitionReassignments(List.of(
+                new ListPartitionReassignmentsTopics().setName(topic)
+                    .setPartitionIndexes(List.of(0))), Long.MAX_VALUE));
+        }
+
+        @Test
+        public void testCancelReassignmentOfSwitchedPartitionRevertsStagedState() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setMetadataVersion(MetadataVersion.latestTesting())
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .build();
+
+            ReplicationControlManager replication = ctx.replicationControl;
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+
+            String topic = "switched";
+            Uuid topicId = ctx.createTestTopic(topic, new int[][] {new int[] {0, 1}}, Map.of(), (short) 0)
+                .topicId();
+            ctx.alterTopicConfig(topic, DISKLESS_ENABLE_CONFIG, "true");
+            setClassicToDisklessStartOffset(ctx, topicId, 100L);
+
+            ControllerResult<AlterPartitionReassignmentsResponseData> alterResult =
+                replication.alterPartitionReassignments(
+                    new AlterPartitionReassignmentsRequestData().setTopics(List.of(
+                        new ReassignableTopic().setName(topic).setPartitions(List.of(
+                            new ReassignablePartition().setPartitionIndex(0)
+                                .setReplicas(List.of(0, 2)))))));
+            ctx.replay(alterResult.records());
+            assertTrue(Replicas.contains(replication.getPartition(topicId, 0).addingReplicas, 2),
+                "precondition: the reassignment must be staged, not applied in one step");
+
+            // Switched partitions are the first diskless partitions to carry real adding/removing
+            // state, so cancellation has to unwind it through the standard revert path.
+            ControllerResult<AlterPartitionReassignmentsResponseData> cancelResult =
+                replication.alterPartitionReassignments(
+                    new AlterPartitionReassignmentsRequestData().setTopics(List.of(
+                        new ReassignableTopic().setName(topic).setPartitions(List.of(
+                            new ReassignablePartition().setPartitionIndex(0)
+                                .setReplicas(null))))));
+            ctx.replay(cancelResult.records());
+
+            PartitionRegistration reverted = replication.getPartition(topicId, 0);
+            assertEquals(List.of(0, 1), Replicas.toList(reverted.replicas),
+                "Cancelling should revert to the original replica set");
+            assertEquals(List.of(), Replicas.toList(reverted.addingReplicas));
+            assertEquals(List.of(), Replicas.toList(reverted.removingReplicas));
+            assertFalse(Replicas.contains(reverted.isr, 2),
+                "Broker 2 must not be left in ISR after cancellation");
+            assertEquals(NONE_REASSIGNING, replication.listPartitionReassignments(List.of(
+                new ListPartitionReassignmentsTopics().setName(topic)
+                    .setPartitionIndexes(List.of(0))), Long.MAX_VALUE));
+            assertEquals(100L, reverted.classicToDisklessStartOffset,
+                "The seal should be untouched by cancellation");
+        }
+
+        @Test
+        public void testReassignConsolidatingSwitchedPartitionAlsoStages() {
+            // Controller side only: a consolidating switched partition in phase 1 (flag unset) stages
+            // like any other phase-1 partition, and finishes once the leader reports the new replica
+            // in sync. The alterPartition call below stands in for that report. Until a follow-up
+            // change stops consolidation in phase 1, a real follower can leave the classic fetcher
+            // at the seal without reporting it, so the move can wait until the flag commit finishes it.
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setMetadataVersion(MetadataVersion.latestTesting())
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .setDisklessRemoteStorageConsolidationEnabled(true)
+                .build();
+
+            ReplicationControlManager replication = ctx.replicationControl;
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+
+            String topic = "switched-consolidating";
+            Uuid topicId = ctx.createTestTopic(topic, new int[][] {new int[] {0, 1}}, Map.of(), (short) 0)
+                .topicId();
+            ctx.alterTopicConfig(topic, DISKLESS_ENABLE_CONFIG, "true");
+            ctx.alterTopicConfig(topic, REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true");
+            setClassicToDisklessStartOffset(ctx, topicId, 100L);
+
+            ControllerResult<AlterPartitionReassignmentsResponseData> alterResult =
+                replication.alterPartitionReassignments(
+                    new AlterPartitionReassignmentsRequestData().setTopics(List.of(
+                        new ReassignableTopic().setName(topic).setPartitions(List.of(
+                            new ReassignablePartition().setPartitionIndex(0)
+                                .setReplicas(List.of(0, 2)))))));
+            ctx.replay(alterResult.records());
+
+            PartitionRegistration staged = replication.getPartition(topicId, 0);
+            assertFalse(Replicas.contains(staged.isr, 2),
+                "Consolidation must not restore the one-step ISR grant in phase 1");
+            assertTrue(Replicas.contains(staged.addingReplicas, 2));
+
+            ctx.alterPartition(new TopicIdPartition(topicId, 0), 0,
+                List.of(
+                    new BrokerState().setBrokerId(0).setBrokerEpoch(defaultBrokerEpoch(0)),
+                    new BrokerState().setBrokerId(1).setBrokerEpoch(defaultBrokerEpoch(1)),
+                    new BrokerState().setBrokerId(2).setBrokerEpoch(defaultBrokerEpoch(2))),
+                LeaderRecoveryState.RECOVERED);
+
+            PartitionRegistration completed = replication.getPartition(topicId, 0);
+            assertEquals(List.of(0, 2), Replicas.toList(completed.replicas));
+            assertEquals(List.of(), Replicas.toList(completed.addingReplicas));
+            assertEquals(NONE_REASSIGNING, replication.listPartitionReassignments(List.of(
+                new ListPartitionReassignmentsTopics().setName(topic)
+                    .setPartitionIndexes(List.of(0))), Long.MAX_VALUE));
+        }
+
+        @Test
+        public void testReassignSwitchedPartitionWithClassicPrefixInRemoteStorageCompletesInOneStep() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setMetadataVersion(MetadataVersion.latestTesting())
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .build();
+
+            ReplicationControlManager replication = ctx.replicationControl;
+            ctx.registerBrokers(0, 1, 2, 3, 4, 5);
+            ctx.unfenceBrokers(0, 1, 2, 3, 4, 5);
+
+            String topic = "switched-phase2";
+            Uuid topicId = ctx.createTestTopic(topic, new int[][] {new int[] {0, 1, 2}}, Map.of(), (short) 0)
+                .topicId();
+            ctx.alterTopicConfig(topic, DISKLESS_ENABLE_CONFIG, "true");
+            PartitionChangeRecord phase2Setup = new PartitionChangeRecord()
+                .setTopicId(topicId)
+                .setPartitionId(0);
+            phase2Setup.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicToDisklessStartOffset(100L));
+            phase2Setup.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicPrefixInRemoteStorage());
+            ctx.replay(List.of(new ApiMessageAndVersion(phase2Setup, (short) 0)));
+
+            ControllerResult<AlterPartitionReassignmentsResponseData> alterResult =
+                replication.alterPartitionReassignments(
+                    new AlterPartitionReassignmentsRequestData().setTopics(List.of(
+                        new ReassignableTopic().setName(topic).setPartitions(List.of(
+                            new ReassignablePartition().setPartitionIndex(0)
+                                .setReplicas(List.of(3, 4, 5)))))));
+            ctx.replay(alterResult.records());
+
+            PartitionRegistration partition = replication.getPartition(topicId, 0);
+            assertEquals(List.of(3, 4, 5), Replicas.toList(partition.replicas));
+            assertEquals(List.of(3, 4, 5), Replicas.toList(partition.isr));
+            assertEquals(List.of(), Replicas.toList(partition.addingReplicas));
+            assertEquals(List.of(), Replicas.toList(partition.removingReplicas));
+            assertEquals(NONE_REASSIGNING, replication.listPartitionReassignments(List.of(
+                new ListPartitionReassignmentsTopics().setName(topic)
+                    .setPartitionIndexes(List.of(0))), Long.MAX_VALUE));
+        }
+
+        // Phase 1: move [0, 1, 2] to [1, 2, 3], then fence broker 3 and commit the flag. Broker 3 can't
+        // join the ISR, so the move survives the flag commit with adding=[3] and removing=[0].
+        private Uuid phase2PartitionWithUnfinishedReassignment(ReplicationControlTestContext ctx) {
+            ReplicationControlManager replication = ctx.replicationControl;
+            ctx.registerBrokers(0, 1, 2, 3);
+            ctx.unfenceBrokers(0, 1, 2, 3);
+            Uuid topicId = ctx.createTestTopic("switched", new int[][] {new int[] {0, 1, 2}}, Map.of(), (short) 0)
+                .topicId();
+            ctx.alterTopicConfig("switched", DISKLESS_ENABLE_CONFIG, "true");
+            setClassicToDisklessStartOffset(ctx, topicId, 100L);
+
+            ctx.replay(replication.alterPartitionReassignments(reassignmentRequest("switched", 1, 2, 3)).records());
+            ctx.fenceBrokers(3);
+
+            PartitionChangeRecord flagRecord = new PartitionChangeRecord().setTopicId(topicId).setPartitionId(0);
+            flagRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicPrefixInRemoteStorage());
+            ctx.replay(List.of(new ApiMessageAndVersion(flagRecord, (short) 0)));
+
+            PartitionRegistration partition = replication.getPartition(topicId, 0);
+            assertTrue(partition.classicPrefixInRemoteStorage);
+            assertArrayEquals(new int[] {3}, partition.addingReplicas);
+            assertArrayEquals(new int[] {0}, partition.removingReplicas);
+            return topicId;
+        }
+
+        private AlterPartitionReassignmentsRequestData reassignmentRequest(String topic, Integer... replicas) {
+            return new AlterPartitionReassignmentsRequestData().setTopics(List.of(
+                new ReassignableTopic().setName(topic).setPartitions(List.of(
+                    new ReassignablePartition().setPartitionIndex(0).setReplicas(List.of(replicas))))));
+        }
+
+        @Test
+        public void testRetargetAfterFlagKeepsRequestedReplicasWhenTargetKeepsRemovingReplica() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setMetadataVersion(MetadataVersion.latestTesting())
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .build();
+            Uuid topicId = phase2PartitionWithUnfinishedReassignment(ctx);
+
+            // [0, 1, 3] keeps broker 0, which the unfinished move was removing. The stale removing=[0]
+            // must not silently drop it from the requested replica set.
+            ctx.replay(ctx.replicationControl.alterPartitionReassignments(
+                reassignmentRequest("switched", 0, 1, 3)).records());
+
+            PartitionRegistration partition = ctx.replicationControl.getPartition(topicId, 0);
+            assertEquals(List.of(0, 1, 3), Replicas.toList(partition.replicas));
+            assertEquals(List.of(), Replicas.toList(partition.addingReplicas));
+            assertEquals(List.of(), Replicas.toList(partition.removingReplicas));
+        }
+
+        @Test
+        public void testRetargetAfterFlagClearsStaleAddingReplica() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setMetadataVersion(MetadataVersion.latestTesting())
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .build();
+            Uuid topicId = phase2PartitionWithUnfinishedReassignment(ctx);
+
+            // [0, 1, 2] drops broker 3, which the unfinished move was adding. The stale adding=[3]
+            // must not keep the partition reassigning forever.
+            ctx.replay(ctx.replicationControl.alterPartitionReassignments(
+                reassignmentRequest("switched", 0, 1, 2)).records());
+
+            PartitionRegistration partition = ctx.replicationControl.getPartition(topicId, 0);
+            assertEquals(List.of(0, 1, 2), Replicas.toList(partition.replicas));
+            assertEquals(List.of(), Replicas.toList(partition.addingReplicas));
+            assertEquals(List.of(), Replicas.toList(partition.removingReplicas));
+            assertEquals(NONE_REASSIGNING, ctx.replicationControl.listPartitionReassignments(List.of(
+                new ListPartitionReassignmentsTopics().setName("switched")
+                    .setPartitionIndexes(List.of(0))), Long.MAX_VALUE));
+        }
+
+        @Test
+        public void testRetargetAfterFlagToExactCurrentReplicasClearsUnfinishedReassignment() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setMetadataVersion(MetadataVersion.latestTesting())
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .build();
+            Uuid topicId = phase2PartitionWithUnfinishedReassignment(ctx);
+            assertEquals(List.of(1, 2, 3, 0), Replicas.toList(ctx.replicationControl.getPartition(topicId, 0).replicas));
+
+            // The replica list [1, 2, 3, 0] equals the current list, which still contains the replica
+            // the unfinished move was removing. The request must clear the move, or broker 0 is dropped
+            // later when broker 3 unfences, leaving three replicas instead of the four requested.
+            ctx.replay(ctx.replicationControl.alterPartitionReassignments(
+                reassignmentRequest("switched", 1, 2, 3, 0).setAllowReplicationFactorChange(true)).records());
+
+            PartitionRegistration partition = ctx.replicationControl.getPartition(topicId, 0);
+            assertEquals(List.of(1, 2, 3, 0), Replicas.toList(partition.replicas));
+            assertEquals(List.of(), Replicas.toList(partition.addingReplicas));
+            assertEquals(List.of(), Replicas.toList(partition.removingReplicas));
+
+            ctx.unfenceBrokers(3);
+            assertEquals(List.of(1, 2, 3, 0), Replicas.toList(ctx.replicationControl.getPartition(topicId, 0).replicas));
+        }
+
+        // Phase 1: move [0, 1, 2] to [1, 2, 3]. Broker 3 holds none of the classic prefix, so it is
+        // staged with adding=[3] and removing=[0] until it joins the ISR.
+        private Uuid phase1PartitionWithStagedReassignment(ReplicationControlTestContext ctx) {
+            ReplicationControlManager replication = ctx.replicationControl;
+            ctx.registerBrokers(0, 1, 2, 3, 4);
+            ctx.unfenceBrokers(0, 1, 2, 3, 4);
+            Uuid topicId = ctx.createTestTopic("switched", new int[][] {new int[] {0, 1, 2}}, Map.of(), (short) 0)
+                .topicId();
+            ctx.alterTopicConfig("switched", DISKLESS_ENABLE_CONFIG, "true");
+            setClassicToDisklessStartOffset(ctx, topicId, 100L);
+
+            ctx.replay(replication.alterPartitionReassignments(reassignmentRequest("switched", 1, 2, 3)).records());
+
+            PartitionRegistration partition = replication.getPartition(topicId, 0);
+            assertFalse(partition.classicPrefixInRemoteStorage);
+            assertEquals(List.of(3), Replicas.toList(partition.addingReplicas));
+            assertEquals(List.of(0), Replicas.toList(partition.removingReplicas));
+            return topicId;
+        }
+
+        @Test
+        public void testRetargetStagedReassignmentDropsAddingReplicaThatIsNoLongerRequested() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setMetadataVersion(MetadataVersion.latestTesting())
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .build();
+            Uuid topicId = phase1PartitionWithStagedReassignment(ctx);
+
+            // [0, 1, 2] cancels the move. Broker 3 is no longer requested, so the stale adding=[3]
+            // must go: a move that waits for a removed replica to join the ISR never completes.
+            ctx.replay(ctx.replicationControl.alterPartitionReassignments(
+                reassignmentRequest("switched", 0, 1, 2)).records());
+
+            PartitionRegistration partition = ctx.replicationControl.getPartition(topicId, 0);
+            assertEquals(List.of(0, 1, 2), Replicas.toList(partition.replicas));
+            assertEquals(List.of(), Replicas.toList(partition.addingReplicas));
+            assertEquals(List.of(), Replicas.toList(partition.removingReplicas));
+            assertEquals(NONE_REASSIGNING, ctx.replicationControl.listPartitionReassignments(List.of(
+                new ListPartitionReassignmentsTopics().setName("switched")
+                    .setPartitionIndexes(List.of(0))), Long.MAX_VALUE));
+        }
+
+        @Test
+        public void testRetargetStagedReassignmentKeepsCatchUpForAddingReplicaStillRequested() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setMetadataVersion(MetadataVersion.latestTesting())
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .build();
+            Uuid topicId = phase1PartitionWithStagedReassignment(ctx);
+
+            // [1, 3, 4] still asks for broker 3, which holds none of the classic prefix yet. Broker 3
+            // must stay in adding so the move waits for it to join the ISR, next to the new broker 4.
+            ctx.replay(ctx.replicationControl.alterPartitionReassignments(
+                reassignmentRequest("switched", 1, 3, 4)).records());
+
+            PartitionRegistration partition = ctx.replicationControl.getPartition(topicId, 0);
+            assertEquals(Set.of(3, 4), Set.copyOf(Replicas.toList(partition.addingReplicas)));
+            assertEquals(Set.of(0, 2), Set.copyOf(Replicas.toList(partition.removingReplicas)));
+            assertFalse(Replicas.contains(partition.isr, 3));
+            assertFalse(Replicas.contains(partition.isr, 4));
         }
 
         @Test
