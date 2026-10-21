@@ -141,6 +141,22 @@ When a broker applies a newly committed seal offset, it reconciles the local cla
 
 If leadership changes while the switch is pending, the new leader seals and re-drives the `InitDisklessLog` controller request. If leadership changes after the final offset is committed, the new leader skips the controller step and initializes the control plane directly from metadata.
 
+## Switch phases
+
+A switched partition runs in one of two phases. The `classicPrefixInRemoteStorage` partition flag marks the boundary. The controller applies different rules in each phase, because the classic prefix (the offsets below `classicToDisklessStartOffset`) lives in different places.
+
+* Phase 1 starts when the controller marks the switch pending and ends when the controller sets `classicPrefixInRemoteStorage`. Only the replicas' local disks hold the classic prefix, and the replicas aren't interchangeable.
+* Phase 2 starts when the controller sets `classicPrefixInRemoteStorage`. Remote storage holds the classic prefix, and the partition follows the same rules as a born-diskless partition.
+
+| Controller behavior | Phase 1 | Phase 2 |
+| --- | --- | --- |
+| Leader election | Classic rules: the leader must be an active replica with an online log directory. | Born-diskless rules: any active replica can lead. |
+| ISR expansion when a broker unfences | Skipped. As for a classic partition, only `AlterPartition` expands the ISR. | The controller re-adds the unfenced replica and completes an in-flight reassignment. |
+| Reassignment | The controller stages the move as it does for a classic topic. New replicas are adding and dropped replicas are removing until the adding replicas join the ISR. | The target replicas replace the current replicas in one step. |
+| `AlterDisklessSwitch` | Accepted. See [Operator override](#operator-override-of-the-seal-offset). | Rejected with `INVALID_REQUEST`. |
+
+The controller sets the flag when it handles a `SetClassicPrefixInRemoteStorage` request from the current leader. In the same record, the controller sets the ISR, can complete a reassignment, and elects a leader if needed. No broker sends this request yet. Every switched partition remains in phase 1.
+
 ## Operator override of the seal offset
 
 The normal flow above is leader-driven: the broker proposes the seal offset and the controller validates it. For recovery and manual intervention, the `kafka-topic-switch.sh seal` operator command can override the seal state of a single partition directly, without being the partition leader. It is backed by the `AlterDisklessSwitch` controller RPC (admin → controller, authorized as `ALTER` on the cluster), which writes a `PartitionChangeRecord` carrying the requested `classicToDisklessStartOffset`. It is a recovery tool for a topic that is being switched, not a way to start a switch, so the controller rejects it unless the topic already has `diskless.enable=true`.
@@ -151,9 +167,13 @@ The normal flow above is leader-driven: the broker proposes the seal offset and 
 
 The negative (abort / re-arm) offsets are only accepted while the switch is still pending — i.e. the partition has not yet committed a seal (`classicToDisklessStartOffset < 0`). Once a seal is committed, diskless data may have been written past it, and reverting to classic would strand that data (and can move consumers backward), so the controller rejects `-1`/`-2` in that state.
 
+The controller rejects every seal offset, including a downward correction, once the partition is in phase 2 (`classicPrefixInRemoteStorage` is `true`). At that point remote storage holds the classic prefix up to the committed seal, so a change would leave the two out of agreement. The request fails with `INVALID_REQUEST`.
+
 Because a negative offset means the partition is not switched, `merge` also drops the dependent switch metadata (producer states + the diskless leader epoch) whenever an explicit negative `classicToDisklessStartOffset` is applied. This prevents stale state from a previous switch attempt surviving an abort or re-arm; the next `InitDisklessLog` flow re-captures both.
 
 The command validates before committing: for a concrete (`>= 0`) seal it requires the seal offset to fall within the classic log range `[logStartOffset, logEndOffset]` (read via `listOffsets`), so the seal cannot point past the end of the log or below its start — in either case the classic log would be missing offsets it is supposed to own. Note the end offset is the leader's log end offset, not the replication high watermark, so this does not by itself prove every in-sync replica has replicated up to the seal. The `--dry-run` flag performs this validation and reports the action without writing anything.
+
+The command also reads the partition when you omit `--offset` or pass an offset `>= 0`. If `classicPrefixInRemoteStorage` is `true` in that read, the command fails before it sends a request, including with `--dry-run`. The `-1` and `-2` offsets don't read the partition, which keeps them usable with `--bootstrap-controller`. For those offsets, the controller does all the checking and `--dry-run` doesn't validate them.
 
 ## Reconciling the control plane
 

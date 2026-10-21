@@ -320,6 +320,8 @@ The reconciler sets the prune floor to at least `max(seal, logStartOffset)` when
 
 Because all data is in object storage, reassignment uses the target replicas directly, not a merged original-plus-adding list. When a consolidating partition moves to a new broker, consolidation resumes from object storage: the reconciler arms the fetcher at the current LEO, the fetcher drains the diskless WAL into the local log, and the `RemoteLogManager` tiers it. `InklessConsolidatedDisklessReassignmentTest` covers this end-to-end. When a replica is removed, the broker cleans up its local log on the normal stop-replica path.
 
+A partition switched from classic is the exception while its classic prefix is only on the replicas' local disks (phase 1). The controller stages its reassignment as it does for a classic topic. For more information, see [Switch phases](CLASSIC_TO_DISKLESS_SWITCH.md#switch-phases).
+
 ## Configuration
 
 Broker-level configs live in `ServerConfigs` (no prefix) and `InklessConfig` (under the `inkless.` prefix). The auto-generated reference is in [configs.rst](configs.rst).
