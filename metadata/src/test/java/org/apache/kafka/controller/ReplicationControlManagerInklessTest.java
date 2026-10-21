@@ -2112,6 +2112,46 @@ public class ReplicationControlManagerInklessTest {
             assertEquals(List.of(1, 2, 3, 0), Replicas.toList(ctx.replicationControl.getPartition(topicId, 0).replicas));
         }
 
+        @Test
+        public void testUnfenceCompletesPhase2ReassignmentAndElectsUnfencingBroker() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setMetadataVersion(MetadataVersion.latestTesting())
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .build();
+            ReplicationControlManager replication = ctx.replicationControl;
+            ctx.registerBrokers(0, 1, 2, 3);
+            ctx.unfenceBrokers(0, 1, 2, 3);
+            Uuid topicId = ctx.createTestTopic("switched", new int[][] {new int[] {0, 1, 2}}, Map.of(), (short) 0)
+                .topicId();
+            ctx.alterTopicConfig("switched", DISKLESS_ENABLE_CONFIG, "true");
+            setClassicToDisklessStartOffset(ctx, topicId, 100L);
+
+            // Phase 1: move [0, 1, 2] to [3], then fence broker 3 and commit the flag. Broker 3 can't
+            // join the ISR, so the move survives the flag commit.
+            ctx.replay(replication.alterPartitionReassignments(
+                reassignmentRequest("switched", 3).setAllowReplicationFactorChange(true)).records());
+            ctx.fenceBrokers(3);
+            PartitionChangeRecord flagRecord = new PartitionChangeRecord().setTopicId(topicId).setPartitionId(0);
+            flagRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicPrefixInRemoteStorage());
+            ctx.replay(List.of(new ApiMessageAndVersion(flagRecord, (short) 0)));
+            PartitionRegistration beforeUnfence = replication.getPartition(topicId, 0);
+            assertTrue(beforeUnfence.classicPrefixInRemoteStorage);
+            assertArrayEquals(new int[] {3}, beforeUnfence.addingReplicas);
+            assertEquals(0, beforeUnfence.leader);
+
+            // The controller completes the move before it replays the unfence record. Broker 3 is the
+            // only target replica, so the election must accept it or the partition goes offline.
+            ctx.unfenceBrokers(3);
+
+            PartitionRegistration afterUnfence = replication.getPartition(topicId, 0);
+            assertEquals(List.of(3), Replicas.toList(afterUnfence.replicas));
+            assertEquals(3, afterUnfence.leader, "Unfencing broker 3 must lead: " + afterUnfence);
+            assertEquals(List.of(3), Replicas.toList(afterUnfence.isr));
+            assertEquals(0, afterUnfence.addingReplicas.length);
+            assertEquals(0, afterUnfence.removingReplicas.length);
+        }
+
         // Phase 1: move [0, 1, 2] to [1, 2, 3]. Broker 3 holds none of the classic prefix, so it is
         // staged with adding=[3] and removing=[0] until it joins the ISR.
         private Uuid phase1PartitionWithStagedReassignment(ReplicationControlTestContext ctx) {
@@ -2409,9 +2449,20 @@ public class ReplicationControlManagerInklessTest {
             ctx.alterTopicConfig("switch-pending", DISKLESS_ENABLE_CONFIG, "true");
             setClassicToDisklessStartOffset(ctx, pendingId,
                 PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING);
+            // Phase 2 (committed seal + classicPrefixInRemoteStorage): the classic prefix is in
+            // remote storage, so an unfenced replica re-enters ISR like a born-diskless replica.
+            Uuid phase2Id = ctx.createTestTopic("switched-phase2",
+                new int[][] {new int[] {0, 1, 2}}, Map.of(), (short) 0).topicId();
+            ctx.alterTopicConfig("switched-phase2", DISKLESS_ENABLE_CONFIG, "true");
+            PartitionChangeRecord phase2Setup = new PartitionChangeRecord()
+                .setTopicId(phase2Id)
+                .setPartitionId(0);
+            phase2Setup.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicToDisklessStartOffset(100L));
+            phase2Setup.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicPrefixInRemoteStorage());
+            ctx.replay(List.of(new ApiMessageAndVersion(phase2Setup, (short) 0)));
 
             ctx.fenceBrokers(2);
-            for (Uuid topicId : List.of(bornId, switchedId, pendingId)) {
+            for (Uuid topicId : List.of(bornId, switchedId, pendingId, phase2Id)) {
                 assertFalse(Replicas.contains(replication.getPartition(topicId, 0).isr, 2),
                     "Broker 2 should leave every ISR on fencing");
             }
@@ -2420,8 +2471,10 @@ public class ReplicationControlManagerInklessTest {
 
             assertTrue(Replicas.contains(replication.getPartition(bornId, 0).isr, 2),
                 "Born-diskless partitions should still expand ISR on unfence");
+            assertTrue(Replicas.contains(replication.getPartition(phase2Id, 0).isr, 2),
+                "Phase-2 switched partitions have their classic prefix in remote storage and expand ISR on unfence");
             assertFalse(Replicas.contains(replication.getPartition(switchedId, 0).isr, 2),
-                "A switched partition should not regain ISR on unfence alone: the classic prefix "
+                "A phase-1 switched partition should not regain ISR on unfence alone: the classic prefix "
                     + "below the seal is only on local logs, so the replica must earn ISR through "
                     + "AlterPartition once its fetch state reaches the seal");
             assertFalse(Replicas.contains(replication.getPartition(pendingId, 0).isr, 2),
@@ -5954,6 +6007,49 @@ public class ReplicationControlManagerInklessTest {
             assertTrue(after.hasLeader(), "The flag commit must elect a leader among the target replicas: " + after);
             assertTrue(Replicas.contains(after.replicas, after.leader));
             assertTrue(after.classicPrefixInRemoteStorage);
+        }
+
+        @Test
+        public void testSetClassicPrefixInRemoteStorageInFlightReassignmentCompletesOnLaterPhase2Unfence() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setStaticConfig(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, true)
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .build();
+            ctx.registerBrokers(3);
+            ctx.unfenceBrokers(3);
+            Uuid topicId = createSealedTopic(ctx);
+
+            // Stage a reassignment 0 -> 3 in phase 1, then fence adding broker 3 before the flag commits.
+            ControllerResult<AlterPartitionReassignmentsResponseData> alterResult =
+                ctx.replicationControl.alterPartitionReassignments(
+                    new AlterPartitionReassignmentsRequestData().setTopics(List.of(
+                        new ReassignableTopic().setName("foo").setPartitions(List.of(
+                            new ReassignablePartition().setPartitionIndex(0)
+                                .setReplicas(List.of(1, 2, 3)))))));
+            ctx.replay(alterResult.records());
+            ctx.fenceBrokers(3);
+
+            PartitionRegistration before = ctx.replicationControl.getPartition(topicId, 0);
+            ControllerResult<SetClassicPrefixInRemoteStorageResponseData> result =
+                send(ctx, request(before.leader, topicId, 0, SEAL, before.leaderEpoch));
+            assertEquals(NONE.code(), errorCode(result));
+            ctx.replay(result.records());
+
+            // Because broker 3 was fenced at flag commit time, the reassignment remains in flight.
+            PartitionRegistration afterFlag = ctx.replicationControl.getPartition(topicId, 0);
+            assertTrue(afterFlag.classicPrefixInRemoteStorage);
+            assertArrayEquals(new int[] {3}, afterFlag.addingReplicas);
+            assertArrayEquals(new int[] {0}, afterFlag.removingReplicas);
+
+            // Unfencing broker 3 in phase 2 expands ISR and completes the staged reassignment.
+            ctx.unfenceBrokers(3);
+            PartitionRegistration afterUnfence = ctx.replicationControl.getPartition(topicId, 0);
+            assertEquals(List.of(1, 2, 3), Replicas.toList(afterUnfence.replicas));
+            assertEquals(0, afterUnfence.addingReplicas.length);
+            assertEquals(0, afterUnfence.removingReplicas.length);
+            assertTrue(Replicas.contains(afterUnfence.isr, 3));
+            assertFalse(Replicas.contains(afterUnfence.replicas, 0));
         }
 
         @Test

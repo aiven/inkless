@@ -2209,24 +2209,24 @@ public class ReplicationControlManager {
             for (var entry : topic.parts.entrySet()) {
                 int partitionId = entry.getKey();
                 PartitionRegistration partition = entry.getValue();
-                // Only born-diskless partitions qualify: a switched (seal committed) or mid-switch
-                // (PENDING) partition still has classic records that exist solely in the replicas'
-                // local logs, so an unfenced replica is not necessarily complete. It earns ISR
-                // through AlterPartition instead, once its follower fetch state reaches the seal.
-                // Permanent by design -- a committed seal is never retired, so this holds even after
-                // the classic prefix ages out and the partition becomes equivalent to born-diskless.
-                if (partition.classicToDisklessStartOffset
-                        != PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET) continue;
+                // Only born-diskless and phase-2 partitions (classicPrefixInRemoteStorage set)
+                // qualify. In phase 1 or mid-switch (PENDING), classic records still exist only
+                // in the replicas' local logs, so an unfenced replica is not necessarily complete
+                // and earns ISR through AlterPartition instead.
+                if (isSwitchedWithLocalClassicPrefix(partition)) continue;
                 if (!Replicas.contains(partition.replicas, brokerId)) continue;
                 if (Replicas.contains(partition.isr, brokerId)) continue;
                 // Use PartitionChangeBuilder so that ELR is reconciled alongside the ISR
                 // expansion — a raw PartitionChangeRecord setting only `isr` would leave any
                 // populated ELR untouched, violating the ISR ∩ ELR = ∅ invariant (KIP-966).
+                // The unfencing BrokerRegistrationChangeRecord has not been replayed yet, so treat
+                // brokerId as active if completing a reassignment needs to elect a new leader.
+                IntPredicate isAcceptableLeader = r -> r == brokerId || clusterControl.isActive(r);
                 Optional<ApiMessageAndVersion> record = new PartitionChangeBuilder(
                     partition,
                     topic.id,
                     partitionId,
-                    leaderAcceptorFor(topic.name, partition),
+                    leaderAcceptorFor(topic.name, partition, isAcceptableLeader),
                     featureControl.metadataVersionOrThrow(),
                     getTopicEffectiveMinIsr(topic.name),
                     featureControl.isElrFeatureEnabled()
