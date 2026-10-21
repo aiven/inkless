@@ -3434,7 +3434,6 @@ public class RemoteLogManagerTest {
         when(mockLog.topicPartition()).thenReturn(leaderTopicIdPartition.topicPartition());
         when(mockLog.logEndOffset()).thenReturn(200L);
         when(mockLog.logStartOffset()).thenReturn(200L);        // seal trap
-        when(mockLog.localLogStartOffset()).thenReturn(200L);
         when(mockLog.onlyLocalLogSegmentsSize()).thenReturn(512L);
 
         List<RemoteLogSegmentMetadata> metadataList = listRemoteLogSegmentMetadataByTime(

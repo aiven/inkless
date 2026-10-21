@@ -2032,6 +2032,43 @@ public abstract class AbstractControlPlaneTest {
             ))).containsExactly(ListOffsetsResponse.success(tidp, NO_TIMESTAMP, expiredUpTo));
         }
 
+        @Test
+        void deleteRecordsBeforeFirstPruneSurvivesThePrune() {
+            initSwitchedLog();
+            commitDisklessBatchAtSeal();
+
+            final long deletedUpTo = 50;
+            assertThat(controlPlane.deleteRecords(List.of(
+                new DeleteRecordsRequest(tidp, deletedUpTo)
+            ))).containsExactly(DeleteRecordsResponse.success(deletedUpTo));
+            // The broker advances the cross-tier start after a successful DeleteRecords on a consolidating partition.
+            assertThat(controlPlane.advanceCrossTierLogStartOffset(List.of(
+                new AdvanceCrossTierLogStartOffsetRequest(topicId, 0, deletedUpTo)
+            ))).containsExactly(AdvanceCrossTierLogStartOffsetResponse.success(deletedUpTo));
+
+            controlPlane.pruneDisklessLogs(List.of(new PruneDisklessLogsRequest(tidp, seal - 1)));
+
+            assertThat(controlPlane.getCrossTierLogStart(tidp)).hasValue(deletedUpTo);
+            assertThat(controlPlane.listOffsets(List.of(
+                new ListOffsetsRequest(tidp, EARLIEST_TIMESTAMP)
+            ))).containsExactly(ListOffsetsResponse.success(tidp, NO_TIMESTAMP, deletedUpTo));
+        }
+
+        @Test
+        void deleteRecordsWithoutCrossTierAdvanceBeforeFirstPrune() {
+            initSwitchedLog();
+            commitDisklessBatchAtSeal();
+
+            final long deletedUpTo = 50;
+            controlPlane.deleteRecords(List.of(new DeleteRecordsRequest(tidp, deletedUpTo)));
+            controlPlane.pruneDisklessLogs(List.of(new PruneDisklessLogsRequest(tidp, seal - 1)));
+
+            assertThat(controlPlane.getCrossTierLogStart(tidp)).hasValue(deletedUpTo);
+            assertThat(controlPlane.listOffsets(List.of(
+                new ListOffsetsRequest(tidp, EARLIEST_TIMESTAMP)
+            ))).containsExactly(ListOffsetsResponse.success(tidp, NO_TIMESTAMP, deletedUpTo));
+        }
+
         private void initSwitchedLog() {
             assertThat(controlPlane.initDisklessLog(List.of(
                 new InitDisklessLogRequest(topicId, topicName, 0, classicLogStart, seal, List.of())
