@@ -225,6 +225,7 @@ public class TopicSwitchCommandTest {
 
     @Test
     public void testSealCommitsExplicitOffset() throws Exception {
+        mockDescribeSeal(0, 120L);
         mockLogRange(0, 10, 150);
         mockAlterDisklessSwitch();
 
@@ -237,6 +238,7 @@ public class TopicSwitchCommandTest {
 
     @Test
     public void testSealRejectsExplicitOffsetAboveEndOffset() throws Exception {
+        mockDescribeSeal(0, -2L);
         mockLogRange(0, 0, 90);
 
         RuntimeException ex = assertThrows(RuntimeException.class,
@@ -247,6 +249,7 @@ public class TopicSwitchCommandTest {
 
     @Test
     public void testSealRejectsExplicitOffsetBelowStartOffset() throws Exception {
+        mockDescribeSeal(0, -2L);
         mockLogRange(0, 50, 150);
 
         RuntimeException ex = assertThrows(RuntimeException.class,
@@ -281,6 +284,7 @@ public class TopicSwitchCommandTest {
 
     @Test
     public void testSealDryRunDoesNotCommit() throws Exception {
+        mockDescribeSeal(0, 120L);
         mockLogRange(0, 0, 150);
 
         String output = runSealCommand(0, Optional.of(100L), true);
@@ -288,6 +292,36 @@ public class TopicSwitchCommandTest {
         verify(adminClient, never()).alterDisklessSwitch(any(), anyInt(), anyLong(), any());
         assertTrue(output.contains("[dry-run]"));
         assertTrue(output.contains("Would set test-topic-0 classicToDisklessStartOffset to 100"));
+    }
+
+    @Test
+    public void testSealRejectsExplicitOffsetWhenClassicPrefixInRemoteStorage() throws Exception {
+        mockDescribeSeal(0, 100L, true);
+
+        RuntimeException ex = assertThrows(RuntimeException.class,
+            () -> runSealCommand(0, Optional.of(90L), false));
+        assertTrue(ex.getMessage().contains("classic prefix in remote storage"), ex.getMessage());
+        verify(adminClient, never()).alterDisklessSwitch(any(), anyInt(), anyLong(), any());
+    }
+
+    @Test
+    public void testSealDryRunRejectsWhenClassicPrefixInRemoteStorage() throws Exception {
+        mockDescribeSeal(0, 100L, true);
+
+        RuntimeException ex = assertThrows(RuntimeException.class,
+            () -> runSealCommand(0, Optional.of(90L), true));
+        assertTrue(ex.getMessage().contains("classic prefix in remote storage"), ex.getMessage());
+        verify(adminClient, never()).alterDisklessSwitch(any(), anyInt(), anyLong(), any());
+    }
+
+    @Test
+    public void testSealDefaultRejectsWhenClassicPrefixInRemoteStorage() throws Exception {
+        mockDescribeSeal(0, 100L, true);
+
+        RuntimeException ex = assertThrows(RuntimeException.class,
+            () -> runSealCommand(0, Optional.empty(), false));
+        assertTrue(ex.getMessage().contains("classic prefix in remote storage"), ex.getMessage());
+        verify(adminClient, never()).alterDisklessSwitch(any(), anyInt(), anyLong(), any());
     }
 
     @Test
@@ -299,6 +333,8 @@ public class TopicSwitchCommandTest {
         verify(adminClient).alterDisklessSwitch(eq(TOPIC), eq(0), eq(-1L), any(AlterDisklessSwitchOptions.class));
         assertTrue(output.contains("-1 (abort switch, revert to classic)"));
         assertFalse(output.contains("end offset"));
+        // Controllers don't serve DescribeTopicPartitions, so the abort must work with --bootstrap-controller.
+        verify(adminClient, never()).describeTopicPartitions(any(), any(DescribeTopicsOptions.class));
     }
 
     @Test
@@ -309,6 +345,7 @@ public class TopicSwitchCommandTest {
 
         verify(adminClient).alterDisklessSwitch(eq(TOPIC), eq(0), eq(-2L), any(AlterDisklessSwitchOptions.class));
         assertTrue(output.contains("-2 (re-arm switch)"));
+        verify(adminClient, never()).describeTopicPartitions(any(), any(DescribeTopicsOptions.class));
     }
 
     @Test
@@ -410,8 +447,12 @@ public class TopicSwitchCommandTest {
 
     // Mocks describeTopicPartitions so the seal command can read the current committed offset.
     private void mockDescribeSeal(int partition, long classicToDisklessStartOffset) {
+        mockDescribeSeal(partition, classicToDisklessStartOffset, false);
+    }
+
+    private void mockDescribeSeal(int partition, long classicToDisklessStartOffset, boolean classicPrefixInRemoteStorage) {
         DescribeTopicPartitionsResponseData responseData = buildResponseData(List.of(
-            buildPartition(partition, 1, 0, classicToDisklessStartOffset, -1)));
+            buildPartition(partition, 1, 0, classicToDisklessStartOffset, -1, classicPrefixInRemoteStorage)));
         when(adminClient.describeTopicPartitions(ArgumentMatchers.any(), any(DescribeTopicsOptions.class)))
             .thenReturn(new DescribeTopicPartitionsResult(KafkaFuture.completedFuture(responseData)));
     }
