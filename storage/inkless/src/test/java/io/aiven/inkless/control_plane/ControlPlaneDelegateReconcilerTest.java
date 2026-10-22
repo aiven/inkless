@@ -399,6 +399,38 @@ class ControlPlaneDelegateReconcilerTest {
     }
 
     @Test
+    void invalidateClosesTheRetiredDelegateWithoutWaitingForTheRebuild() throws Exception {
+        reconciler().start();
+        awaitState(ControlPlaneAvailability.State.AVAILABLE);
+
+        // Park the rebuild, like a migration that waits on the advisory lock.
+        factoryEntered.set(new CountDownLatch(1));
+        factoryRelease.set(new CountDownLatch(1));
+        reconciler.invalidate();
+
+        assertTrue(factoryEntered.get().await(AWAIT_SECONDS, TimeUnit.SECONDS), "the rebuild never started");
+        // current() already rejects the retired delegate. The reconciler closes its pools before
+        // the rebuild returns.
+        verify(delegate).close();
+    }
+
+    @Test
+    void closeDuringARebuildDoesNotCloseTheRetiredDelegateAgain() throws Exception {
+        reconciler().start();
+        awaitState(ControlPlaneAvailability.State.AVAILABLE);
+
+        factoryEntered.set(new CountDownLatch(1));
+        factoryRelease.set(new CountDownLatch(1));
+        reconciler.invalidate();
+
+        assertTrue(factoryEntered.get().await(AWAIT_SECONDS, TimeUnit.SECONDS), "the rebuild never started");
+
+        reconciler.close();
+
+        verify(delegate).close();
+    }
+
+    @Test
     void invalidateRetiresTheDelegateForEveryLaterCallerAtOnce() {
         reconciler().start();
         awaitState(ControlPlaneAvailability.State.AVAILABLE);
