@@ -21,7 +21,7 @@ import kafka.cluster.Partition
 import kafka.server.InitDisklessLogBatchQueue.ParsedResponse
 import kafka.utils.Logging
 import org.apache.kafka.common.{TopicPartition, Uuid}
-import org.apache.kafka.common.message.{InitDisklessLogRequestData, InitDisklessLogResponseData}
+import org.apache.kafka.common.message.{InitDisklessLogRequestData, InitDisklessLogResponseData, SetClassicPrefixInRemoteStorageRequestData, SetClassicPrefixInRemoteStorageResponseData}
 import org.apache.kafka.common.protocol.Errors
 import org.apache.kafka.server.partition.PartitionListener
 import org.apache.kafka.storage.internals.log.UnifiedLog
@@ -38,7 +38,8 @@ sealed trait InitDisklessLogState extends Logging {
 final case class DisklessInitMetadata(
   topicName: String,
   classicToDisklessStartOffset: Long,
-  producerStates: util.List[CpProducerState]
+  producerStates: util.List[CpProducerState],
+  classicPrefixInRemoteStorage: Boolean
 )
 
 final case class Failed(partition: Partition, topicId: Uuid) extends WaitingForReplicationOutcome
@@ -211,18 +212,145 @@ final case class AwaitingMetadata(
 ) extends InitDisklessLogState {
   logIdent = s"[InitDisklessLog->AwaitingMetadata $tp] "
 
-  def onSuccess: Done = {
-    info(s"Metadata application successful. Advancing to Done.")
-    Done(partition, topicId)
+  /**
+   * Advances to WaitingForUpload while the classic prefix isn't in remote storage yet (phase 1),
+   * and to Done otherwise.
+   */
+  def onSuccess: InitDisklessLogState = metadataPayload match {
+    case Some(metadata) if !metadata.classicPrefixInRemoteStorage =>
+      info(s"Metadata application successful. Advancing to WaitingForUpload.")
+      WaitingForUpload(partition, topicId, metadata.classicToDisklessStartOffset)
+    case _ =>
+      info(s"Metadata application successful. Advancing to Done.")
+      Done(partition, topicId)
   }
 }
 
-/** Terminal state once metadata init succeeds. */
+/** Terminal state once metadata init succeeds and no classic-prefix upload remains to watch. */
 final case class Done(
   partition: Partition,
   topicId: Uuid
 ) extends InitDisklessLogState {
   logIdent = s"[InitDisklessLog->Done $tp] "
+}
+
+/** Result of evaluating the upload detection rule for a partition in WaitingForUpload. */
+sealed trait UploadCheck
+object UploadCheck {
+  /** The classic prefix isn't fully in remote storage yet. */
+  case object Pending extends UploadCheck
+  /** The classic prefix is in remote storage, or retention already removed it. */
+  case object Uploaded extends UploadCheck
+  /** This broker is no longer the leader or has no local log, so the watch is moot. */
+  case object Gone extends UploadCheck
+}
+
+/**
+ * The controller committed the seal and `classicPrefixInRemoteStorage` is unset (switch phase 1).
+ * The leader waits until the classic prefix `[0, seal)` is in remote storage.
+ */
+final case class WaitingForUpload(
+  partition: Partition,
+  topicId: Uuid,
+  seal: Long
+) extends InitDisklessLogState {
+  logIdent = s"[InitDisklessLog->WaitingForUpload $tp] "
+
+  /**
+   * Checks the detection rule `logStartOffset >= seal || highestOffsetInRemoteStorage >= seal - 1`.
+   * The first term covers a prefix that retention or `DeleteRecords` already removed, where the
+   * remote gauge stays at `-1`. Remote copying follows offset order, and a leader change seeds the
+   * gauge from the remote log metadata. The gauge alone proves coverage.
+   */
+  def check(): UploadCheck = {
+    if (!partition.isLeader) {
+      UploadCheck.Gone
+    } else {
+      partition.log match {
+        case None => UploadCheck.Gone
+        case Some(log) =>
+          val logStartOffset = log.logStartOffset
+          val highestRemoteOffset = log.highestOffsetInRemoteStorage
+          if (logStartOffset >= seal || highestRemoteOffset >= seal - 1) {
+            info(s"Classic prefix is uploaded (seal=$seal, logStartOffset=$logStartOffset, " +
+              s"highestOffsetInRemoteStorage=$highestRemoteOffset). Advancing to SendingFlagToController.")
+            UploadCheck.Uploaded
+          } else {
+            UploadCheck.Pending
+          }
+      }
+    }
+  }
+
+  def onUploaded: SendingFlagToController = SendingFlagToController(partition, topicId, seal)
+}
+
+/** The classic prefix is in remote storage. The partition waits for the next batched `SetClassicPrefixInRemoteStorage` call. */
+final case class SendingFlagToController(
+  partition: Partition,
+  topicId: Uuid,
+  seal: Long
+) extends InitDisklessLogState {
+  logIdent = s"[InitDisklessLog->SendingFlagToController $tp] "
+}
+
+object SendingFlagToController {
+
+  def buildRequestData(
+    states: Iterable[SendingFlagToController],
+    brokerId: Int,
+    brokerEpoch: Long
+  ): SetClassicPrefixInRemoteStorageRequestData = {
+    val topicDataById = new util.LinkedHashMap[Uuid, util.List[SetClassicPrefixInRemoteStorageRequestData.PartitionData]]()
+    states.foreach { state =>
+      // Reading the leader epoch at build time makes a retry after a same-leader epoch bump send the current one.
+      topicDataById.computeIfAbsent(state.topicId, _ => new util.ArrayList[SetClassicPrefixInRemoteStorageRequestData.PartitionData]())
+        .add(new SetClassicPrefixInRemoteStorageRequestData.PartitionData()
+          .setPartitionId(state.tp.partition)
+          .setClassicToDisklessStartOffset(state.seal)
+          .setLeaderEpoch(state.partition.getLeaderEpoch))
+    }
+
+    val topicDataList = new util.ArrayList[SetClassicPrefixInRemoteStorageRequestData.TopicData]()
+    topicDataById.asScala.foreach { case (topicId, partitions) =>
+      topicDataList.add(new SetClassicPrefixInRemoteStorageRequestData.TopicData()
+        .setTopicId(topicId)
+        .setPartitions(partitions))
+    }
+
+    new SetClassicPrefixInRemoteStorageRequestData()
+      .setBrokerId(brokerId)
+      .setBrokerEpoch(brokerEpoch)
+      .setTopics(topicDataList)
+  }
+
+  def parseBatchResponse(response: SetClassicPrefixInRemoteStorageResponseData): Iterable[ParsedResponse] = {
+    val outcomes = scala.collection.mutable.ArrayBuffer[ParsedResponse]()
+    for (topicResponse <- response.topics().asScala) {
+      for (partitionResponse <- topicResponse.partitions().asScala) {
+        val error = Errors.forCode(partitionResponse.errorCode())
+        val disposition = error match {
+          case Errors.NONE => InitDisklessLogBatchQueue.Success
+          // The partition doesn't have the switch state the request assumed, or the topic no longer exists.
+          // A retry can't change that.
+          case Errors.INVALID_REQUEST | Errors.UNKNOWN_TOPIC_ID | Errors.UNKNOWN_TOPIC_OR_PARTITION =>
+            InitDisklessLogBatchQueue.PermanentFailure
+          // `FENCED_LEADER_EPOCH` is retriable, unlike in `InitDisklessLog`. A same-leader epoch bump, such as
+          // an ISR shrink, fences an in-flight request but doesn't re-register the watch, because the broker
+          // didn't become leader. The retry sends the current epoch. If leadership moved, `shouldSend`
+          // and `removePartition` stop the retry.
+          case _ => InitDisklessLogBatchQueue.RetriableFailure
+        }
+        outcomes += ParsedResponse(
+          topicId = topicResponse.topicId(),
+          partitionId = partitionResponse.partitionId(),
+          error = error,
+          disposition = disposition
+        )
+      }
+    }
+    outcomes.toSeq
+  }
 }
 
 object AwaitingMetadata {

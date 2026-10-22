@@ -6977,7 +6977,8 @@ class ReplicaManagerInklessTest {
     leaderId: Int,
     classicToDisklessStartOffset: Long = PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET,
     disklessLeaderEpoch: Int = PartitionRegistration.NO_DISKLESS_LEADER_EPOCH,
-    followerInIsr: Boolean = true
+    followerInIsr: Boolean = true,
+    classicPrefixInRemoteStorage: Boolean = false
   ): TopicsDelta = {
     val delta = new TopicsDelta(TopicsImage.EMPTY)
     delta.replay(new TopicRecord().setName(topicName).setTopicId(topicId))
@@ -6992,6 +6993,9 @@ class ReplicaManagerInklessTest {
     if (classicToDisklessStartOffset != PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET) {
       partitionRecord.unknownTaggedFields().add(
         InitDisklessLogFields.encodeClassicToDisklessStartOffset(classicToDisklessStartOffset))
+    }
+    if (classicPrefixInRemoteStorage) {
+      partitionRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicPrefixInRemoteStorage())
     }
     if (disklessLeaderEpoch != PartitionRegistration.NO_DISKLESS_LEADER_EPOCH) {
       partitionRecord.unknownTaggedFields().add(
@@ -7220,6 +7224,115 @@ class ReplicaManagerInklessTest {
         "Promoted switched leader must restore stale HW to the committed seal")
     } finally {
       replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  private case class PromotedSwitchedFollower(
+    replicaManager: ReplicaManager,
+    initDisklessLogManager: InitDisklessLogManager,
+    tp: TopicPartition,
+    topicId: Uuid,
+    brokerId: Int,
+    log: UnifiedLog,
+    segmentsBeforePromotion: Int,
+    leaderImage: MetadataImage
+  )
+
+  // Promotes a failover candidate during switch phase 1 to leader, then runs `check`. The follower seals its log
+  // with `leoAtSeal` records, which rolls the active segment. It then replicates the rest of the classic prefix
+  // into the new active segment, so the tail `[leoAtSeal, sealOffset)` sits in an unrolled segment.
+  private def withPromotedSwitchedFollower(sealOffset: Long, leoAtSeal: Long, classicPrefixInRemoteStorage: Boolean)(
+    check: PromotedSwitchedFollower => Unit
+  ): Unit = {
+    val topicName = "switched-topic"
+    val topicId = Uuid.randomUuid()
+    val tp = new TopicPartition(topicName, 0)
+    val brokerId = 1
+    val leaderId = 2
+
+    val mockFetcherManager = mock(classOf[ReplicaFetcherManager])
+    when(mockFetcherManager.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    val initDisklessLogManager = mock(classOf[InitDisklessLogManager])
+
+    val replicaManager = spy(createReplicaManager(
+      List(topicName),
+      mockReplicaFetcherManager = Some(mockFetcherManager),
+      initDisklessLogManager = Some(initDisklessLogManager)
+    ))
+    try {
+      val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+      populateLocalLogAtLeoAndCheckpointedHwm(replicaManager, tp, log, leo = leoAtSeal, hw = leoAtSeal)
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(sealOffset)
+
+      val followerDelta = disklessFollowerDelta(
+        topicName,
+        topicId,
+        brokerId,
+        leaderId,
+        classicToDisklessStartOffset = sealOffset,
+        classicPrefixInRemoteStorage = classicPrefixInRemoteStorage
+      )
+      val followerImage = imageFromTopics(followerDelta.apply())
+      replicaManager.applyDelta(followerDelta, followerImage)
+
+      if (sealOffset > leoAtSeal) {
+        val tail = (leoAtSeal until sealOffset).map(i => new SimpleRecord(s"tail-$i".getBytes))
+        log.appendAsFollower(TestUtils.records(tail, baseOffset = leoAtSeal, partitionLeaderEpoch = 0), 0)
+      }
+      assertEquals(sealOffset, log.logEndOffset)
+      val segmentsBeforePromotion = log.numberOfSegments
+
+      val leaderDelta = promoteFollowerToLeaderDelta(followerImage.topics(), topicId, tp.partition(), brokerId)
+      val leaderImage = imageFromTopics(leaderDelta.apply())
+      replicaManager.applyDelta(leaderDelta, leaderImage)
+      assertTrue(replicaManager.getPartition(tp).asInstanceOf[HostedPartition.Online[Partition]].partition.isLeader)
+
+      check(PromotedSwitchedFollower(
+        replicaManager, initDisklessLogManager, tp, topicId, brokerId, log, segmentsBeforePromotion, leaderImage))
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  private def verifyInitOnControlPlane(leader: PromotedSwitchedFollower, seal: Long, classicPrefixInRemoteStorage: Boolean): Unit =
+    verify(leader.initDisklessLogManager).initOnControlPlane(
+      any(),
+      ArgumentMatchers.eq(leader.topicId),
+      ArgumentMatchers.eq(leader.tp.topic),
+      ArgumentMatchers.eq(seal),
+      any(),
+      ArgumentMatchers.eq(classicPrefixInRemoteStorage)
+    )
+
+  @ParameterizedTest(name = "testApplyDeltaPassesClassicPrefixFlagToInitOnControlPlane with classicPrefixInRemoteStorage: {0}")
+  @ValueSource(booleans = Array(true, false))
+  def testApplyDeltaPassesClassicPrefixFlagToInitOnControlPlane(classicPrefixInRemoteStorage: Boolean): Unit = {
+    val sealOffset = 10L
+    withPromotedSwitchedFollower(sealOffset, leoAtSeal = sealOffset, classicPrefixInRemoteStorage) { leader =>
+      // The new leader hands the registration's flag to the manager, which decides whether to watch the upload.
+      verifyInitOnControlPlane(leader, sealOffset, classicPrefixInRemoteStorage)
+    }
+  }
+
+  @Test
+  def testApplyDeltaReInitsOnControlPlaneWhenAnOperatorLowersTheSeal(): Unit = {
+    val sealOffset = 10L
+    val loweredSeal = 7L
+    withPromotedSwitchedFollower(sealOffset, leoAtSeal = sealOffset, classicPrefixInRemoteStorage = false) { leader =>
+      // An operator re-seal writes only the lower seal, so the leader and its epoch stay the same.
+      when(leader.replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(leader.tp)).thenReturn(loweredSeal)
+      val resealDelta = new TopicsDelta(leader.leaderImage.topics())
+      val resealRecord = new PartitionChangeRecord()
+        .setTopicId(leader.topicId)
+        .setPartitionId(leader.tp.partition())
+      resealRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicToDisklessStartOffset(loweredSeal))
+      resealDelta.replay(resealRecord)
+      assertTrue(resealDelta.localChanges(leader.brokerId).leaders.containsKey(leader.tp))
+      leader.replicaManager.applyDelta(resealDelta, imageFromTopics(resealDelta.apply()))
+
+      // The manager hears about the new seal even though this broker didn't just become leader.
+      verifyInitOnControlPlane(leader, sealOffset, classicPrefixInRemoteStorage = false)
+      verifyInitOnControlPlane(leader, loweredSeal, classicPrefixInRemoteStorage = false)
     }
   }
 

@@ -4136,16 +4136,17 @@ class ReplicaManager(val config: KafkaConfig,
           val previousPartition = Option(delta.image().getTopic(info.topicId)).flatMap { topicImage =>
             Option(topicImage.partitions().get(tp.partition))
           }
-          val disklessStartOffsetJustCommitted = previousPartition.exists { previous =>
-            previous.classicToDisklessStartOffset < 0
+          val disklessStartOffsetChanged = previousPartition.exists { previous =>
+            previous.classicToDisklessStartOffset != partitionRegistration.classicToDisklessStartOffset
           }
 
           val becameLocalLeader = previousPartition.forall(_.leader != config.nodeId) &&
             partitionRegistration.leader == config.nodeId
           // Init Diskless Log on Control Plane if this broker is leader and either:
-          // - classicToDisklessStartOffset was just committed to the metadata log (offset transition)
+          // - classicToDisklessStartOffset changed in the metadata log: the first commit, or an
+          //   operator re-seal that doesn't bump the leader epoch but moves the upload watch's seal
           // - this broker just became leader (failover with already-committed offset)
-          val shouldInitOnControlPlane = disklessStartOffsetJustCommitted || becameLocalLeader
+          val shouldInitOnControlPlane = disklessStartOffsetChanged || becameLocalLeader
 
           if (shouldInitOnControlPlane) {
             onlinePartition(tp) match {
@@ -4165,7 +4166,8 @@ class ReplicaManager(val config: KafkaConfig,
                   topicId = info.topicId,
                   topicName = tp.topic,
                   classicToDisklessStartOffset = partitionRegistration.classicToDisklessStartOffset,
-                  producerStates = producerStates
+                  producerStates = producerStates,
+                  classicPrefixInRemoteStorage = partitionRegistration.classicPrefixInRemoteStorage
                 )
               case Some(_) =>
                 stateChangeLogger.info(
