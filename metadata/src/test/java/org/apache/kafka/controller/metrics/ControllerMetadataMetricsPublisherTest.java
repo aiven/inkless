@@ -21,8 +21,10 @@ import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.common.metadata.ConfigRecord;
+import org.apache.kafka.common.metadata.PartitionChangeRecord;
 import org.apache.kafka.common.metadata.PartitionRecord;
 import org.apache.kafka.common.metadata.TopicRecord;
+import org.apache.kafka.common.protocol.ApiMessage;
 import org.apache.kafka.image.AclsImage;
 import org.apache.kafka.image.ClientQuotasImage;
 import org.apache.kafka.image.ClusterImage;
@@ -42,6 +44,8 @@ import org.apache.kafka.image.loader.LogDeltaManifest;
 import org.apache.kafka.image.loader.SnapshotManifest;
 import org.apache.kafka.image.writer.ImageReWriter;
 import org.apache.kafka.image.writer.ImageWriterOptions;
+import org.apache.kafka.metadata.InitDisklessLogFields;
+import org.apache.kafka.metadata.PartitionRegistration;
 import org.apache.kafka.raft.LeaderAndEpoch;
 import org.apache.kafka.server.common.MetadataVersion;
 import org.apache.kafka.server.fault.MockFaultHandler;
@@ -410,6 +414,177 @@ public class ControllerMetadataMetricsPublisherTest {
                 "Both partitions (old + new) should be counted as diskless exactly once");
             assertEquals(0, env.metrics.offlinePartitionCount());
             assertEquals(1, env.metrics.disklessWithoutRemoteStorageCount());
+        }
+    }
+
+    private static final Uuid SWITCHED_TOPIC_ID = Uuid.fromString("JKNp6fQaT-icHxh654ok-w");
+    private static final String SWITCHED_TOPIC_NAME = "switched-topic";
+
+    private static TopicRecord topicRecord() {
+        return new TopicRecord().setTopicId(SWITCHED_TOPIC_ID).setName(SWITCHED_TOPIC_NAME);
+    }
+
+    private static PartitionRecord partitionRecord(
+        int partitionId,
+        long classicToDisklessStartOffset,
+        boolean classicPrefixInRemoteStorage
+    ) {
+        PartitionRecord record = new PartitionRecord()
+            .setTopicId(SWITCHED_TOPIC_ID)
+            .setPartitionId(partitionId)
+            .setReplicas(java.util.List.of(0, 1, 2))
+            .setIsr(java.util.List.of(0, 1, 2))
+            .setLeader(0)
+            .setLeaderEpoch(0)
+            .setPartitionEpoch(0);
+        if (classicToDisklessStartOffset != PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET) {
+            record.unknownTaggedFields().add(
+                InitDisklessLogFields.encodeClassicToDisklessStartOffset(classicToDisklessStartOffset));
+        }
+        if (classicPrefixInRemoteStorage) {
+            record.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicPrefixInRemoteStorage());
+        }
+        return record;
+    }
+
+    private static ConfigRecord disklessConfigRecord(boolean enabled) {
+        return new ConfigRecord()
+            .setResourceType(ConfigResource.Type.TOPIC.id())
+            .setResourceName(SWITCHED_TOPIC_NAME)
+            .setName(TopicConfig.DISKLESS_ENABLE_CONFIG)
+            .setValue(Boolean.toString(enabled));
+    }
+
+    private static PartitionChangeRecord partitionChangeRecord(int partitionId) {
+        return new PartitionChangeRecord()
+            .setTopicId(SWITCHED_TOPIC_ID)
+            .setPartitionId(partitionId);
+    }
+
+    private static PartitionChangeRecord sealCommit(int partitionId, long seal) {
+        PartitionChangeRecord record = partitionChangeRecord(partitionId);
+        record.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicToDisklessStartOffset(seal));
+        return record;
+    }
+
+    private static PartitionChangeRecord flagCommit(int partitionId) {
+        PartitionChangeRecord record = partitionChangeRecord(partitionId);
+        record.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicPrefixInRemoteStorage());
+        return record;
+    }
+
+    // Replays the records on top of the image, publishes the delta, and returns the new image.
+    private static MetadataImage publish(TestEnv env, MetadataImage image, boolean isSnapshot, ApiMessage... records) {
+        MetadataDelta delta = new MetadataDelta(image);
+        for (ApiMessage record : records) {
+            delta.replay(record);
+        }
+        MetadataImage newImage = delta.apply(MetadataProvenance.EMPTY);
+        env.publisher.onMetadataUpdate(delta, newImage, fakeManifest(isSnapshot));
+        return newImage;
+    }
+
+    // Publishes a diskless topic with four partitions in different switch states, as a snapshot.
+    // Only partition 2 has a committed seal and an unset flag.
+    private static MetadataImage publishSwitchStates(TestEnv env) {
+        return publish(env, MetadataImage.EMPTY, true,
+            topicRecord(),
+            // Born diskless: no seal.
+            partitionRecord(0, PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET, false),
+            // Switch started, seal not committed yet.
+            partitionRecord(1, PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING, false),
+            // Seal committed, classic prefix not in remote storage yet.
+            partitionRecord(2, 5L, false),
+            // Seal committed and classic prefix in remote storage.
+            partitionRecord(3, 5L, true),
+            disklessConfigRecord(true));
+    }
+
+    @Test
+    public void testSwitchedPartitionsPendingUploadCountsOnlyCommittedSealsWithoutFlagInSnapshot() {
+        try (TestEnv env = new TestEnv()) {
+            publishSwitchStates(env);
+
+            assertEquals(4, env.metrics.disklessPartitionCount());
+            assertEquals(1, env.metrics.disklessSwitchedPartitionsPendingUploadCount());
+        }
+    }
+
+    @Test
+    public void testSwitchedPartitionsPendingUploadIgnoresClassicTopics() {
+        try (TestEnv env = new TestEnv()) {
+            // A classic topic has no diskless.enable config, so its partitions never count.
+            publish(env, MetadataImage.EMPTY, true, topicRecord(), partitionRecord(0, 5L, false));
+
+            assertEquals(0, env.metrics.disklessPartitionCount());
+            assertEquals(0, env.metrics.disklessSwitchedPartitionsPendingUploadCount());
+        }
+    }
+
+    @Test
+    public void testSwitchedPartitionsPendingUploadTracksSealAndFlagCommits() {
+        try (TestEnv env = new TestEnv()) {
+            MetadataImage image = publishSwitchStates(env);
+            assertEquals(1, env.metrics.disklessSwitchedPartitionsPendingUploadCount());
+
+            // The seal commit for partition 1 moves it into the count.
+            image = publish(env, image, false, sealCommit(1, 5L));
+            assertEquals(2, env.metrics.disklessSwitchedPartitionsPendingUploadCount());
+
+            // The flag commit for partition 2 moves it out.
+            image = publish(env, image, false, flagCommit(2));
+            assertEquals(1, env.metrics.disklessSwitchedPartitionsPendingUploadCount());
+
+            // A change that doesn't touch the switch state leaves the count alone.
+            image = publish(env, image, false, partitionChangeRecord(1).setIsr(java.util.List.of(0, 1)));
+            assertEquals(1, env.metrics.disklessSwitchedPartitionsPendingUploadCount());
+
+            // The flag commit for partition 1 empties the count.
+            publish(env, image, false, flagCommit(1));
+            assertEquals(0, env.metrics.disklessSwitchedPartitionsPendingUploadCount());
+        }
+    }
+
+    @Test
+    public void testSwitchedPartitionsPendingUploadDecrementsOnTopicDelete() {
+        try (TestEnv env = new TestEnv()) {
+            MetadataImage image = publishSwitchStates(env);
+            assertEquals(1, env.metrics.disklessSwitchedPartitionsPendingUploadCount());
+
+            publish(env, image, false, new org.apache.kafka.common.metadata.RemoveTopicRecord().setTopicId(SWITCHED_TOPIC_ID));
+
+            assertEquals(0, env.metrics.disklessPartitionCount());
+            assertEquals(0, env.metrics.disklessSwitchedPartitionsPendingUploadCount());
+        }
+    }
+
+    @Test
+    public void testSwitchedPartitionsPendingUploadCountsTopicCreatedThroughDelta() {
+        // Creating the topic and its diskless.enable config in one delta must count each partition once.
+        try (TestEnv env = new TestEnv()) {
+            publish(env, MetadataImage.EMPTY, false,
+                topicRecord(), partitionRecord(0, 5L, false), partitionRecord(1, 5L, true), disklessConfigRecord(true));
+
+            assertEquals(2, env.metrics.disklessPartitionCount());
+            assertEquals(1, env.metrics.disklessSwitchedPartitionsPendingUploadCount());
+        }
+    }
+
+    @Test
+    public void testSwitchedPartitionsPendingUploadFollowsDisklessConfigChange() {
+        try (TestEnv env = new TestEnv()) {
+            // Start with a topic that the metrics treat as classic, so nothing counts yet.
+            MetadataImage image = publish(env, MetadataImage.EMPTY, true,
+                topicRecord(), partitionRecord(0, 5L, false), partitionRecord(1, 5L, true));
+            assertEquals(0, env.metrics.disklessSwitchedPartitionsPendingUploadCount());
+
+            // Enabling diskless recategorizes the pending partition into the count.
+            image = publish(env, image, false, disklessConfigRecord(true));
+            assertEquals(1, env.metrics.disklessSwitchedPartitionsPendingUploadCount());
+
+            // Disabling it takes the partition back out.
+            publish(env, image, false, disklessConfigRecord(false));
+            assertEquals(0, env.metrics.disklessSwitchedPartitionsPendingUploadCount());
         }
     }
 }

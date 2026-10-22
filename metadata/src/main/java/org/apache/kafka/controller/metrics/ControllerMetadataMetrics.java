@@ -78,6 +78,8 @@ public final class ControllerMetadataMetrics implements AutoCloseable {
         "KafkaController", "DisklessOfflinePartitionCount");
     private static final MetricName DISKLESS_WITHOUT_REMOTE_STORAGE_COUNT = getMetricName(
         "KafkaController", "DisklessWithoutRemoteStorageCount");
+    private static final MetricName DISKLESS_SWITCHED_PARTITIONS_PENDING_UPLOAD_COUNT = getMetricName(
+        "KafkaController", "DisklessSwitchedPartitionsPendingUploadCount");
 
     private final Optional<MetricsRegistry> registry;
     private final AtomicInteger fencedBrokerCount = new AtomicInteger(0);
@@ -96,6 +98,7 @@ public final class ControllerMetadataMetrics implements AutoCloseable {
     private final AtomicInteger disklessPartitionCount = new AtomicInteger(0);
     private final AtomicInteger disklessOfflinePartitionCount = new AtomicInteger(0);
     private final AtomicInteger disklessWithoutRemoteStorageCount = new AtomicInteger(0);
+    private final AtomicInteger disklessSwitchedPartitionsPendingUploadCount = new AtomicInteger(0);
 
     /**
      * Create a new ControllerMetadataMetrics object.
@@ -185,6 +188,12 @@ public final class ControllerMetadataMetrics implements AutoCloseable {
             @Override
             public Integer value() {
                 return disklessWithoutRemoteStorageCount();
+            }
+        }));
+        registry.ifPresent(r -> r.newGauge(DISKLESS_SWITCHED_PARTITIONS_PENDING_UPLOAD_COUNT, new Gauge<Integer>() {
+            @Override
+            public Integer value() {
+                return disklessSwitchedPartitionsPendingUploadCount();
             }
         }));
     }
@@ -393,6 +402,18 @@ public final class ControllerMetadataMetrics implements AutoCloseable {
         return this.disklessWithoutRemoteStorageCount.get();
     }
 
+    public void setDisklessSwitchedPartitionsPendingUploadCount(int count) {
+        this.disklessSwitchedPartitionsPendingUploadCount.set(count);
+    }
+
+    public void addToDisklessSwitchedPartitionsPendingUploadCount(int delta) {
+        this.disklessSwitchedPartitionsPendingUploadCount.addAndGet(delta);
+    }
+
+    public int disklessSwitchedPartitionsPendingUploadCount() {
+        return this.disklessSwitchedPartitionsPendingUploadCount.get();
+    }
+
     @Override
     public void close() {
         registry.ifPresent(r -> List.of(
@@ -410,7 +431,8 @@ public final class ControllerMetadataMetrics implements AutoCloseable {
             DISKLESS_TOPIC_COUNT,
             DISKLESS_PARTITION_COUNT,
             DISKLESS_OFFLINE_PARTITION_COUNT,
-            DISKLESS_WITHOUT_REMOTE_STORAGE_COUNT
+            DISKLESS_WITHOUT_REMOTE_STORAGE_COUNT,
+            DISKLESS_SWITCHED_PARTITIONS_PENDING_UPLOAD_COUNT
         ).forEach(r::removeMetric));
         for (int brokerId : brokerRegistrationStates.keySet()) {
             removeBrokerRegistrationStateMetric(brokerId);

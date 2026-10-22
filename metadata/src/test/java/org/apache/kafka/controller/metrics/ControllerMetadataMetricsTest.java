@@ -67,6 +67,7 @@ public class ControllerMetadataMetricsTest {
                         "kafka.controller:type=KafkaController,name=DisklessPartitionCount",
                         "kafka.controller:type=KafkaController,name=DisklessOfflinePartitionCount",
                         "kafka.controller:type=KafkaController,name=DisklessWithoutRemoteStorageCount",
+                        "kafka.controller:type=KafkaController,name=DisklessSwitchedPartitionsPendingUploadCount",
                         "kafka.controller:type=ControllerStats,name=UncleanLeaderElectionsPerSec",
                         "kafka.controller:type=ControllerStats,name=ElectionFromEligibleLeaderReplicasPerSec"
                     ));
@@ -342,6 +343,18 @@ public class ControllerMetadataMetricsTest {
                     get(metricName("KafkaController", "DisklessWithoutRemoteStorageCount"))).value(),
             (m, v) -> m.setDisklessWithoutRemoteStorageCount(v),
             (m, v) -> m.addToDisklessWithoutRemoteStorageCount(v)
+        );
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    public void testDisklessSwitchedPartitionsPendingUploadCountMetric() {
+        testIntGaugeMetric(
+            m -> m.disklessSwitchedPartitionsPendingUploadCount(),
+            registry -> ((Gauge<Integer>) registry.allMetrics().
+                    get(metricName("KafkaController", "DisklessSwitchedPartitionsPendingUploadCount"))).value(),
+            (m, v) -> m.setDisklessSwitchedPartitionsPendingUploadCount(v),
+            (m, v) -> m.addToDisklessSwitchedPartitionsPendingUploadCount(v)
         );
     }
 }
