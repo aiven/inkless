@@ -7049,10 +7049,12 @@ class ReplicaManagerInklessTest {
                                                              seal: Long,
                                                              leo: Long,
                                                              disklessLeaderEpoch: Int,
-                                                             hw: Long): Unit = {
+                                                             hw: Long,
+                                                             rollAtSeal: Boolean = false): Unit = {
     if (seal > 0) {
       val classicRecords = (0L until seal).map(i => new SimpleRecord(s"classic-$i".getBytes))
       log.appendAsFollower(TestUtils.records(classicRecords, baseOffset = 0L, partitionLeaderEpoch = 0), 0)
+      if (rollAtSeal) log.roll()
     }
     if (leo > seal) {
       val disklessRecords = (seal until leo).map(i => new SimpleRecord(s"diskless-$i".getBytes))
@@ -7291,6 +7293,169 @@ class ReplicaManagerInklessTest {
         replicaManager, initDisklessLogManager, tp, topicId, brokerId, log, segmentsBeforePromotion, leaderImage))
     } finally {
       replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testApplyDeltaRollsSwitchedFollowerTailWhenItBecomesLeader(): Unit = {
+    val sealOffset = 10L
+    withPromotedSwitchedFollower(sealOffset, leoAtSeal = 5L, classicPrefixInRemoteStorage = false) { leader =>
+      // The roll closes the tail segment so the remote log manager can copy the whole prefix.
+      // It moves no offsets.
+      val log = leader.log
+      assertEquals(leader.segmentsBeforePromotion + 1, log.numberOfSegments)
+      assertEquals(sealOffset, log.activeSegment().baseOffset())
+      assertEquals(0, log.activeSegment().size())
+      assertEquals(sealOffset, log.logEndOffset)
+      assertEquals(0L, log.logStartOffset)
+    }
+  }
+
+  @Test
+  def testApplyDeltaDoesNotRollNewLeaderWhenClassicPrefixIsInRemoteStorage(): Unit = {
+    val leoAtSeal = 5L
+    withPromotedSwitchedFollower(sealOffset = 10L, leoAtSeal, classicPrefixInRemoteStorage = true) { leader =>
+      // Phase 2: the prefix is already in remote storage, so the leader has nothing to unblock.
+      assertEquals(leader.segmentsBeforePromotion, leader.log.numberOfSegments)
+      assertEquals(leoAtSeal, leader.log.activeSegment().baseOffset())
+    }
+  }
+
+  @Test
+  def testApplyDeltaDoesNotRollNewLeaderWithEmptyActiveSegment(): Unit = {
+    val sealOffset = 10L
+    // The follower already had the whole prefix when it sealed, so sealing rolled it and the active segment is empty.
+    withPromotedSwitchedFollower(sealOffset, leoAtSeal = sealOffset, classicPrefixInRemoteStorage = false) { leader =>
+      // Rolling an empty segment would leave a stray empty segment behind on every leader change.
+      assertEquals(leader.segmentsBeforePromotion, leader.log.numberOfSegments)
+      assertEquals(sealOffset, leader.log.activeSegment().baseOffset())
+      assertEquals(0, leader.log.activeSegment().size())
+    }
+  }
+
+  @Test
+  def testApplyDeltaRollsConsolidatedLeaderWhoseActiveSegmentHoldsTheClassicTail(): Unit = {
+    val sealOffset = 10L
+    val leo = 13L
+    applyDeltaToConsolidatedLeaderAboveTheSeal(sealOffset, leo, rollAtSeal = false) { (log, segmentsBefore) =>
+      // Consolidation appended the diskless suffix to the segment that holds the classic tail, so the roll closes both.
+      assertEquals(segmentsBefore + 1, log.numberOfSegments)
+      assertEquals(leo, log.activeSegment().baseOffset())
+      assertEquals(0, log.activeSegment().size())
+    }
+  }
+
+  @Test
+  def testApplyDeltaDoesNotRollConsolidatedLeaderWhoseActiveSegmentStartsAtTheSeal(): Unit = {
+    val sealOffset = 10L
+    val leo = 13L
+    applyDeltaToConsolidatedLeaderAboveTheSeal(sealOffset, leo, rollAtSeal = true) { (log, segmentsBefore) =>
+      // The classic prefix is in closed segments, and the active segment holds only diskless records.
+      assertEquals(segmentsBefore, log.numberOfSegments)
+      assertEquals(sealOffset, log.activeSegment().baseOffset())
+    }
+  }
+
+  // Makes this broker the phase 1 leader of a consolidating partition whose log holds the classic prefix
+  // `[0, sealOffset)` and a diskless suffix `[sealOffset, leo)`. Both share the active segment unless
+  // `rollAtSeal` closes the prefix first. `check` receives the log and its segment count before the delta.
+  private def applyDeltaToConsolidatedLeaderAboveTheSeal(sealOffset: Long, leo: Long, rollAtSeal: Boolean)(
+    check: (UnifiedLog, Int) => Unit
+  ): Unit = {
+    val topicName = "consolidating-topic"
+    val topicId = Uuid.randomUuid()
+    val tp = new TopicPartition(topicName, 0)
+    val brokerId = 1
+    val otherReplica = 2
+    val disklessLeaderEpoch = 5
+
+    val consolidationCtor = mockConstruction(classOf[ConsolidationFetcherManager])
+    try {
+      val replicaManager = createReplicaManager(
+        List(topicName),
+        disklessRemoteStorageConsolidationEnabled = true,
+        consolidatingDisklessTopics = Set(topicName),
+      )
+      try {
+        val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+        populateConsolidatedLocalLogAndCheckpointedHwm(
+          replicaManager, tp, log, sealOffset, leo, disklessLeaderEpoch, hw = sealOffset, rollAtSeal = rollAtSeal)
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(sealOffset)
+        when(replicaManager.inklessMetadataView().getDisklessLeaderEpoch(tp)).thenReturn(disklessLeaderEpoch)
+        val segmentsBefore = log.numberOfSegments
+
+        val delta = new TopicsDelta(TopicsImage.EMPTY)
+        delta.replay(new TopicRecord().setName(topicName).setTopicId(topicId))
+        val partitionRecord = new PartitionRecord()
+          .setPartitionId(0)
+          .setTopicId(topicId)
+          .setReplicas(util.Arrays.asList(brokerId, otherReplica))
+          .setIsr(util.Arrays.asList(brokerId, otherReplica))
+          .setLeader(brokerId)
+          .setLeaderEpoch(disklessLeaderEpoch + 1)
+          .setPartitionEpoch(0)
+        partitionRecord.unknownTaggedFields().add(
+          InitDisklessLogFields.encodeClassicToDisklessStartOffset(sealOffset))
+        partitionRecord.unknownTaggedFields().add(
+          InitDisklessLogFields.encodeDisklessLeaderEpoch(disklessLeaderEpoch))
+        delta.replay(partitionRecord)
+
+        replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))
+
+        assertTrue(replicaManager.getPartition(tp).asInstanceOf[HostedPartition.Online[Partition]].partition.isLeader)
+        assertEquals(leo, log.logEndOffset)
+        check(log, segmentsBefore)
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
+    } finally {
+      consolidationCtor.close()
+    }
+  }
+
+  @Test
+  def testApplyDeltaDoesNotRollConsolidatingLeaderBelowTheSeal(): Unit = {
+    val topicName = "switched-consolidating-topic"
+    val topicId = Uuid.randomUuid()
+    val tp = new TopicPartition(topicName, 0)
+    val brokerId = 1
+    val otherReplica = 2
+    val sealOffset = 10L
+    val localLeo = 5L
+
+    val mockFetcherManager = mock(classOf[ReplicaFetcherManager])
+    when(mockFetcherManager.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    val ctorInit: MockedConstruction.MockInitializer[ConsolidationFetcherManager] = {
+      case (mockCfm, _) =>
+        when(mockCfm.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    }
+    val consolidationCtor = mockConstruction(classOf[ConsolidationFetcherManager], ctorInit)
+    try {
+      val replicaManager = spy(createReplicaManager(
+        Seq(topicName),
+        disklessRemoteStorageConsolidationEnabled = true,
+        consolidatingDisklessTopics = Set(topicName),
+        mockReplicaFetcherManager = Some(mockFetcherManager),
+        defaultLogConfig = Some(LogTestUtils.createLogConfig(remoteLogStorageEnable = true)),
+      ))
+      try {
+        val pendingImage = applyPendingSwitchDelta(replicaManager, topicName, topicId, tp, brokerId, otherReplica, localLeo)
+        val log = replicaManager.localLogOrException(tp)
+        val segmentsBefore = log.numberOfSegments
+        assertTrue(log.activeSegment().size() > 0)
+
+        commitSealDelta(replicaManager, pendingImage, topicId, tp, brokerId, sealOffset)
+
+        // The leader stays online to rebuild the prefix from remote storage. Its local log doesn't hold
+        // the tail, so a roll can't help the upload.
+        assertTrue(replicaManager.getPartition(tp).isInstanceOf[HostedPartition.Online[Partition]])
+        assertEquals(localLeo, log.logEndOffset)
+        assertEquals(segmentsBefore, log.numberOfSegments)
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
+    } finally {
+      consolidationCtor.close()
     }
   }
 
