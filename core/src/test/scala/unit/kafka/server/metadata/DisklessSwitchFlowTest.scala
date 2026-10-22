@@ -23,13 +23,13 @@ import kafka.coordinator.transaction.TransactionCoordinator
 import kafka.cluster.Partition
 import kafka.log.LogManager
 import kafka.server.QuotaFactory.QuotaManagers
-import kafka.server.{AwaitingMetadata, InitDisklessLogManager, InitDisklessLogState, MockInitDisklessLogChannelManager, ReplicaManager, SendingToController}
+import kafka.server.{AwaitingMetadata, InitDisklessLogManager, InitDisklessLogState, MockInitDisklessLogChannelManager, ReplicaManager, SendingFlagToController, SendingToController}
 import kafka.server.share.SharePartitionManager
 import kafka.utils.TestUtils
 import org.apache.kafka.common.{Node, TopicPartition, Uuid}
 import org.apache.kafka.common.config.{ConfigResource, TopicConfig}
-import org.apache.kafka.common.protocol.Errors
-import org.apache.kafka.common.message.InitDisklessLogResponseData
+import org.apache.kafka.common.protocol.{ApiKeys, Errors}
+import org.apache.kafka.common.message.{InitDisklessLogResponseData, SetClassicPrefixInRemoteStorageResponseData}
 import org.apache.kafka.metadata.LeaderConstants.NO_LEADER_CHANGE
 import org.apache.kafka.metadata.PartitionRegistration
 import org.apache.kafka.common.metadata.{ConfigRecord, PartitionChangeRecord, PartitionRecord, TopicRecord}
@@ -131,8 +131,27 @@ class DisklessSwitchFlowTest {
       ctx.time.sleep(ctx.initDisklessLogManager.lingerMs)
       ctx.scheduler.tick()
 
-      // Final check: metadata-triggered control-plane init executed.
+      // Metadata-triggered control-plane init executed.
       verify(ctx.controlPlane, times(1)).initDisklessLog(any())
+
+      // Step 3: the seal is 0, so the classic prefix is empty and nothing needs to upload.
+      // The leader asks the controller to set the `classicPrefixInRemoteStorage` flag.
+      assertTrackedStates(ctx, Map(tp -> classOf[SendingFlagToController]))
+      ctx.time.sleep(ctx.initDisklessLogManager.lingerMs)
+      ctx.scheduler.tick()
+      assertEquals(1, ctx.channelManager.requests.size())
+      val flagRequest = ctx.channelManager.requests.peek()
+      assertEquals(ApiKeys.SET_CLASSIC_PREFIX_IN_REMOTE_STORAGE, flagRequest.apiKey)
+      val flagData = flagRequest.setFlagRequestData
+      assertEquals(ctx.config.brokerId, flagData.brokerId())
+      assertEquals(1, flagData.topics().size())
+      assertEquals(topicId, flagData.topics().get(0).topicId())
+      assertEquals(0, flagData.topics().get(0).partitions().get(0).partitionId())
+      assertEquals(0L, flagData.topics().get(0).partitions().get(0).classicToDisklessStartOffset())
+
+      // Step 4: the controller commits the flag and the partition leaves tracking.
+      completeNextFlagRequest(ctx, topicId)
+      assertTrackedStates(ctx, Map.empty)
     } finally {
       shutdown(ctx)
     }
@@ -213,8 +232,9 @@ class DisklessSwitchFlowTest {
       assertLongGauge(InitDisklessLogManager.OldestAwaitingMetadataAgeMsMetricName, 0L)
 
       // After PartitionChangeRecord with diskless tagged fields replays: control-plane
-      // init runs and the partition is removed from tracking. All gauges return to 0
-      // and the completed meter increments by 1.
+      // init runs and the completed meter increments by 1. The seal is 0, so there is no
+      // prefix to upload and the partition moves straight to SendingFlagToController.
+      // InFlightPartitions drops to 0 because it counts only the init states.
       val pcrDelta = new MetadataDelta(disklessImage)
       val pcr = new PartitionChangeRecord()
         .setTopicId(topicId)
@@ -227,6 +247,24 @@ class DisklessSwitchFlowTest {
       ctx.metadataPublisher.onMetadataUpdate(pcrDelta, pcrImage, metadataManifest())
       ctx.time.sleep(ctx.initDisklessLogManager.lingerMs)
       ctx.scheduler.tick()
+
+      assertTrackedStates(ctx, Map(tp -> classOf[SendingFlagToController]))
+      assertGauge(InitDisklessLogManager.InFlightPartitionsMetricName, 0)
+      assertGauge(InitDisklessLogManager.AwaitingMetadataPartitionsMetricName, 0)
+      assertGauge(InitDisklessLogManager.WaitingForUploadPartitionsMetricName, 0)
+      assertGauge(InitDisklessLogManager.SendingFlagToControllerPartitionsMetricName, 1)
+      assertLongGauge(InitDisklessLogManager.OldestAwaitingMetadataAgeMsMetricName, 0L)
+      assertLongGauge(InitDisklessLogManager.OldestSendingFlagToControllerAgeMsMetricName, 0L)
+      assertMeterCount(InitDisklessLogManager.InitCompletedPerSecMetricName, 1L)
+
+      // Age advances while the partition waits for the flag request's linger.
+      ctx.time.sleep(50)
+      assertLongGauge(InitDisklessLogManager.OldestSendingFlagToControllerAgeMsMetricName, 50L)
+
+      // After the controller accepts the flag: the partition leaves tracking and all gauges return to 0.
+      ctx.time.sleep(ctx.initDisklessLogManager.lingerMs)
+      ctx.scheduler.tick()
+      completeNextFlagRequest(ctx, topicId)
 
       assertCountGaugesAllZero()
       assertOldestAgesAllZero()
@@ -696,6 +734,13 @@ class DisklessSwitchFlowTest {
       ctx.scheduler.tick()
 
       verify(ctx.controlPlane, times(1)).initDisklessLog(any())
+      // The classic prefix is empty (seal 0) and the flag is unset, so the partition stays
+      // tracked until the controller commits the `classicPrefixInRemoteStorage` flag.
+      assertTrackedStates(ctx, Map(tp -> classOf[SendingFlagToController]))
+
+      ctx.time.sleep(ctx.initDisklessLogManager.lingerMs)
+      ctx.scheduler.tick()
+      completeNextFlagRequest(ctx, topicId)
       assertTrackedStates(ctx, Map.empty)
       assertEquals(None, ctx.initDisklessLogManager.getInitState(tp))
     } finally {
@@ -908,6 +953,12 @@ class DisklessSwitchFlowTest {
       ctx.scheduler.tick()
       verify(ctx.controlPlane, times(1)).initDisklessLog(any())
 
+      // The leader asks the controller to set the `classicPrefixInRemoteStorage` flag, which is expected traffic. Settle it
+      // so the assertions below see only what a same-leader change adds.
+      ctx.time.sleep(ctx.initDisklessLogManager.lingerMs)
+      ctx.scheduler.tick()
+      completeNextFlagRequest(ctx, topicId)
+
       val sameLeaderDelta = new MetadataDelta(pcrImage)
       sameLeaderDelta.replay(new PartitionChangeRecord()
         .setTopicId(topicId)
@@ -1028,6 +1079,8 @@ class DisklessSwitchFlowTest {
       InitDisklessLogManager.WaitingForReplicationPartitionsMetricName,
       InitDisklessLogManager.SendingToControllerPartitionsMetricName,
       InitDisklessLogManager.AwaitingMetadataPartitionsMetricName,
+      InitDisklessLogManager.WaitingForUploadPartitionsMetricName,
+      InitDisklessLogManager.SendingFlagToControllerPartitionsMetricName,
     ).foreach(name => assertGauge(name, 0))
   }
 
@@ -1036,7 +1089,25 @@ class DisklessSwitchFlowTest {
       InitDisklessLogManager.OldestWaitingForReplicationAgeMsMetricName,
       InitDisklessLogManager.OldestSendingToControllerAgeMsMetricName,
       InitDisklessLogManager.OldestAwaitingMetadataAgeMsMetricName,
+      InitDisklessLogManager.OldestWaitingForUploadAgeMsMetricName,
+      InitDisklessLogManager.OldestSendingFlagToControllerAgeMsMetricName,
     ).foreach(name => assertLongGauge(name, 0L))
+  }
+
+  // Completes the oldest captured request, which must be a SetClassicPrefixInRemoteStorage call, with NONE for partition 0.
+  private def completeNextFlagRequest(ctx: TestContext, topicId: Uuid): Unit = {
+    assertEquals(1, ctx.channelManager.requests.size())
+    val request = ctx.channelManager.requests.poll()
+    assertEquals(ApiKeys.SET_CLASSIC_PREFIX_IN_REMOTE_STORAGE, request.apiKey)
+    request.complete(new SetClassicPrefixInRemoteStorageResponseData().setTopics(util.List.of(
+      new SetClassicPrefixInRemoteStorageResponseData.TopicResponse()
+        .setTopicId(topicId)
+        .setPartitions(util.List.of(
+          new SetClassicPrefixInRemoteStorageResponseData.PartitionResponse()
+            .setPartitionId(0)
+            .setErrorCode(Errors.NONE.code())
+        ))
+    )))
   }
 
   private def assertTrackedStates(
