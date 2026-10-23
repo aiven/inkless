@@ -295,6 +295,37 @@ public class TopicSwitchCommandTest {
     }
 
     @Test
+    public void testSealRejectsExplicitOffsetAboveCommittedSeal() throws Exception {
+        mockDescribeSeal(0, 100L);
+
+        RuntimeException ex = assertThrows(RuntimeException.class,
+            () -> runSealCommand(0, Optional.of(120L), false));
+        assertTrue(ex.getMessage().contains("exceeds the committed seal offset (100)"), ex.getMessage());
+        verify(adminClient, never()).alterDisklessSwitch(any(), anyInt(), anyLong(), any());
+    }
+
+    @Test
+    public void testSealDryRunRejectsExplicitOffsetAboveCommittedSeal() throws Exception {
+        mockDescribeSeal(0, 100L);
+
+        RuntimeException ex = assertThrows(RuntimeException.class,
+            () -> runSealCommand(0, Optional.of(120L), true));
+        assertTrue(ex.getMessage().contains("exceeds the committed seal offset (100)"), ex.getMessage());
+        verify(adminClient, never()).alterDisklessSwitch(any(), anyInt(), anyLong(), any());
+    }
+
+    @Test
+    public void testSealCommitsExplicitOffsetEqualToCommittedSeal() throws Exception {
+        mockDescribeSeal(0, 100L);
+        mockLogRange(0, 0, 150);
+        mockAlterDisklessSwitch();
+
+        runSealCommand(0, Optional.of(100L), false);
+
+        verify(adminClient).alterDisklessSwitch(eq(TOPIC), eq(0), eq(100L), any(AlterDisklessSwitchOptions.class));
+    }
+
+    @Test
     public void testSealRejectsExplicitOffsetWhenClassicPrefixInRemoteStorage() throws Exception {
         mockDescribeSeal(0, 100L, true);
 

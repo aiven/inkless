@@ -173,7 +173,7 @@ Because a negative offset means the partition is not switched, `merge` also drop
 
 The command validates before committing: for a concrete (`>= 0`) seal it requires the seal offset to fall within the classic log range `[logStartOffset, logEndOffset]` (read via `listOffsets`), so the seal cannot point past the end of the log or below its start — in either case the classic log would be missing offsets it is supposed to own. Note the end offset is the leader's log end offset, not the replication high watermark, so this does not by itself prove every in-sync replica has replicated up to the seal. The `--dry-run` flag performs this validation and reports the action without writing anything.
 
-The command also reads the partition when you omit `--offset` or pass an offset `>= 0`. If `classicPrefixInRemoteStorage` is `true` in that read, the command fails before it sends a request, including with `--dry-run`. The `-1` and `-2` offsets don't read the partition, which keeps them usable with `--bootstrap-controller`. For those offsets, the controller does all the checking and `--dry-run` doesn't validate them.
+The command also reads the partition when you omit `--offset` or pass an offset `>= 0`. If `classicPrefixInRemoteStorage` is `true` in that read, the command fails before it sends a request, including with `--dry-run`. If the partition already has a committed seal, an explicit offset that exceeds it fails the same way. The `-1` and `-2` offsets don't read the partition, which keeps them usable with `--bootstrap-controller`. For those offsets, the controller does all the checking and `--dry-run` doesn't validate them.
 
 ## Reconciling the control plane
 
