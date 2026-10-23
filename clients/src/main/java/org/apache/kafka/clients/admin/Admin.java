@@ -361,7 +361,8 @@ public interface Admin extends AutoCloseable {
      * requiring the caller to be the partition leader.
      *
      * This is a convenience method for {@link #alterDisklessSwitch(String, int, long, AlterDisklessSwitchOptions)}
-     * with default options.
+     * with default options. The same rules apply: once the partition's classic prefix is in remote
+     * storage, the controller rejects every seal offset.
      *
      * @param topic       The topic name.
      * @param partition   The partition index.
@@ -378,6 +379,10 @@ public interface Admin extends AutoCloseable {
      * Override the classic-to-diskless switch state of a single partition. This is an operator
      * tool that writes the {@code classicToDisklessStartOffset} directly on the controller without
      * requiring the caller to be the partition leader.
+     *
+     * Once the partition's classic prefix is in remote storage ({@code classicPrefixInRemoteStorage} is
+     * set), the controller rejects every seal offset and the result fails with
+     * {@code InvalidRequestException}.
      *
      * @param topic       The topic name.
      * @param partition   The partition index.
