@@ -20,13 +20,18 @@ import org.apache.kafka.clients.CommonClientConfigs;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AlterConfigOp;
 import org.apache.kafka.clients.admin.ConfigEntry;
+import org.apache.kafka.clients.admin.NewPartitions;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.config.TopicConfig;
+import org.apache.kafka.common.errors.InvalidPartitionsException;
 import org.apache.kafka.common.errors.KafkaStorageException;
+import org.apache.kafka.common.errors.TopicExistsException;
+import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.apache.kafka.common.test.KafkaClusterTestKit;
 import org.apache.kafka.common.test.TestKitNodes;
@@ -49,7 +54,9 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
 import io.aiven.inkless.config.InklessConfig;
+import io.aiven.inkless.control_plane.ControlPlane;
 import io.aiven.inkless.control_plane.ControlPlaneAvailability;
+import io.aiven.inkless.control_plane.GetLogInfoRequest;
 import io.aiven.inkless.control_plane.postgres.PostgresControlPlane;
 import io.aiven.inkless.control_plane.postgres.PostgresControlPlaneConfig;
 import io.aiven.inkless.storage_backend.s3.S3Storage;
@@ -64,18 +71,22 @@ import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Cluster coverage for taking the control plane out of service at runtime. Emptying the connection
  * string at runtime makes a diskless produce fail with {@code KAFKA_STORAGE_ERROR}
  * without uploading an object. Restoring the connection string brings produce back without a
- * restart. Classic topics stay manageable throughout.
+ * restart. Classic topics stay manageable throughout. Diskless topic management fails with a
+ * retriable {@code KAFKA_STORAGE_ERROR}. A retry succeeds once an operator restores the connection
+ * string.
  */
 @Testcontainers
 public class InklessControlPlaneOutageClusterTest {
     private static final String OBJECT_KEY_PREFIX = "control-plane-outage-wal";
     private static final String TOPIC_NAME = "control-plane-outage-topic";
     private static final String CLASSIC_TOPIC_NAME = "control-plane-outage-classic-topic";
+    private static final String NEW_TOPIC_NAME = "control-plane-outage-new-topic";
     private static final String CONNECTION_STRING_KEY = InklessConfig.PREFIX
         + InklessConfig.CONTROL_PLANE_PREFIX + PostgresControlPlaneConfig.CONNECTION_STRING_CONFIG;
 
@@ -184,6 +195,74 @@ public class InklessControlPlaneOutageClusterTest {
             TestUtils.waitForCondition(() -> !admin.listTopics().names().get().contains(CLASSIC_TOPIC_NAME), 30_000,
                 "The classic topic must be deleted");
         }
+    }
+
+    @Test
+    @Timeout(value = 300, unit = TimeUnit.SECONDS)
+    void disklessTopicManagementFailsRetriablyWhileConnectionStringIsEmptyAndSucceedsOnRetry() throws Exception {
+        final ControllerServer controller = cluster.controllers().values().iterator().next();
+        final ControlPlaneAvailability availability = controller.sharedServer().inklessControlPlaneAvailability().get();
+        final ControlPlane controlPlane = controller.sharedServer().inklessControlPlane().get();
+        final ConfigResource brokerResource = new ConfigResource(ConfigResource.Type.BROKER, "");
+        final Map<String, String> disklessConfigs = Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true");
+
+        try (Admin admin = Admin.create(Map.of(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers()))) {
+            TestUtils.waitForCondition(availability::isAvailable, 30_000, "Control plane must be available after startup");
+            admin.createTopics(List.of(new NewTopic(TOPIC_NAME, 1, (short) 1).configs(disklessConfigs)))
+                .all().get(30, TimeUnit.SECONDS);
+            final Uuid topicId = topicId(admin, TOPIC_NAME);
+
+            setConnectionString(admin, brokerResource, "");
+            TestUtils.waitForCondition(() -> !availability.isAvailable(), 30_000,
+                "The controller's control plane must go out of service after the connection string is emptied");
+
+            assertControlPlaneUnavailable(() -> admin.deleteTopics(List.of(TOPIC_NAME)).all().get(30, TimeUnit.SECONDS));
+            assertTrue(admin.listTopics().names().get().contains(TOPIC_NAME),
+                "A diskless topic must stay in KRaft metadata when its control-plane deletion fails");
+            assertControlPlaneUnavailable(() -> admin.createTopics(List.of(
+                new NewTopic(NEW_TOPIC_NAME, 1, (short) 1).configs(disklessConfigs))).all().get(30, TimeUnit.SECONDS));
+            assertControlPlaneUnavailable(() -> admin.createPartitions(Map.of(TOPIC_NAME, NewPartitions.increaseTo(2)))
+                .all().get(30, TimeUnit.SECONDS));
+
+            setConnectionString(admin, brokerResource, pgContainer.getJdbcUrl());
+            TestUtils.waitForCondition(availability::isAvailable, 60_000,
+                "The controller's control plane must come back after the connection string is restored");
+
+            // KRaft applied both changes during the outage. The retries finish only the diskless side.
+            final ExecutionException createRetry = assertThrows(ExecutionException.class, () -> admin.createTopics(List.of(
+                new NewTopic(NEW_TOPIC_NAME, 1, (short) 1).configs(disklessConfigs))).all().get(30, TimeUnit.SECONDS));
+            assertInstanceOf(TopicExistsException.class, createRetry.getCause());
+            final Uuid newTopicId = topicId(admin, NEW_TOPIC_NAME);
+            assertEquals(Errors.NONE, logInfoError(controlPlane, newTopicId, 0));
+
+            final ExecutionException partitionsRetry = assertThrows(ExecutionException.class, () -> admin.createPartitions(
+                Map.of(TOPIC_NAME, NewPartitions.increaseTo(2))).all().get(30, TimeUnit.SECONDS));
+            assertInstanceOf(InvalidPartitionsException.class, partitionsRetry.getCause());
+            assertEquals(Errors.NONE, logInfoError(controlPlane, topicId, 1));
+
+            admin.deleteTopics(List.of(TOPIC_NAME, NEW_TOPIC_NAME)).all().get(30, TimeUnit.SECONDS);
+            TestUtils.waitForCondition(() -> {
+                final var names = admin.listTopics().names().get();
+                return !names.contains(TOPIC_NAME) && !names.contains(NEW_TOPIC_NAME);
+            }, 30_000, "The diskless topics must be deleted from KRaft metadata");
+            assertEquals(Errors.UNKNOWN_TOPIC_OR_PARTITION, logInfoError(controlPlane, topicId, 0));
+            assertEquals(Errors.UNKNOWN_TOPIC_OR_PARTITION, logInfoError(controlPlane, newTopicId, 0));
+        }
+    }
+
+    private static void assertControlPlaneUnavailable(final org.junit.jupiter.api.function.Executable executable) {
+        final ExecutionException failure = assertThrows(ExecutionException.class, executable);
+        final KafkaStorageException cause = assertInstanceOf(KafkaStorageException.class, failure.getCause());
+        assertTrue(cause.getMessage().contains("control plane"), cause.getMessage());
+    }
+
+    private static Uuid topicId(final Admin admin, final String topicName) throws Exception {
+        return admin.describeTopics(List.of(topicName)).allTopicNames().get(30, TimeUnit.SECONDS)
+            .get(topicName).topicId();
+    }
+
+    private static Errors logInfoError(final ControlPlane controlPlane, final Uuid topicId, final int partition) {
+        return controlPlane.getLogInfo(List.of(new GetLogInfoRequest(topicId, partition))).get(0).errors();
     }
 
     private void setConnectionString(final Admin admin, final ConfigResource resource, final String value) throws Exception {
