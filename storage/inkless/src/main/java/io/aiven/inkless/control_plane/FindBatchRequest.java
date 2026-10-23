@@ -21,5 +21,11 @@ import org.apache.kafka.common.TopicIdPartition;
 
 public record FindBatchRequest(TopicIdPartition topicIdPartition,
                                long offset,
-                               int maxPartitionFetchBytes) {
+                               int maxPartitionFetchBytes,
+                               boolean includeBacklogTimestamps) {
+    public FindBatchRequest(final TopicIdPartition topicIdPartition,
+                            final long offset,
+                            final int maxPartitionFetchBytes) {
+        this(topicIdPartition, offset, maxPartitionFetchBytes, false);
+    }
 }

@@ -78,4 +78,5 @@ public record BatchMetadata (
             return batchMaxTimestamp;
         }
     }
+
 }
