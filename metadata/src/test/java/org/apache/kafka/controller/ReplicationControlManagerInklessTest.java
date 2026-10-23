@@ -2152,6 +2152,34 @@ public class ReplicationControlManagerInklessTest {
             assertEquals(0, afterUnfence.removingReplicas.length);
         }
 
+        @Test
+        public void testUnfenceElectsUnfencingBrokerForLeaderlessBornDisklessPartition() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setMetadataVersion(MetadataVersion.latestTesting())
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .build();
+            ReplicationControlManager replication = ctx.replicationControl;
+            ctx.registerBrokers(0, 1);
+            ctx.unfenceBrokers(0, 1);
+            Uuid topicId = ctx.createTestTopic("born", new int[][] {new int[] {0, 1}},
+                Map.of(DISKLESS_ENABLE_CONFIG, "true"), (short) 0).topicId();
+
+            // Broker 1 is fenced and leaves the ISR. While broker 1 is still down, broker 0 is
+            // fenced as the last ISR member. fenceBrokers(0, 1) keeps 1 fenced and fences only 0.
+            ctx.fenceBrokers(1);
+            ctx.fenceBrokers(0, 1);
+            PartitionRegistration leaderless = replication.getPartition(topicId, 0);
+            assertEquals(-1, leaderless.leader, "Partition should be leaderless: " + leaderless);
+            assertFalse(Replicas.contains(leaderless.isr, 1), "Broker 1 should be out of the ISR: " + leaderless);
+
+            ctx.unfenceBrokers(1);
+
+            PartitionRegistration partition = replication.getPartition(topicId, 0);
+            assertEquals(1, partition.leader, "Unfencing broker 1 must lead: " + partition);
+            assertTrue(Replicas.contains(partition.isr, 1));
+        }
+
         // Phase 1: move [0, 1, 2] to [1, 2, 3]. Broker 3 holds none of the classic prefix, so it is
         // staged with adding=[3] and removing=[0] until it joins the ISR.
         private Uuid phase1PartitionWithStagedReassignment(ReplicationControlTestContext ctx) {

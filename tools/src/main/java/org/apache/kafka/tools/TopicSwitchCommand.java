@@ -154,6 +154,7 @@ public abstract class TopicSwitchCommand {
                 .help("The seal offset to commit: >= 0 forces (re-)sealing at that offset, -1 aborts the "
                         + "switch and reverts the partition to classic, and -2 re-arms the switch as pending. "
                         + "-1 and -2 are only allowed while the switch is still pending (no seal committed yet). "
+                        + "Once a seal is committed, a new seal offset can't exceed it. "
                         + "Once the partition's classic prefix is in remote storage (classicPrefixInRemoteStorage=true "
                         + "in the state command), the controller rejects every seal offset. "
                         + "If omitted, the partition's current end offset is used; omitting it is only allowed "
@@ -266,7 +267,14 @@ public abstract class TopicSwitchCommand {
         } else {
             sealOffset = offset.get();
             if (sealOffset >= 0) {
-                rejectIfClassicPrefixInRemoteStorage(readSwitchState(adminClient, topic, partition), topic, partition);
+                SwitchState state = readSwitchState(adminClient, topic, partition);
+                rejectIfClassicPrefixInRemoteStorage(state, topic, partition);
+                long committedSeal = state.classicToDisklessStartOffset();
+                if (committedSeal >= 0 && sealOffset > committedSeal) {
+                    throw new RuntimeException(String.format(
+                        "Cannot seal %s-%d at offset %d: it exceeds the committed seal offset (%d).",
+                        topic, partition, sealOffset, committedSeal));
+                }
                 long startOffset = startOffset(adminClient, topic, partition);
                 long endOffset = endOffset(adminClient, topic, partition);
                 if (sealOffset < startOffset || sealOffset > endOffset) {

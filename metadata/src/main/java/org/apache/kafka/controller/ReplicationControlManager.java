@@ -2219,8 +2219,9 @@ public class ReplicationControlManager {
                 // Use PartitionChangeBuilder so that ELR is reconciled alongside the ISR
                 // expansion — a raw PartitionChangeRecord setting only `isr` would leave any
                 // populated ELR untouched, violating the ISR ∩ ELR = ∅ invariant (KIP-966).
-                // The unfencing BrokerRegistrationChangeRecord has not been replayed yet, so treat
-                // brokerId as active if completing a reassignment needs to elect a new leader.
+                // The unfencing BrokerRegistrationChangeRecord has not been replayed yet, so accept
+                // brokerId as leader. This elects it for a leaderless partition and when completing
+                // a reassignment removes the current leader.
                 IntPredicate isAcceptableLeader = r -> r == brokerId || clusterControl.isActive(r);
                 Optional<ApiMessageAndVersion> record = new PartitionChangeBuilder(
                     partition,
