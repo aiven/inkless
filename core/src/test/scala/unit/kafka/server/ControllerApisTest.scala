@@ -17,7 +17,7 @@
 
 package kafka.server
 
-import io.aiven.inkless.control_plane.{ControlPlane, CreateTopicAndPartitionsRequest}
+import io.aiven.inkless.control_plane.{ControlPlane, ControlPlaneUnavailableException, CreateTopicAndPartitionsRequest}
 import kafka.network.RequestChannel
 import kafka.server.QuotaFactory.QuotaManagers
 import org.apache.kafka.clients.admin.AlterConfigOp
@@ -1362,6 +1362,187 @@ class ControllerApisTest {
 
     verify(controller, never()).findTopicIds(any(), any())
     verifyNoInteractions(controlPlane)
+  }
+
+  @Test
+  def testDeleteDisklessTopicsKeepsTopicsWhenControlPlaneIsUnavailable(): Unit = {
+    val disklessId = Uuid.randomUuid()
+    val classicId = Uuid.randomUuid()
+    val controller = new MockController.Builder()
+      .newInitialTopic("diskless", disklessId)
+      .newInitialTopic("classic", classicId)
+      .build()
+    setDisklessTopicImage("diskless", disklessId, 1)
+    val controlPlane = mock(classOf[ControlPlane])
+    doThrow(new ControlPlaneUnavailableException("Diskless control plane is not ready"))
+      .when(controlPlane).deleteTopics(any())
+    controllerApis = createControllerApis(None, controller, inklessControlPlane = Some(controlPlane))
+    val request = new DeleteTopicsRequestData().setTopicNames(util.Arrays.asList("diskless", "classic", "missing"))
+
+    val response = controllerApis.deleteTopics(ANONYMOUS_CONTEXT, request,
+      ApiKeys.DELETE_TOPICS.latestVersion().toInt,
+      hasClusterAuth = true, _ => Set.empty, _ => Set.empty).get().asScala.map(r => r.name() -> r).toMap
+
+    val diskless = response("diskless")
+    assertEquals(disklessId, diskless.topicId())
+    assertEquals(KAFKA_STORAGE_ERROR.code(), diskless.errorCode())
+    assertEquals("Diskless control plane is not ready. The topic was not deleted.", diskless.errorMessage())
+    assertEquals(NONE.code(), response("classic").errorCode())
+    assertEquals(UNKNOWN_TOPIC_OR_PARTITION.code(), response("missing").errorCode())
+    verify(controlPlane).deleteTopics(singleton(disklessId))
+
+    val remaining = controller.findTopicIds(ANONYMOUS_CONTEXT, util.Arrays.asList("diskless", "classic")).get()
+    assertEquals(disklessId, remaining.get("diskless").result())
+    assertTrue(remaining.get("classic").isError)
+  }
+
+  @Test
+  def testCreateDisklessTopicsReturnsRetriableErrorWhenControlPlaneIsUnavailable(): Unit = {
+    val topicName = "foo"
+    val topicId = Uuid.randomUuid()
+    val controller = mock(classOf[Controller])
+    val controlPlane = mock(classOf[ControlPlane])
+    doThrow(new ControlPlaneUnavailableException("Diskless control plane is not ready"))
+      .when(controlPlane).createTopicAndPartitions(any())
+    val result = new CreatableTopicResult().setName(topicName).setTopicId(topicId)
+      .setErrorCode(NONE.code()).setNumPartitions(2)
+    result.setConfigs(singletonList(new CreateTopicsResponseData.CreatableTopicConfigs()
+      .setName(TopicConfig.DISKLESS_ENABLE_CONFIG).setValue("true")))
+    when(controller.createTopics(any(), any(), any())).thenAnswer { _ =>
+      setDisklessTopicImage(topicName, topicId, 2)
+      CompletableFuture.completedFuture(new CreateTopicsResponseData().setTopics(
+        new CreateTopicsResponseData.CreatableTopicResultCollection(singletonList(result).iterator())))
+    }
+    controllerApis = createControllerApis(None, controller, inklessControlPlane = Some(controlPlane))
+    val request = new CreateTopicsRequestData().setTopics(new CreatableTopicCollection(
+      singletonList(new CreatableTopic().setName(topicName).setNumPartitions(2).setReplicationFactor(1)).iterator()))
+
+    val response = controllerApis.createTopics(ANONYMOUS_CONTEXT, request,
+      hasClusterAuth = true, _ => Set(topicName), _ => Set(topicName)).get()
+
+    val topic = response.topics().find(topicName)
+    assertEquals(KAFKA_STORAGE_ERROR.code(), topic.errorCode())
+    assertTrue(topic.errorMessage().startsWith("Diskless control plane is not ready."), topic.errorMessage())
+    verify(controlPlane).createTopicAndPartitions(singleton(
+      new CreateTopicAndPartitionsRequest(topicId, topicName, 2)))
+  }
+
+  @Test
+  def testCreateExistingDisklessTopicInsertsBornDisklessRows(): Unit = {
+    val topicName = "foo"
+    val topicId = Uuid.randomUuid()
+    val controller = mock(classOf[Controller])
+    val controlPlane = mock(classOf[ControlPlane])
+    setDisklessTopicImage(topicName, topicId, 3, Map(0 -> 100L))
+    when(controller.createTopics(any(), any(), any())).thenReturn(CompletableFuture.completedFuture(
+      new CreateTopicsResponseData().setTopics(new CreateTopicsResponseData.CreatableTopicResultCollection(
+        singletonList(new CreatableTopicResult().setName(topicName)
+          .setErrorCode(TOPIC_ALREADY_EXISTS.code()).setErrorMessage(s"Topic '$topicName' already exists.")).iterator()))))
+    controllerApis = createControllerApis(None, controller, inklessControlPlane = Some(controlPlane))
+    val request = new CreateTopicsRequestData().setTopics(new CreatableTopicCollection(
+      singletonList(new CreatableTopic().setName(topicName).setNumPartitions(3).setReplicationFactor(1)).iterator()))
+
+    val response = controllerApis.createTopics(ANONYMOUS_CONTEXT, request,
+      hasClusterAuth = true, _ => Set(topicName), _ => Set(topicName)).get()
+
+    assertEquals(TOPIC_ALREADY_EXISTS.code(), response.topics().find(topicName).errorCode())
+    verify(controlPlane).createTopicAndPartitions(singleton(
+      new CreateTopicAndPartitionsRequest(topicId, topicName, 1, 3)))
+  }
+
+  @Test
+  def testCreateExistingDisklessTopicReturnsRetriableErrorWhenControlPlaneIsUnavailable(): Unit = {
+    val topicName = "foo"
+    val topicId = Uuid.randomUuid()
+    val controller = mock(classOf[Controller])
+    val controlPlane = mock(classOf[ControlPlane])
+    doThrow(new ControlPlaneUnavailableException("Diskless control plane is not ready"))
+      .when(controlPlane).createTopicAndPartitions(any())
+    setDisklessTopicImage(topicName, topicId, 2)
+    when(controller.createTopics(any(), any(), any())).thenReturn(CompletableFuture.completedFuture(
+      new CreateTopicsResponseData().setTopics(new CreateTopicsResponseData.CreatableTopicResultCollection(
+        singletonList(new CreatableTopicResult().setName(topicName)
+          .setErrorCode(TOPIC_ALREADY_EXISTS.code()).setErrorMessage(s"Topic '$topicName' already exists.")).iterator()))))
+    controllerApis = createControllerApis(None, controller, inklessControlPlane = Some(controlPlane))
+    val request = new CreateTopicsRequestData().setTopics(new CreatableTopicCollection(
+      singletonList(new CreatableTopic().setName(topicName).setNumPartitions(2).setReplicationFactor(1)).iterator()))
+
+    val response = controllerApis.createTopics(ANONYMOUS_CONTEXT, request,
+      hasClusterAuth = true, _ => Set(topicName), _ => Set(topicName)).get()
+
+    val topic = response.topics().find(topicName)
+    assertEquals(KAFKA_STORAGE_ERROR.code(), topic.errorCode())
+    assertTrue(topic.errorMessage().startsWith("Diskless control plane is not ready."), topic.errorMessage())
+  }
+
+  @Test
+  def testValidateOnlyCreateExistingDisklessTopicDoesNotCallControlPlane(): Unit = {
+    val topicName = "foo"
+    val controller = mock(classOf[Controller])
+    val controlPlane = mock(classOf[ControlPlane])
+    setDisklessTopicImage(topicName, Uuid.randomUuid(), 2)
+    when(controller.createTopics(any(), any(), any())).thenReturn(CompletableFuture.completedFuture(
+      new CreateTopicsResponseData().setTopics(new CreateTopicsResponseData.CreatableTopicResultCollection(
+        singletonList(new CreatableTopicResult().setName(topicName)
+          .setErrorCode(TOPIC_ALREADY_EXISTS.code()).setErrorMessage(s"Topic '$topicName' already exists.")).iterator()))))
+    controllerApis = createControllerApis(None, controller, inklessControlPlane = Some(controlPlane))
+    val request = new CreateTopicsRequestData().setValidateOnly(true).setTopics(new CreatableTopicCollection(
+      singletonList(new CreatableTopic().setName(topicName).setNumPartitions(2).setReplicationFactor(1)).iterator()))
+
+    val response = controllerApis.createTopics(ANONYMOUS_CONTEXT, request,
+      hasClusterAuth = true, _ => Set(topicName), _ => Set(topicName)).get()
+
+    assertEquals(TOPIC_ALREADY_EXISTS.code(), response.topics().find(topicName).errorCode())
+    verifyNoInteractions(controlPlane)
+  }
+
+  @Test
+  def testCreateExistingClassicTopicDoesNotCallControlPlane(): Unit = {
+    val controller = new MockController.Builder().newInitialTopic("foo", Uuid.randomUuid()).build()
+    val controlPlane = mock(classOf[ControlPlane])
+    controllerApis = createControllerApis(None, controller, inklessControlPlane = Some(controlPlane))
+    val request = new CreateTopicsRequestData().setTopics(new CreatableTopicCollection(
+      singletonList(new CreatableTopic().setName("foo").setNumPartitions(1).setReplicationFactor(1)).iterator()))
+
+    val response = controllerApis.createTopics(ANONYMOUS_CONTEXT, request,
+      hasClusterAuth = true, _ => Set("foo"), _ => Set("foo")).get()
+
+    assertEquals(TOPIC_ALREADY_EXISTS.code(), response.topics().find("foo").errorCode())
+    verifyNoInteractions(controlPlane)
+  }
+
+  @Test
+  def testCreateDisklessPartitionsReturnsRetriableErrorWhenControlPlaneIsUnavailable(): Unit = {
+    val topicName = "foo"
+    val classicTopicName = "bar"
+    val topicId = Uuid.randomUuid()
+    val controller = mock(classOf[Controller])
+    val controlPlane = mock(classOf[ControlPlane])
+    doThrow(new ControlPlaneUnavailableException("No diskless control plane is configured"))
+      .when(controlPlane).createTopicAndPartitions(any())
+    val topic = new CreatePartitionsTopic().setName(topicName).setAssignments(null).setCount(4)
+    val classicTopic = new CreatePartitionsTopic().setName(classicTopicName).setAssignments(null).setCount(4)
+    setDisklessTopicImage(topicName, topicId, 2)
+
+    when(controller.createPartitions(any(), any(), ArgumentMatchers.eq(false)))
+      .thenReturn(CompletableFuture.completedFuture(util.Arrays.asList(
+        new CreatePartitionsTopicResult().setName(topicName).setErrorCode(NONE.code()),
+        new CreatePartitionsTopicResult().setName(classicTopicName).setErrorCode(NONE.code()))))
+    when(controller.findTopicIds(any(), ArgumentMatchers.eq(singletonList(topicName))))
+      .thenReturn(CompletableFuture.completedFuture(
+        singletonMap(topicName, new ResultOrError[Uuid](topicId))))
+    controllerApis = createControllerApis(None, controller, inklessControlPlane = Some(controlPlane))
+
+    val request = new CreatePartitionsRequestData().setValidateOnly(false)
+    request.topics().add(topic)
+    request.topics().add(classicTopic)
+    val results = controllerApis.createPartitions(ANONYMOUS_CONTEXT, request, _ => Set(topicName, classicTopicName))
+      .get().asScala.map(r => r.name() -> r).toMap
+
+    assertEquals(KAFKA_STORAGE_ERROR.code(), results(topicName).errorCode())
+    assertTrue(results(topicName).errorMessage().startsWith("No diskless control plane is configured."),
+      results(topicName).errorMessage())
+    assertEquals(NONE.code(), results(classicTopicName).errorCode())
   }
 
   @Test
