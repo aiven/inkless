@@ -154,6 +154,9 @@ public abstract class TopicSwitchCommand {
                 .help("The seal offset to commit: >= 0 forces (re-)sealing at that offset, -1 aborts the "
                         + "switch and reverts the partition to classic, and -2 re-arms the switch as pending. "
                         + "-1 and -2 are only allowed while the switch is still pending (no seal committed yet). "
+                        + "Once a seal is committed, a new seal offset can't exceed it. "
+                        + "Once the partition's classic prefix is in remote storage (classicPrefixInRemoteStorage=true "
+                        + "in the state command), the controller rejects every seal offset. "
                         + "If omitted, the partition's current end offset is used; omitting it is only allowed "
                         + "before a seal is committed, otherwise an explicit offset is required.");
         sealParser.addArgument("--clear-producer-states")
@@ -162,7 +165,8 @@ public abstract class TopicSwitchCommand {
                         + "negative offsets, which always clear them.");
         sealParser.addArgument("--dry-run", "-d")
                 .action(storeTrue())
-                .help("Whether to only perform validation when adjusting the seal offset.");
+                .help("Whether to only perform validation when adjusting the seal offset. The validation runs "
+                        + "in the command and doesn't cover -1 and -2, so the controller can still reject the request.");
 
         repairParser.addArgument("--partition", "-p")
                 .action(store())
@@ -251,17 +255,26 @@ public abstract class TopicSwitchCommand {
 
         long sealOffset;
         if (offset.isEmpty()) {
-            long committedSeal = readClassicToDisklessStartOffset(adminClient, topic, partition);
-            if (committedSeal >= 0) {
+            SwitchState state = readSwitchState(adminClient, topic, partition);
+            rejectIfClassicPrefixInRemoteStorage(state, topic, partition);
+            if (state.classicToDisklessStartOffset() >= 0) {
                 throw new RuntimeException(String.format(
                     "%s-%d already has a committed seal offset (%d); pass an explicit --offset to re-seal.",
-                    topic, partition, committedSeal));
+                    topic, partition, state.classicToDisklessStartOffset()));
             }
             sealOffset = endOffset(adminClient, topic, partition);
             stream.printf("Validated %s-%d: sealing at end offset %d.%n", topic, partition, sealOffset);
         } else {
             sealOffset = offset.get();
             if (sealOffset >= 0) {
+                SwitchState state = readSwitchState(adminClient, topic, partition);
+                rejectIfClassicPrefixInRemoteStorage(state, topic, partition);
+                long committedSeal = state.classicToDisklessStartOffset();
+                if (committedSeal >= 0 && sealOffset > committedSeal) {
+                    throw new RuntimeException(String.format(
+                        "Cannot seal %s-%d at offset %d: it exceeds the committed seal offset (%d).",
+                        topic, partition, sealOffset, committedSeal));
+                }
                 long startOffset = startOffset(adminClient, topic, partition);
                 long endOffset = endOffset(adminClient, topic, partition);
                 if (sealOffset < startOffset || sealOffset > endOffset) {
@@ -339,8 +352,9 @@ public abstract class TopicSwitchCommand {
         return adminClient.listOffsets(Map.of(tp, OffsetSpec.latest())).all().get().get(tp).offset();
     }
 
-    private static long readClassicToDisklessStartOffset(Admin adminClient, String topic, int partition)
-            throws Exception {
+    private record SwitchState(long classicToDisklessStartOffset, boolean classicPrefixInRemoteStorage) { }
+
+    private static SwitchState readSwitchState(Admin adminClient, String topic, int partition) throws Exception {
         DescribeTopicPartitionsResponseData responseData = adminClient
             .describeTopicPartitions(List.of(topic), new DescribeTopicsOptions()).rawResponse().get();
         DescribeTopicPartitionsResponseTopic topicData = responseData.topics().find(topic);
@@ -350,8 +364,21 @@ public abstract class TopicSwitchCommand {
         return topicData.partitions().stream()
             .filter(p -> p.partitionIndex() == partition)
             .findFirst()
-            .map(p -> InitDisklessLogFields.decodeClassicToDisklessStartOffset(p.unknownTaggedFields()))
+            .map(p -> new SwitchState(
+                InitDisklessLogFields.decodeClassicToDisklessStartOffset(p.unknownTaggedFields()),
+                InitDisklessLogFields.decodeClassicPrefixInRemoteStorage(p.unknownTaggedFields())))
             .orElseThrow(() -> new RuntimeException("Partition not found: " + topic + "-" + partition));
+    }
+
+    // The controller rejects the request too. Failing here keeps --dry-run from reporting an action that
+    // can't succeed.
+    private static void rejectIfClassicPrefixInRemoteStorage(SwitchState state, String topic, int partition) {
+        if (state.classicPrefixInRemoteStorage()) {
+            throw new RuntimeException(String.format(
+                "%s-%d has its classic prefix in remote storage (classicPrefixInRemoteStorage=true); "
+                    + "the controller rejects every seal change in that state.",
+                topic, partition));
+        }
     }
 
     private static String describeSealOffset(long sealOffset) {
