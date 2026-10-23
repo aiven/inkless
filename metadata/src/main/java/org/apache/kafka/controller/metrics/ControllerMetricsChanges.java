@@ -55,6 +55,17 @@ class ControllerMetricsChanges {
     private int disklessTopicsChange = 0;
     private int disklessPartitionsChange = 0;
     private int disklessOfflinePartitionsChange = 0;
+    private int disklessSwitchedPartitionsPendingUploadChange = 0;
+
+    /**
+     * Returns true if the partition has a committed classic-to-diskless seal and its classic prefix
+     * isn't in remote storage yet (switch phase 1 after the seal commit).
+     */
+    static boolean isPendingUpload(PartitionRegistration partition) {
+        return partition != null
+            && partition.classicToDisklessStartOffset >= 0
+            && !partition.classicPrefixInRemoteStorage;
+    }
 
     public int fencedBrokersChange() {
         return fencedBrokersChange;
@@ -162,6 +173,9 @@ class ControllerMetricsChanges {
             disklessTopicsChange++;
             for (PartitionRegistration partition : topic.partitions().values()) {
                 disklessPartitionsChange++;
+                if (isPendingUpload(partition)) {
+                    disklessSwitchedPartitionsPendingUploadChange++;
+                }
                 if (!partition.hasLeader()) {
                     disklessOfflinePartitionsChange++;
                     offlinePartitionsChange--;
@@ -174,6 +188,9 @@ class ControllerMetricsChanges {
             disklessTopicsChange--;
             for (PartitionRegistration partition : topic.partitions().values()) {
                 disklessPartitionsChange--;
+                if (isPendingUpload(partition)) {
+                    disklessSwitchedPartitionsPendingUploadChange--;
+                }
                 if (!partition.hasLeader()) {
                     disklessOfflinePartitionsChange--;
                     offlinePartitionsChange++;
@@ -195,6 +212,7 @@ class ControllerMetricsChanges {
             boolean wasDisklessOffline = wasPresent && !prev.hasLeader();
             boolean isDisklessOffline = isPresent && !next.hasLeader();
             disklessOfflinePartitionsChange += delta(wasDisklessOffline, isDisklessOffline);
+            disklessSwitchedPartitionsPendingUploadChange += delta(isPendingUpload(prev), isPendingUpload(next));
             // Diskless partitions are excluded from standard offline/imbalance metrics
             // (transformer handles availability), but included in global partition count
             globalPartitionsChange += delta(wasPresent, isPresent);
@@ -250,6 +268,9 @@ class ControllerMetricsChanges {
         }
         if (disklessOfflinePartitionsChange != 0) {
             metrics.addToDisklessOfflinePartitionCount(disklessOfflinePartitionsChange);
+        }
+        if (disklessSwitchedPartitionsPendingUploadChange != 0) {
+            metrics.addToDisklessSwitchedPartitionsPendingUploadCount(disklessSwitchedPartitionsPendingUploadChange);
         }
     }
 }

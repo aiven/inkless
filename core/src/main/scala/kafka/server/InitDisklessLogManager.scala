@@ -26,10 +26,11 @@ import org.apache.kafka.server.common.NodeToControllerChannelManager
 import org.apache.kafka.server.metrics.KafkaMetricsGroup
 import org.apache.kafka.server.util.Scheduler
 
-import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.{AtomicBoolean, AtomicInteger}
 import java.util.concurrent.{ConcurrentHashMap, TimeUnit}
 import scala.concurrent.ExecutionContext
 import scala.jdk.CollectionConverters._
+import scala.util.control.NonFatal
 
 class InitDisklessLogManager(
   controllerChannelManager: NodeToControllerChannelManager,
@@ -43,7 +44,7 @@ class InitDisklessLogManager(
   this.logIdent = s"[InitDisklessLogManager broker=$brokerId] "
 
   private val tracked = new ConcurrentHashMap[TopicPartition, InitDisklessLogState]()
-  private val metrics = new Metrics(time, () => tracked.size)
+  private val metrics = new Metrics(time)
 
   // Notify metrics that `tp`'s tracked state has changed. Call after every
   // mutation of `tracked`. Best-effort: a tiny race with concurrent mutations
@@ -57,6 +58,12 @@ class InitDisklessLogManager(
   private[server] val retryPeriodMs = 1000L
   // Maximum exponential backoff delay used between retriable attempts.
   private[server] val maxRetryTimeMs = 10000L
+  // Period between upload checks for partitions in WaitingForUpload. A faster poll doesn't help because
+  // the remote log manager copies on a much slower interval.
+  private[server] val uploadCheckPeriodMs = 1000L
+
+  private val uploadCheckScheduled = new AtomicBoolean(false)
+
   private val sendingToControllerQueue = new SendingToControllerBatchQueue(
     controllerChannelManager = controllerChannelManager,
     scheduler = scheduler,
@@ -77,6 +84,16 @@ class InitDisklessLogManager(
     maxRetryTimeMs = maxRetryTimeMs,
     onRetry = () => metrics.markRetried()
   )
+  private val sendingFlagToControllerQueue = new SendingFlagToControllerBatchQueue(
+    controllerChannelManager = controllerChannelManager,
+    scheduler = scheduler,
+    brokerId = brokerId,
+    brokerEpochSupplier = brokerEpochSupplier,
+    lingerMs = lingerMs,
+    retryPeriodMs = retryPeriodMs,
+    maxRetryTimeMs = maxRetryTimeMs,
+    onRetry = () => metrics.markFlagRetried()
+  )
 
   private[server] def getTrackedPartitions: Set[TopicPartition] = tracked.keySet().asScala.toSet
 
@@ -86,13 +103,18 @@ class InitDisklessLogManager(
    * Handles already-applied diskless init metadata for a partition.
    * This keeps/moves the partition to AwaitingMetadata and triggers a prompt
    * control-plane init send, since metadata is committed and visible.
+   * After the control-plane init succeeds and `classicPrefixInRemoteStorage` is unset, the
+   * partition moves on to WaitingForUpload, then SendingFlagToController. `ReplicaManager` calls
+   * this method again when this broker becomes leader or an operator re-seals the partition, so
+   * the upload watch always uses the current seal.
    */
   def initOnControlPlane(
     partition: Partition,
     topicId: Uuid,
     topicName: String,
     classicToDisklessStartOffset: Long,
-    producerStates: java.util.List[CpProducerState]
+    producerStates: java.util.List[CpProducerState],
+    classicPrefixInRemoteStorage: Boolean
   ): Unit = {
     if (classicToDisklessStartOffset < 0) {
       warn(s"Received negative classicToDisklessStartOffset ($classicToDisklessStartOffset) for $topicName:${partition.topicPartition}, skipping control-plane init")
@@ -100,10 +122,12 @@ class InitDisklessLogManager(
     }
 
     val tp = partition.topicPartition
-    val payload = DisklessInitMetadata(topicName, classicToDisklessStartOffset, producerStates)
+    val payload = DisklessInitMetadata(topicName, classicToDisklessStartOffset, producerStates, classicPrefixInRemoteStorage)
     val newState = AwaitingMetadata(partition, topicId, Some(payload))
-    if (tracked.putIfAbsent(tp, newState) != null) {
-      tracked.computeIfPresent(tp, (_, _) => newState)
+    if (tracked.put(tp, newState) != null) {
+      // A replaced state may have queued a flag request, and removing it stops the queue from sending
+      // a request that nothing awaits.
+      sendingFlagToControllerQueue.remove(tp)
     }
     refreshMetrics(tp)
     enqueueAwaitingMetadata(tp, newState)
@@ -137,6 +161,8 @@ class InitDisklessLogManager(
         enqueueSendingToController(tp, sendingToController)
         sendingToController
       case awaitingMetadata: AwaitingMetadata => awaitingMetadata
+      case waitingForUpload: WaitingForUpload => waitingForUpload
+      case sendingFlagToController: SendingFlagToController => sendingFlagToController
       case done: Done => done
       case _: Failed => null
     })
@@ -201,23 +227,127 @@ class InitDisklessLogManager(
   private def enqueueAwaitingMetadata(tp: TopicPartition, state: AwaitingMetadata): Unit = {
     awaitingMetadataQueue.enqueue(tp, state).foreach { accepted =>
       if (accepted) {
+        // Advance and count only the state that queued this init. A concurrent `removePartition`
+        // clears `tracked` to cancel the operation, and a cancellation must not inflate the completed
+        // meter. A re-init installs its replacement before it queues it, so a stale completion can land
+        // in between, and the replacement must wait for its own init. The check uses reference
+        // equality because a replacement with the same payload is an equal case class.
+        var completed = false
+        var enteredWaitingForUpload = false
         tracked.computeIfPresent(tp, (_, initDisklessLogState) =>
           initDisklessLogState match {
-            case awaitingMetadata: AwaitingMetadata => awaitingMetadata.onSuccess
+            case awaitingMetadata: AwaitingMetadata if awaitingMetadata eq state =>
+              completed = true
+              awaitingMetadata.onSuccess match {
+                case waitingForUpload: WaitingForUpload =>
+                  enteredWaitingForUpload = true
+                  waitingForUpload
+                case _ => null
+              }
             case other => other
           }
         )
-        // Only count completion when this callback observed `tp` as still
-        // tracked. If `removePartition` cleared `tracked` (and/or the queue
-        // promise) concurrently, the init diskless log operation was cancelled externally and
-        // we must not inflate the completed meter.
-        if (tracked.remove(tp) != null) {
+        if (completed) {
           metrics.markCompleted()
+        }
+        refreshMetrics(tp)
+        if (enteredWaitingForUpload) {
+          onEnteredWaitingForUpload(tp)
         }
       } else {
         if (tracked.remove(tp) != null) {
           // Only count failure when this callback observed `tp` as still tracked
           metrics.markFailed()
+        }
+        refreshMetrics(tp)
+      }
+    }(ExecutionContext.parasitic)
+  }
+
+  private def onEnteredWaitingForUpload(tp: TopicPartition): Unit = {
+    // Evaluate right away so an empty prefix (or one that was already uploaded before a failover)
+    // doesn't wait a full poll period.
+    evaluateUpload(tp)
+    scheduleUploadCheckIfNeeded()
+  }
+
+  // Moves `tp` out of WaitingForUpload once the classic prefix is in remote storage, or drops it
+  // when this broker can no longer lead. The enqueue runs inside `computeIfPresent`, as in
+  // `handleWaitingOutcome`, to avoid interleaving with `removePartition`.
+  private def evaluateUpload(tp: TopicPartition): Unit = {
+    tracked.computeIfPresent(tp, (_, currentState) => currentState match {
+      case waitingForUpload: WaitingForUpload =>
+        try {
+          waitingForUpload.check() match {
+            case UploadCheck.Pending => waitingForUpload
+            case UploadCheck.Uploaded =>
+              val sendingFlagToController = waitingForUpload.onUploaded
+              enqueueSendingFlagToController(tp, sendingFlagToController)
+              sendingFlagToController
+            case UploadCheck.Gone =>
+              info(s"Dropping the upload watch for $tp because this broker is no longer its leader or the log is gone")
+              null
+          }
+        } catch {
+          case NonFatal(e) =>
+            warn(s"Failed to check the classic prefix upload for $tp, will retry", e)
+            waitingForUpload
+        }
+      case other => other
+    })
+    refreshMetrics(tp)
+  }
+
+  private def checkUploads(): Unit = {
+    // Clear before scanning: a partition that enters WaitingForUpload after this point schedules its own check.
+    uploadCheckScheduled.set(false)
+    try {
+      tracked.entrySet().asScala.toList.foreach { entry =>
+        if (entry.getValue.isInstanceOf[WaitingForUpload]) {
+          evaluateUpload(entry.getKey)
+        }
+      }
+    } finally {
+      if (tracked.values().asScala.exists(_.isInstanceOf[WaitingForUpload])) {
+        scheduleUploadCheckIfNeeded()
+      }
+    }
+  }
+
+  private def scheduleUploadCheckIfNeeded(): Unit = {
+    if (uploadCheckScheduled.compareAndSet(false, true)) {
+      try {
+        scheduler.scheduleOnce("init-diskless-log-upload-check", () => checkUploads(), uploadCheckPeriodMs)
+      } catch {
+        case NonFatal(e) =>
+          uploadCheckScheduled.set(false)
+          warn("Failed to schedule the classic prefix upload check", e)
+      }
+    }
+  }
+
+  private def enqueueSendingFlagToController(tp: TopicPartition, state: SendingFlagToController): Unit = {
+    sendingFlagToControllerQueue.enqueue(tp, state).foreach { accepted =>
+      // Removes `tp` only while it still holds the state that queued this request, compared by reference as in
+      // `enqueueAwaitingMetadata`. `removePartition` clears `tracked` before it completes the queue promise with
+      // `false`, and that cancellation must not count as a failure. The queue completes a detached promise outside
+      // its lock, so a late response for a replaced state must leave the replacement alone.
+      var removed = false
+      tracked.computeIfPresent(tp, (_, currentState) => currentState match {
+        case sendingFlagToController: SendingFlagToController if sendingFlagToController eq state =>
+          removed = true
+          null
+        case other => other
+      })
+      if (removed) {
+        if (accepted) {
+          info(s"Controller accepted the classic prefix flag for $tp")
+          metrics.markFlagCompleted()
+        } else if (state.partition.isLeader && state.partition.log.isDefined) {
+          // Only a controller rejection, such as `INVALID_REQUEST`, counts as a failure. The queue also completes
+          // with `false` when it skips the request after a leadership change or a topic deletion. That's routine,
+          // as with `UploadCheck.Gone`. Either way the partition remains in phase 1 until a new leader registers.
+          metrics.markFlagFailed()
         }
       }
       refreshMetrics(tp)
@@ -231,6 +361,7 @@ class InitDisklessLogManager(
     if (tracked.remove(tp) != null) {
       sendingToControllerQueue.remove(tp)
       awaitingMetadataQueue.remove(tp)
+      sendingFlagToControllerQueue.remove(tp)
       refreshMetrics(tp)
       info(s"Removed partition $tp from diskless init tracking")
     }
@@ -252,71 +383,108 @@ object InitDisklessLogManager {
   private[server] val WaitingForReplicationPartitionsMetricName = "WaitingForReplicationPartitions"
   private[server] val SendingToControllerPartitionsMetricName = "SendingToControllerPartitions"
   private[server] val AwaitingMetadataPartitionsMetricName = "AwaitingMetadataPartitions"
+  private[server] val WaitingForUploadPartitionsMetricName = "WaitingForUploadPartitions"
+  private[server] val SendingFlagToControllerPartitionsMetricName = "SendingFlagToControllerPartitions"
 
   // Oldest-age-per-state gauges. Reads 0 when no partition is currently in the corresponding state.
   private[server] val OldestWaitingForReplicationAgeMsMetricName = "OldestWaitingForReplicationAgeMs"
   private[server] val OldestSendingToControllerAgeMsMetricName = "OldestSendingToControllerAgeMs"
   private[server] val OldestAwaitingMetadataAgeMsMetricName = "OldestAwaitingMetadataAgeMs"
+  private[server] val OldestWaitingForUploadAgeMsMetricName = "OldestWaitingForUploadAgeMs"
+  private[server] val OldestSendingFlagToControllerAgeMsMetricName = "OldestSendingFlagToControllerAgeMs"
 
   private[server] val InitCompletedPerSecMetricName = "InitCompletedPerSec"
   private[server] val InitFailedPerSecMetricName = "InitFailedPerSec"
   private[server] val InitRetriedPerSecMetricName = "InitRetriedPerSec"
+  // Per-partition outcomes of the SetClassicPrefixInRemoteStorage request, kept apart from the init
+  // meters so a stuck flag request doesn't look like a failing init.
+  private[server] val FlagRequestCompletedPerSecMetricName = "FlagRequestCompletedPerSec"
+  private[server] val FlagRequestFailedPerSecMetricName = "FlagRequestFailedPerSec"
+  private[server] val FlagRequestRetriedPerSecMetricName = "FlagRequestRetriedPerSec"
 
   private[server] val GaugeMetricNames = Set(
     InFlightPartitionsMetricName,
     WaitingForReplicationPartitionsMetricName,
     SendingToControllerPartitionsMetricName,
     AwaitingMetadataPartitionsMetricName,
+    WaitingForUploadPartitionsMetricName,
+    SendingFlagToControllerPartitionsMetricName,
     OldestWaitingForReplicationAgeMsMetricName,
     OldestSendingToControllerAgeMsMetricName,
     OldestAwaitingMetadataAgeMsMetricName,
+    OldestWaitingForUploadAgeMsMetricName,
+    OldestSendingFlagToControllerAgeMsMetricName,
   )
 
   private[server] val MeterMetricNames = Set(
     InitCompletedPerSecMetricName,
     InitFailedPerSecMetricName,
     InitRetriedPerSecMetricName,
+    FlagRequestCompletedPerSecMetricName,
+    FlagRequestFailedPerSecMetricName,
+    FlagRequestRetriedPerSecMetricName,
   )
 
   private[server] val MetricNames: Set[String] = GaugeMetricNames union MeterMetricNames
 
   // JMX wiring: per-state count and oldest-age gauges plus completed/failed/
-  // retried meters. The manager calls `onStateChange` after every mutation of
-  // its `tracked` map and `markCompleted` / `markFailed` / `markRetried` at
-  // the relevant state-machine transitions.
-  private[server] final class Metrics(time: Time, trackedSize: () => Int) {
+  // retried meters for the init and for the flag request. The manager calls
+  // `onStateChange` after every mutation of its `tracked` map and the `mark*`
+  // methods at the relevant state-machine transitions.
+  private[server] final class Metrics(time: Time) {
     private val metricsGroup = new KafkaMetricsGroup(MetricsPackage, MetricsClassName)
 
     // Per-state counters incrementally maintained by `onStateChange`
     private val counters: Map[Class[_], AtomicInteger] = Map(
-      classOf[WaitingForReplication] -> new AtomicInteger(0),
-      classOf[SendingToController]   -> new AtomicInteger(0),
-      classOf[AwaitingMetadata]      -> new AtomicInteger(0)
+      classOf[WaitingForReplication]    -> new AtomicInteger(0),
+      classOf[SendingToController]      -> new AtomicInteger(0),
+      classOf[AwaitingMetadata]         -> new AtomicInteger(0),
+      classOf[WaitingForUpload]         -> new AtomicInteger(0),
+      classOf[SendingFlagToController]  -> new AtomicInteger(0)
     )
 
     // Per-state TP -> enteredAtMs registry; walked by `oldestAgeMs` on read.
     // Scan cost is negligible: same pattern as `AbstractFetcherManager.MaxLag`.
     private val enteredAtByState: Map[Class[_], ConcurrentHashMap[TopicPartition, java.lang.Long]] = Map(
-      classOf[WaitingForReplication] -> new ConcurrentHashMap[TopicPartition, java.lang.Long](),
-      classOf[SendingToController]   -> new ConcurrentHashMap[TopicPartition, java.lang.Long](),
-      classOf[AwaitingMetadata]      -> new ConcurrentHashMap[TopicPartition, java.lang.Long]()
+      classOf[WaitingForReplication]    -> new ConcurrentHashMap[TopicPartition, java.lang.Long](),
+      classOf[SendingToController]      -> new ConcurrentHashMap[TopicPartition, java.lang.Long](),
+      classOf[AwaitingMetadata]         -> new ConcurrentHashMap[TopicPartition, java.lang.Long](),
+      classOf[WaitingForUpload]         -> new ConcurrentHashMap[TopicPartition, java.lang.Long](),
+      classOf[SendingFlagToController]  -> new ConcurrentHashMap[TopicPartition, java.lang.Long]()
     )
 
-    metricsGroup.newGauge(InFlightPartitionsMetricName, () => trackedSize())
+    // Counts only the init states. A partition can wait in WaitingForUpload for hours, and operators
+    // and system tests read this gauge to see when the init work has drained.
+    metricsGroup.newGauge(InFlightPartitionsMetricName, () =>
+      counters(classOf[WaitingForReplication]).get +
+        counters(classOf[SendingToController]).get +
+        counters(classOf[AwaitingMetadata]).get)
     metricsGroup.newGauge(WaitingForReplicationPartitionsMetricName, () => counters(classOf[WaitingForReplication]).get)
     metricsGroup.newGauge(SendingToControllerPartitionsMetricName, () => counters(classOf[SendingToController]).get)
     metricsGroup.newGauge(AwaitingMetadataPartitionsMetricName, () => counters(classOf[AwaitingMetadata]).get)
+    metricsGroup.newGauge(WaitingForUploadPartitionsMetricName, () => counters(classOf[WaitingForUpload]).get)
+    metricsGroup.newGauge(SendingFlagToControllerPartitionsMetricName, () => counters(classOf[SendingFlagToController]).get)
     metricsGroup.newGauge(OldestWaitingForReplicationAgeMsMetricName, () => oldestAgeMs(classOf[WaitingForReplication]))
     metricsGroup.newGauge(OldestSendingToControllerAgeMsMetricName,   () => oldestAgeMs(classOf[SendingToController]))
     metricsGroup.newGauge(OldestAwaitingMetadataAgeMsMetricName,      () => oldestAgeMs(classOf[AwaitingMetadata]))
+    metricsGroup.newGauge(OldestWaitingForUploadAgeMsMetricName,      () => oldestAgeMs(classOf[WaitingForUpload]))
+    metricsGroup.newGauge(OldestSendingFlagToControllerAgeMsMetricName, () => oldestAgeMs(classOf[SendingFlagToController]))
 
     private val completedMeter = metricsGroup.newMeter(InitCompletedPerSecMetricName, "inits", TimeUnit.SECONDS)
     private val failedMeter    = metricsGroup.newMeter(InitFailedPerSecMetricName,    "inits", TimeUnit.SECONDS)
     private val retriedMeter   = metricsGroup.newMeter(InitRetriedPerSecMetricName,   "inits", TimeUnit.SECONDS)
 
+    private val flagCompletedMeter = metricsGroup.newMeter(FlagRequestCompletedPerSecMetricName, "partitions", TimeUnit.SECONDS)
+    private val flagFailedMeter    = metricsGroup.newMeter(FlagRequestFailedPerSecMetricName,    "partitions", TimeUnit.SECONDS)
+    private val flagRetriedMeter   = metricsGroup.newMeter(FlagRequestRetriedPerSecMetricName,   "partitions", TimeUnit.SECONDS)
+
     def markCompleted(): Unit = completedMeter.mark()
     def markFailed(): Unit    = failedMeter.mark()
     def markRetried(): Unit   = retriedMeter.mark()
+
+    def markFlagCompleted(): Unit = flagCompletedMeter.mark()
+    def markFlagFailed(): Unit    = flagFailedMeter.mark()
+    def markFlagRetried(): Unit   = flagRetriedMeter.mark()
 
     // Update metrics for `tp` in `state`, or remove it from tracking when `state == null`.
     def onStateChange(tp: TopicPartition, state: InitDisklessLogState): Unit = {
