@@ -65,6 +65,7 @@ If not specified above, features are untested and assumed to be inoperable.
 - `ALTER_PARTITION_REASSIGNMENTS`
     - the replication factor can be changed for Diskless topics only when `diskless.managed.rf.enable=true`; in legacy mode (managed replicas disabled) the RF stays pinned and RF-changing reassignments are rejected with `INVALID_REPLICATION_FACTOR`;
     - reassignments for diskless topics are applied immediately (no staged adding/removing) since data lives in object storage and all brokers are instantly in-sync. This includes growing/shrinking the replica set, e.g. increasing a legacy RF=1 topic to RF=3 after enabling managed replicas.
+    - Topics switched from classic are the exception while their classic prefix isn't in remote storage yet (phase 1). The controller stages their reassignments like classic ones. For more information, see [Switch phases](CLASSIC_TO_DISKLESS_SWITCH.md#switch-phases).
 
 ### Diskless topics are excluded
 - `ADD_PARTITIONS_TO_TXN`
@@ -181,9 +182,13 @@ Diskless replicas require no lag-based catch-up because data lives in object sto
 - When a broker returns, it is added back to ISR immediately — no catch-up required
 - `min.insync.replicas` semantics remain intact
 
+A topic switched from classic follows classic ISR rules while its classic prefix isn't in remote storage yet (phase 1). In that phase, the controller doesn't re-add a returning broker to the ISR when it unfences. For more information, see [Switch phases](CLASSIC_TO_DISKLESS_SWITCH.md#switch-phases).
+
 ### Partition Reassignment
 
 Diskless partition reassignment is **immediate** — there is no staged adding/removing process because all brokers can serve from object storage instantly. The ISR is set to the active (unfenced, not in controlled shutdown) brokers in the new replica set upon reassignment.
+
+Partitions switched from classic are the exception while their classic prefix isn't in remote storage yet (phase 1). In that phase, the classic prefix is only on the replicas' local disks. The controller stages the reassignment with adding and removing replicas, as it does for a classic topic. For more information, see [Switch phases](CLASSIC_TO_DISKLESS_SWITCH.md#switch-phases).
 
 ### Controller Metrics
 
