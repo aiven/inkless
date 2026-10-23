@@ -322,6 +322,104 @@ Because all data is in object storage, reassignment uses the target replicas dir
 
 A partition switched from classic is the exception while its classic prefix is only on the replicas' local disks (phase 1). The controller stages its reassignment as it does for a classic topic. For more information, see [Switch phases](CLASSIC_TO_DISKLESS_SWITCH.md#switch-phases).
 
+## Migrate untiered diskless topics
+
+A diskless topic with `remote.storage.enable` set to `false` or unset has no remote tier, which this guide calls an untiered topic. A cluster with consolidation off creates every diskless topic as untiered, because the controller rejects `diskless.enable` together with `remote.storage.enable` there. Enabling consolidation on the cluster doesn't consolidate these topics.
+
+The controller doesn't create untiered topics when consolidation is on, and it rejects a change that turns remote storage off for a diskless topic. Untiered topics that already exist keep working, and routine alters on them still succeed. To consolidate one, migrate it.
+
+### Before you start
+
+- **Find the topics.** `DisklessWithoutRemoteStorageCount` counts every diskless topic where `remote.storage.enable` is `false` or unset. Use `kafka-topics.sh --describe` to list them.
+- **Choose `log.local.retention.ms` and `log.local.retention.bytes`.** Both default to `-2`, which resolves to `retention.ms` and `retention.bytes`. Without a bound, a migrated topic keeps its full retention window on the local disk of every replica. The broker has no diskless-specific default. The new disk need is the local retention window multiplied by the throughput and the replication factor, and all of it is new because the brokers don't store the topic's data locally today. This estimate is the steady state. While a replica backfills the existing WAL, local retention doesn't delete a segment that remote storage doesn't cover yet, so disk use can exceed the estimate until uploads catch up. Keep headroom for the backlog. To pace or pause the backfill, change `diskless.consolidation.fetch.rate.limit.bytes.per.second` at runtime. The value `0` pauses consolidation. The limit applies per broker, to every consolidating partition on that broker, including topics that already migrated.
+- **Check the retention of each topic.** With remote storage on, the controller rejects a topic whose local retention is larger than its `retention.ms` or `retention.bytes`. A topic that uses the broker default gets that default as its local retention. So the alter of a topic with `retention.ms=300000` fails with `INVALID_CONFIG` when `log.local.retention.ms=600000`. For such a topic, set `local.retention.ms` or `local.retention.bytes` at or below its retention in the same alter. A topic with unlimited retention (`-1`) passes this check.
+- **Check the other remote storage configs.** The alter also fails for a topic with `remote.log.copy.disable=true` or with a `cleanup.policy` other than `delete`. A cluster with consolidation off accepts these values on a diskless topic. Change them before the alter, or in the same alter.
+- **Configure tiered storage.** `remote.log.storage.system.enable` makes each broker load the remote storage manager at startup. A cluster without tiered storage needs three settings first: `remote.log.storage.manager.class.name`, the backend settings of that plugin, and the connection settings of the remote log metadata manager. The `inkless.storage.*` configs don't configure the remote tier. A broker with the flag and no plugin class doesn't start.
+- **Plan for no revert.** After the alter, the controller rejects `remote.storage.enable=false` and deleting the key. Try the alter on one topic with realistic retention before you alter the others.
+
+#### Where to set the local retention
+
+Set `log.local.retention.ms` and `log.local.retention.bytes` in the configuration of every broker and every dedicated controller, with the other flags in the procedure. The controller validates the alter with its own values. If its values differ from the brokers' values, the controller checks the topic retention against a local retention that the brokers don't apply. Every topic that uses `-2` picks them up, including classic tiered topics.
+
+> [!WARNING]
+> The controller then rejects every alter of a tiered topic whose `retention.ms` or `retention.bytes` is below the new default, also an alter of an unrelated config. It also rejects a create of such a topic with `remote.storage.enable=true`. A diskless create without `remote.storage.enable` passes, but every later alter that doesn't set `local.retention.*` fails. Before you set the defaults, find these topics and give each one a topic-level `local.retention.*` value. Give new topics with a short retention a topic-level value too.
+
+To bound only the migrated topics, set `local.retention.ms` and `local.retention.bytes` on each topic in the alter instead. A topic-level value overrides the broker default, including an explicit `-2`. A topic with `local.retention.ms=-2` or `local.retention.bytes=-2` resolves to its full `retention.*` and ignores the broker bound. Remove that override or set a bound.
+
+Use the broker defaults in demo and test setups, so that new consolidating topics start with a bounded local log.
+
+#### Change the local retention later
+
+`log.local.retention.ms` and `log.local.retention.bytes` can change without a restart, for the whole cluster or for one broker:
+
+```bash
+bin/kafka-configs.sh --bootstrap-server <broker>:9092 --alter \
+  --entity-type brokers --entity-default \
+  --add-config log.local.retention.ms=1800000
+```
+
+A new value applies to every topic that has no topic-level `local.retention.ms` or `local.retention.bytes`. Use `--entity-default`, so that every broker and the controllers use the same value. A per-broker value can differ from the value that the controller validates the alter with. To change one topic, alter the topic-level config instead. A longer window grows the disk use of every replica. With a larger default, the controller rejects every alter of a tiered topic whose retention is below the new value. Before you raise the default, give these topics a topic-level `local.retention.*` value. Inkless doesn't test a change under load, so change the value in small steps and watch disk use.
+
+### Procedure
+
+> [!CAUTION]
+> Don't create topics during the rolling restart. Until every node runs the new configuration, a new diskless topic can get remote storage while its replicas are on brokers without tiered storage.
+
+1. Enable `diskless.managed.rf.enable`, `remote.log.storage.system.enable`, and `diskless.remote.storage.consolidation.enable` on every broker and every dedicated controller, and set the local retention defaults on both, with a rolling restart. A controller without these flags rejects the alter because it validates against its own configuration, but the restart doesn't change any existing topic and the migration doesn't need `diskless.allow.from.classic.enable`, which enables the separate switch of classic topics to diskless.
+2. If the topic has replication factor 1, raise the replication factor first. For the steps, see [Raise the replication factor](#raise-the-replication-factor).
+3. Alter one topic: set `remote.storage.enable=true` with an incremental alter.
+
+The alter starts consolidation for the topic. The controller commits a leader epoch change for every partition of the topic together with the config change, and the brokers arm consolidation on that change. A partition without a leader starts when the controller elects one. Client routing for the topic changes with the alter when the partition has more than one replica: `InklessTopicMetadataTransformer` picks a same-AZ replica, then a cross-AZ replica, and otherwise reports the partition as unavailable. At replication factor 1, the transformer keeps hash-based routing: it hashes the partition over the alive brokers in the client zone, or over all alive brokers when that zone has none or the client has no zone. Watch cross-AZ traffic, partition availability, and local disk use after each alter.
+
+A topic whose WAL retention already advanced the log start offset past 0 migrates the same way. Consolidation starts the local log at the WAL start when no remote segment covers the earlier offsets.
+
+### Raise the replication factor
+
+A diskless topic created with replication factor 1 keeps one replica after the migration. Raise the replication factor with a partition reassignment, and do it before the alter of `remote.storage.enable`. At replication factor 1, the transformer routes clients to a hash-selected alive broker. After the alter, a fetch on a broker that doesn't host the partition fails with `NOT_LEADER_OR_FOLLOWER`, and a metadata refresh can select the same broker again. Each replica builds its local log from object storage, so the reassignment doesn't copy data between brokers. Inkless tests the reassignment after the alter, but doesn't test consumer reads at replication factor 1 in that interval.
+
+1. Write the target replicas to a JSON file. List the assigned replica first. At replication factor 1, `kafka-topics.sh --describe` reports a broker that the transformer selected, which can differ from the assigned replica. Read the assignment from the metadata log with `kafka-metadata-shell.sh`. The following example moves partition 0 of `orders` from broker 1 to brokers 1, 2, and 3:
+
+   ```json
+   {"version": 1, "partitions": [{"topic": "orders", "partition": 0, "replicas": [1, 2, 3]}]}
+   ```
+
+2. Start the reassignment:
+
+   ```bash
+   bin/kafka-reassign-partitions.sh --bootstrap-server <broker>:9092 \
+     --reassignment-json-file reassign.json --execute
+   ```
+
+3. Check the reassignment, then the replicas:
+
+   ```bash
+   bin/kafka-reassign-partitions.sh --bootstrap-server <broker>:9092 \
+     --reassignment-json-file reassign.json --verify
+   bin/kafka-topics.sh --bootstrap-server <broker>:9092 --describe --topic orders
+   ```
+
+After the alter, each new replica creates a local log and consolidates from object storage. The catch-up time and the object-store reads grow with the backlog. Check that every replica reaches the end offset before you rely on the new replication factor. Before the alter, a new replica has no local log, because the topic is still untiered. The alter then creates the local logs.
+
+### Verify
+
+For each partition, check the following:
+
+- A local log exists and grows.
+- The control-plane `log_start_offset` advances. This proves tiering, because WAL pruning requires the remote tier to cover the offset.
+- Remote segments appear. `kafka-get-offsets.sh --topic <topic> --time latest-tiered` returns the highest tiered offset.
+- `FailedPartitionsCount` and `BuildRemoteLogAuxStateErrorsPerSec` stay at 0.
+- `DisklessWithoutRemoteStorageCount` drops by one for each topic you alter.
+
+Tiering starts when the active local segment rolls, at `segment.bytes` or `segment.ms`. Until then, `log_start_offset` doesn't advance and no remote segment appears. With the defaults, a topic with low throughput can take days to roll.
+
+### Roll back
+
+Inkless doesn't support a rollback. You can't revert the alter for one topic. While consolidation is on, the controller rejects `remote.storage.enable=false` and deleting the key for a diskless topic, also together with `remote.log.delete.on.disable=true`.
+
+Inkless doesn't support turning off `diskless.remote.storage.consolidation.enable` for the cluster, and doesn't test it. Don't turn it off on a cluster that has migrated topics.
+
+---
+
 ## Configuration
 
 Broker-level configs live in `ServerConfigs` (no prefix) and `InklessConfig` (under the `inkless.` prefix). The auto-generated reference is in [configs.rst](configs.rst).
