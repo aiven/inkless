@@ -117,7 +117,8 @@ public class ControlPlaneAvailability implements Closeable {
      * {@link State#UNKNOWN}, where there is no reason to report yet.
      */
     public void recordGatedCall() {
-        metrics.recordGatedCall(unavailableReason == null ? UnavailableReason.NOT_READY : unavailableReason);
+        final UnavailableReason reason = unavailableReason;
+        metrics.recordGatedCall(reason == null ? UnavailableReason.NOT_READY : reason);
     }
 
     @Override

@@ -17,7 +17,16 @@
  */
 package io.aiven.inkless.control_plane;
 
+import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
+
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -85,6 +94,47 @@ class ControlPlaneAvailabilityTest {
             // unavailableReason() remains null. NOT_READY is only how the gated call gets counted,
             // it is never a value unavailableReason() reports while UNKNOWN.
             assertNull(availability.unavailableReason());
+        }
+    }
+
+    @RepeatedTest(3)
+    void recordGatedCallSurvivesConcurrentReasonClears() throws Exception {
+        final int iterations = 200_000;
+        final AtomicReference<Throwable> failure = new AtomicReference<>();
+        final AtomicBoolean writerDone = new AtomicBoolean();
+        final ExecutorService executor = Executors.newFixedThreadPool(2);
+        try (final ControlPlaneAvailability availability = new ControlPlaneAvailability()) {
+            availability.markUnavailable(ControlPlaneAvailability.UnavailableReason.NOT_CONFIGURED);
+            final CountDownLatch start = new CountDownLatch(1);
+            final Future<?> writer = executor.submit(() -> {
+                start.await();
+                try {
+                    for (int i = 0; i < iterations && failure.get() == null; i++) {
+                        availability.markUnavailable(ControlPlaneAvailability.UnavailableReason.NOT_CONFIGURED);
+                        availability.markAvailable();
+                    }
+                } finally {
+                    writerDone.set(true);
+                }
+                return null;
+            });
+            final Future<?> reader = executor.submit(() -> {
+                start.await();
+                try {
+                    while (!writerDone.get() && failure.get() == null) {
+                        availability.recordGatedCall();
+                    }
+                } catch (final Throwable t) {
+                    failure.set(t);
+                }
+                return null;
+            });
+            start.countDown();
+            writer.get(30, TimeUnit.SECONDS);
+            reader.get(30, TimeUnit.SECONDS);
+            assertNull(failure.get(), "recordGatedCall must read the volatile reason once");
+        } finally {
+            executor.shutdownNow();
         }
     }
 }
