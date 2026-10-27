@@ -302,7 +302,7 @@ When consolidation is enabled, the enforcer reads `isConsolidatingDisklessTopic`
 
 ### WAL pruning
 
-`ConsolidatedDisklessLogPruner` runs on each broker at `inkless.consolidation.cleanup.interval.ms` (default 5 minutes). For each consolidating partition that is not in `SWITCH_PENDING`:
+`ConsolidatedDisklessLogPruner` runs on each broker at `inkless.consolidation.cleanup.interval.ms` (default 1 minute). For each consolidating partition that isn't in `SWITCH_PENDING`:
 
 1. It reads `highestOffsetInRemoteStorage` from the `UnifiedLog` (skips if negative: remote storage is not active yet).
 2. It computes a safe prune offset: for born-diskless topics that is `highestOffsetInRemoteStorage`; for switched topics it normally uses `partition.getSafeConsolidatedDisklessPruneOffset(...)`, which protects the seal and the partition's consolidation prune floor. If remote storage ends at `seal - 1` before that floor is ready, it uses `seal - 1` to initialize the cross-tier start without including any diskless batches.
@@ -448,7 +448,7 @@ Consolidating diskless topics require `remote.log.copy.disable=false` because WA
 | `diskless.consolidation.fetch.find.batches.max.per.partition` | `0` (unlimited)             | Max batch coordinates returned per partition per control-plane query. Larger values improve the coordinate cache hit rate. |
 | `diskless.consolidation.fetch.rate.limit.bytes.per.second`    | `Long.MAX_VALUE` (disabled) | Max object-storage read bandwidth for consolidation across all fetcher threads. Dynamic; `0` pauses consolidation.         |
 | `diskless.consolidation.fetch.lagging.request.rate.limit`     | `0` (unlimited)             | Max cold-path request rate (requests/sec) as a safety valve.                                                               |
-| `inkless.consolidation.cleanup.interval.ms`                   | `300000` (5 min)            | How often the WAL pruner runs on each broker.                                                                              |
+| `inkless.consolidation.cleanup.interval.ms`                   | `60000` (1 min)             | How often the WAL pruner runs on each broker.                                                                              |
 
 ### Cross-tier log start offset
 

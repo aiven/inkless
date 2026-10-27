@@ -87,11 +87,19 @@ Under ``inkless.``
   * Importance: medium
 
 ``consolidation.cleanup.interval.ms``
-  The interval with which to run consolidated diskless WAL pruning on each broker.
+  The interval with which to run consolidated diskless WAL pruning on each broker. The default is 1 minute, which matches retention.enforcement.interval.ms and sustains the default consolidation cleanup rate with a 2000-batch cap.
 
   * Type: int
-  * Default: 300000 (5 minutes)
+  * Default: 60000 (1 minute)
   * Valid Values: [1,...]
+  * Importance: low
+
+``consolidation.cleanup.max.batches.per.request``
+  The maximum number of batches to delete per partition during one consolidation cleanup request. A value of 0 means no cap and deletes all eligible batches in one request. A positive value bounds the delete to that many batches per pass, so a deep backlog drains over successive cleanup cycles instead of one unbounded request. It should exceed the per-interval batch creation rate: capacity is this value per consolidation.cleanup.interval.ms. With the defaults, this sustains up to 33 batches/s per partition, and a 1,000,000-batch backlog drains in about 8 hours. A higher batch-row rate needs a proportionally higher value here or a shorter consolidation.cleanup.interval.ms.
+
+  * Type: int
+  * Default: 2000
+  * Valid Values: [0,...]
   * Importance: low
 
 ``consume.batch.coordinate.cache.enabled``
