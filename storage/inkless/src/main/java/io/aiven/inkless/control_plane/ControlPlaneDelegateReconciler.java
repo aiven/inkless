@@ -314,7 +314,10 @@ class ControlPlaneDelegateReconciler implements Closeable {
     }
 
     private boolean attemptOnce(final long want, final Actual current) {
-        final ControlPlane stale = current.delegate();
+        // current() rejects a delegate from an older generation, so keeping it open while the
+        // replacement builds gains nothing. The build has no upper bound against a sick database,
+        // and the old pools would keep reconnecting for all of it.
+        closeStale(current);
         final ControlPlane created;
         try {
             created = delegateFactory.apply(configSupplier.get());
@@ -322,10 +325,8 @@ class ControlPlaneDelegateReconciler implements Closeable {
             // Raised while the delegate parses its configuration, before it opens a socket: no
             // control plane is configured. Settled until the generation changes.
             LOGGER.warn("No diskless control plane is configured", e);
-            if (publish(new Actual(want, null, ControlPlaneAvailability.State.UNAVAILABLE, e),
-                ControlPlaneAvailability.UnavailableReason.NOT_CONFIGURED)) {
-                retireStale(stale);
-            }
+            publish(new Actual(want, null, ControlPlaneAvailability.State.UNAVAILABLE, e),
+                ControlPlaneAvailability.UnavailableReason.NOT_CONFIGURED);
             return true;
         } catch (final RuntimeException e) {
             if (closed) {
@@ -340,17 +341,11 @@ class ControlPlaneDelegateReconciler implements Closeable {
             // ControlPlaneNotConfiguredException for that. Retry under a backoff so a typo in an
             // unrelated key remains visible in the logs instead of being reported as "not configured."
             LOGGER.warn("Failed to create the diskless control plane; retrying in {} ms", retryBackoffMs, e);
-            if (publish(new Actual(want, null, ControlPlaneAvailability.State.UNKNOWN, e), null)) {
-                retireStale(stale);
-            }
+            publish(new Actual(want, null, ControlPlaneAvailability.State.UNKNOWN, e), null);
             backOff();
             return false;
         }
-        // Publishing before closing the retired delegate keeps the gap in which nothing can be
-        // served as short as possible. So the old and new pools overlap briefly.
-        if (publish(new Actual(want, created, ControlPlaneAvailability.State.AVAILABLE, null), null)) {
-            retireStale(stale);
-        }
+        publish(new Actual(want, created, ControlPlaneAvailability.State.AVAILABLE, null), null);
         resetBackoff();
         return true;
     }
@@ -359,17 +354,15 @@ class ControlPlaneDelegateReconciler implements Closeable {
      * Makes {@code next} the settled outcome and reflects it in the availability, unless
      * {@link #close()} got there first.
      *
-     * <p>Returns true if it was published, and then the caller must close whatever
-     * {@code next} replaced. Returns false if this is already closed, in which case
-     * {@link #close()} owns closing the previous delegate and this closes {@code next}'s own, so
-     * that a delegate built concurrently with shutdown is not left open. Exactly one of the two
-     * closes each delegate.
+     * <p>{@link #closeStale} has already detached whatever delegate {@code next} replaces, so this
+     * never replaces a live one. If this is already closed, this closes {@code next}'s own
+     * delegate, so that a delegate built concurrently with shutdown isn't left open.
      */
-    private boolean publish(final Actual next, final ControlPlaneAvailability.UnavailableReason reason) {
+    private void publish(final Actual next, final ControlPlaneAvailability.UnavailableReason reason) {
         synchronized (publishLock) {
             if (closed) {
                 Utils.closeQuietly(next.delegate(), DELEGATE_NAME);
-                return false;
+                return;
             }
             actual = next;
             // A reconfiguration may have been applied while this generation was being built, and it has
@@ -383,14 +376,28 @@ class ControlPlaneDelegateReconciler implements Closeable {
                 }
             }
         }
-        return true;
     }
 
-    /** Closes a delegate no caller can reach any more. Runs on the reconciler thread. */
-    private void retireStale(final ControlPlane stale) {
-        if (stale != null) {
-            Utils.closeQuietly(stale, DELEGATE_NAME);
+    /**
+     * Detaches the delegate {@code current} carries from {@link #actual} and closes it. Runs on the
+     * reconciler thread, only for a generation that {@link #retire} has moved past, so
+     * {@link #current()} already rejects it.
+     *
+     * <p>Detaching under {@link #publishLock} closes each delegate exactly once. If
+     * {@link #close()} got there first, {@link #close()} has already taken the delegate and closes it.
+     */
+    private void closeStale(final Actual current) {
+        final ControlPlane stale = current.delegate();
+        if (stale == null) {
+            return;
         }
+        synchronized (publishLock) {
+            if (closed) {
+                return;
+            }
+            actual = new Actual(current.generation(), null, current.state(), current.failure());
+        }
+        Utils.closeQuietly(stale, DELEGATE_NAME);
     }
 
     /**
