@@ -26,6 +26,7 @@ import org.mockito.Mockito;
 
 import java.time.Duration;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -126,6 +127,17 @@ class ControlPlaneDelegateReconcilerTest {
     private void awaitFactoryInvocations(final int expected) {
         await().atMost(AWAIT_SECONDS, TimeUnit.SECONDS)
             .until(() -> factoryInvocations.get() == expected);
+    }
+
+    /**
+     * Waits until the first attempt has published its outcome. The factory counts an invocation
+     * before it throws, so {@link #awaitFactoryInvocations} alone can return while {@code current()}
+     * still sees the initial, causeless state.
+     */
+    private void awaitFirstAttemptPublished() {
+        final CompletableFuture<Void> firstBuild = reconciler.firstBuildFuture();
+        await().atMost(AWAIT_SECONDS, TimeUnit.SECONDS).until(firstBuild::isDone);
+        assertEquals(1, factoryInvocations.get());
     }
 
     @Test
@@ -248,7 +260,7 @@ class ControlPlaneDelegateReconcilerTest {
         final ConfigException typo = new ConfigException("max.connections", "abc", "Not a number");
         factoryFailure.set(typo);
         reconciler().start();
-        awaitFactoryInvocations(1);
+        awaitFirstAttemptPublished();
 
         final ControlPlaneUnavailableException e = assertThrows(ControlPlaneUnavailableException.class,
             () -> reconciler.current());
@@ -269,7 +281,7 @@ class ControlPlaneDelegateReconcilerTest {
         final IllegalStateException refused = new IllegalStateException("connection refused");
         factoryFailure.set(refused);
         reconciler().start();
-        awaitFactoryInvocations(1);
+        awaitFirstAttemptPublished();
 
         final ControlPlaneUnavailableException e = assertThrows(ControlPlaneUnavailableException.class,
             () -> reconciler.current());
@@ -284,7 +296,7 @@ class ControlPlaneDelegateReconcilerTest {
     void transientFailureIsRetriedOnlyOnceTheBackoffElapses() throws Exception {
         factoryFailure.set(new IllegalStateException("connection refused"));
         reconciler().start();
-        awaitFactoryInvocations(1);
+        awaitFirstAttemptPublished();
 
         // Inside the backoff window, callers keep failing without re-dialing the database.
         factoryEntered.set(new CountDownLatch(1));
@@ -339,12 +351,8 @@ class ControlPlaneDelegateReconcilerTest {
         final IllegalStateException refused = new IllegalStateException("connection refused");
         factoryFailure.set(refused);
         reconciler().start();
-        awaitFactoryInvocations(1);
+        awaitFirstAttemptPublished();
 
-        // Waiting for the invocation count is not enough: the factory increments it before
-        // reading factoryFailure, so clearing that reference right after could race ahead of the
-        // read and make the "first" attempt succeed outright. Asserting the cause proves the
-        // reconciler actually settled on this failure before factoryFailure is cleared below.
         final ControlPlaneUnavailableException first = assertThrows(ControlPlaneUnavailableException.class,
             () -> reconciler.current());
         assertSame(refused, first.getCause());
@@ -366,7 +374,7 @@ class ControlPlaneDelegateReconcilerTest {
         // the timer backOff() schedules for itself.
         factoryFailure.set(new IllegalStateException("connection refused"));
         reconciler().start();
-        awaitFactoryInvocations(1);
+        awaitFirstAttemptPublished();
 
         factoryFailure.set(null);
         // The scheduled retry fires after a real delay, unrelated to this MockTime; advance
