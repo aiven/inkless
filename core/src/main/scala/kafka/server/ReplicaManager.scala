@@ -3523,15 +3523,26 @@ class ReplicaManager(val config: KafkaConfig,
       log.highWatermark
   }
 
-  private def maybeShrinkIsr(): Unit = {
+  // Visible for testing
+  private[server] def maybeShrinkIsr(): Unit = {
     trace("Evaluating ISR list of partitions to see which replicas can be removed from the ISR")
 
     // Shrink ISRs for non offline partitions
     allPartitions.forEach { (topicPartition, _) =>
-      if (!_inklessMetadataView.isDisklessTopic(topicPartition.topic()))
+      if (isIsrShrinkEligible(topicPartition))
         onlinePartition(topicPartition).foreach(_.maybeShrinkIsr())
     }
   }
+
+  /**
+   * Returns true if the partition shrinks ISR for lag by classic rules: a classic partition, or a
+   * switched partition in phase 1. In phase 1 the ISR members' local logs are the only complete copy
+   * of the classic prefix, and every log stays at the seal, so lag against the leader's log end offset
+   * is lag on the prefix. A born-diskless or phase-2 partition has no prefix to lag on.
+   */
+  private[server] def isIsrShrinkEligible(topicPartition: TopicPartition): Boolean =
+    !_inklessMetadataView.isDisklessTopic(topicPartition.topic()) ||
+      _inklessMetadataView.isSwitchedPhaseOne(topicPartition)
 
   private def leaderPartitionsIterator: Iterator[Partition] =
     onlinePartitionsIterator.filter(_.leaderLogIfLocal.isDefined)
@@ -4542,14 +4553,16 @@ class ReplicaManager(val config: KafkaConfig,
               partition.seal()
               changedPartitions.add(partition)
               val isOutOfIsr = !info.partition.isr.contains(config.brokerId)
-              // In phase 1 a consolidating topic's follower stays on the classic fetcher at the seal
-              // until the flag commits, so it follows every leader change.
-              val isConsolidatingTopicInPhaseOne = seal >= 0 && consolidationActiveFor(tp.topic)
+              // In phase 1 the leader shrinks ISR for lag, and a new leader starts with no fetch state
+              // for this follower. One fetch at the seal records it, so a follower that already
+              // stopped fetching doesn't fall out of ISR on every leader change. A consolidating
+              // topic's follower stays on the classic fetcher at the seal until the flag commits.
+              val isPhaseOne = seal >= 0 && !info.partition.classicPrefixInRemoteStorage
               // Skip during controlled shutdown: the leader will not expand ISR for a shutting-down
               // broker (isReplicaIsrEligible), and this replica is about to stop serving.
               if (seal >= 0 && !isInControlledShutdown &&
                 (partition.localLogOrException.highWatermark < seal || isOutOfIsr ||
-                  (isConsolidatingTopicInPhaseOne && isNewLeaderEpoch))) {
+                  (isPhaseOne && isNewLeaderEpoch))) {
                 // Schedule a catch-up fetch when the local HW is below the seal -- either
                 // because we restarted with a stale HW (unclean shutdown) or because we
                 // were just added as a replica and have an empty local log.
