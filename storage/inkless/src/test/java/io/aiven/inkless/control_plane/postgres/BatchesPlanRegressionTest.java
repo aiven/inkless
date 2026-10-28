@@ -121,6 +121,43 @@ class BatchesPlanRegressionTest {
         assertThat(planShapes(before.cuts())).isNotEqualTo(before.shapes());
     }
 
+    /**
+     * The prune keep-offset lookup stops after one index entry. An aggregate over {@code base_offset}
+     * reads every untiered batch, and that scan runs under the logs row lock.
+     */
+    @Test
+    void pruneKeepOffsetLookupReadsOneIndexEntry() {
+        pgContainer.migrate();
+        new TopicsAndPartitionsCreateJob(Time.SYSTEM, pgContainer.getJooqCtx(),
+            Set.of(new CreateTopicAndPartitionsRequest(TOPIC_ID, "plan-fixture", 1)),
+            duration -> { }).run();
+        pgContainer.getJooqCtx().transaction(conf -> {
+            final var tx = DSL.using(conf);
+            final long fileId = tx.fetchOne(
+                "INSERT INTO files (object_key, format, reason, state, uploader_broker_id, committed_at, size) "
+                    + "VALUES ('plan-keep-offset', 1, 'produce', 'uploaded', 1, now(), 0) RETURNING file_id")
+                .get(0, Long.class);
+            tx.execute("INSERT INTO batches (magic, topic_id, partition, base_offset, last_offset, file_id, byte_offset, "
+                + "byte_size, timestamp_type, log_append_timestamp, batch_max_timestamp) "
+                + "SELECT 2, ?::uuid, 0, i * 10, i * 10 + 9, ?, 0, 120, 0, 0, 1700000000000 + i "
+                + "FROM generate_series(0, 19) i",
+                TOPIC_UUID, fileId);
+        });
+
+        final String plan = pgContainer.getJooqCtx().fetch(
+            "EXPLAIN SELECT base_offset FROM batches WHERE topic_id = '" + TOPIC_UUID
+                + "'::uuid AND partition = 0 AND last_offset > 50 "
+                + "ORDER BY topic_id, partition, last_offset LIMIT 1")
+            .stream()
+            .map(row -> row.get(0, String.class))
+            .reduce("", (left, right) -> left + "\n" + right);
+
+        assertThat(plan).contains("Limit");
+        assertThat(plan).contains("batches_by_last_offset_covering_idx");
+        assertThat(plan).doesNotContain("Aggregate");
+        assertThat(plan).doesNotContain("Sort");
+    }
+
     private record Baseline(Map<String, Long> cuts, Map<String, List<String>> shapes) {
     }
 
@@ -173,6 +210,9 @@ class BatchesPlanRegressionTest {
             statements.put("delete_records_v1 boundary scan",
                 "SELECT last_offset FROM batches " + key + " ORDER BY topic_id, partition, last_offset LIMIT 1 OFFSET 400");
             statements.put("oldest batch", "SELECT base_offset FROM batches " + key + " ORDER BY last_offset LIMIT 1");
+            statements.put("prune keep offset",
+                "SELECT base_offset FROM batches " + key + " AND last_offset > " + cut
+                    + " ORDER BY topic_id, partition, last_offset LIMIT 1");
             statements.put("find batches",
                 "SELECT base_offset, byte_size FROM batches " + key + " AND last_offset >= " + cut
                     + " ORDER BY last_offset LIMIT 100");
