@@ -310,11 +310,12 @@ object DisklessSwitchInvariantsTest {
 
   def sealedFollowerScenarios(): java.util.stream.Stream[Arguments] = {
     // (checkpointHw, sealOffset, expectFetcher)
-    // Committed seal (>= 0): fetcher starts when HW < seal
+    // Committed seal (>= 0): fetcher starts when HW < seal. In phase 1 it also starts at the seal on a
+    // new leader epoch, so the leader records the follower before it shrinks ISR for lag.
     java.util.stream.Stream.of(
       Arguments.of(0L: java.lang.Long,  10L: java.lang.Long, true: java.lang.Boolean),   // stale
       Arguments.of(5L: java.lang.Long,  10L: java.lang.Long, true: java.lang.Boolean),   // partial
-      Arguments.of(10L: java.lang.Long, 10L: java.lang.Long, false: java.lang.Boolean),  // fresh
+      Arguments.of(10L: java.lang.Long, 10L: java.lang.Long, true: java.lang.Boolean),   // fresh
       // Pending seal (-2): fetcher starts (new leader epoch triggers catch-up)
       Arguments.of(0L: java.lang.Long,  CLASSIC_TO_DISKLESS_SWITCH_PENDING: java.lang.Long, true: java.lang.Boolean),
       Arguments.of(5L: java.lang.Long,  CLASSIC_TO_DISKLESS_SWITCH_PENDING: java.lang.Long, true: java.lang.Boolean),

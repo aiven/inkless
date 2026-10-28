@@ -71,7 +71,7 @@ import org.apache.kafka.storage.internals.log.{AppendOrigin, AsyncOffsetReadFutu
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.{AfterEach, BeforeEach, Test}
 import org.junit.jupiter.params.ParameterizedTest
-import org.junit.jupiter.params.provider.ValueSource
+import org.junit.jupiter.params.provider.{CsvSource, ValueSource}
 import org.mockito.ArgumentMatchers._
 import org.mockito.Mockito._
 import org.mockito.{Answers, ArgumentCaptor, ArgumentMatchers, MockedConstruction, Mockito}
@@ -7207,8 +7207,11 @@ class ReplicaManagerInklessTest {
       populateLocalLogAtLeoAndCheckpointedHwm(replicaManager, tp, log, leo = 10L, hw = 10L)
 
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(10L)
+      when(replicaManager.inklessMetadataView().isClassicPrefixInRemoteStorage(tp)).thenReturn(true)
 
-      val delta = disklessFollowerDelta(topicName, topicId, brokerId, leaderId)
+      // In phase 1 a new leader epoch schedules one fetch at the seal; phase 2 has no such fetch.
+      val delta = disklessFollowerDelta(topicName, topicId, brokerId, leaderId,
+        classicToDisklessStartOffset = 10L, classicPrefixInRemoteStorage = true)
       replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))
 
       // Nothing to catch up — no fetcher should be added for this partition.
@@ -8084,6 +8087,71 @@ class ReplicaManagerInklessTest {
     }
   }
 
+  @ParameterizedTest(name = "testApplyDeltaSchedulesSealFetchOnLeaderChangeOnlyInPhaseOne with classicPrefixInRemoteStorage: {0}")
+  @ValueSource(booleans = Array(false, true))
+  def testApplyDeltaSchedulesSealFetchOnLeaderChangeOnlyInPhaseOne(classicPrefixInRemoteStorage: Boolean): Unit = {
+    // A switched follower on a topic that doesn't consolidate leaves the classic fetcher once it's at
+    // the seal and in ISR. In phase 1 a new leader shrinks ISR for lag, so one fetch at the seal must
+    // record this follower on the new leader. In phase 2 the leader doesn't shrink, so no fetch is needed.
+    val topicName = "switched-topic"
+    val topicId = Uuid.randomUuid()
+    val tp = new TopicPartition(topicName, 0)
+    val brokerId = 1
+    val firstLeaderId = 2
+    val secondLeaderId = 0
+    val sealOffset = 10L
+
+    val mockFetcherManager = mock(classOf[ReplicaFetcherManager])
+    when(mockFetcherManager.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+
+    val replicaManager = createReplicaManager(
+      List(topicName),
+      mockReplicaFetcherManager = Some(mockFetcherManager)
+    )
+    try {
+      val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+      populateLocalLogAtLeoAndCheckpointedHwm(replicaManager, tp, log, leo = sealOffset, hw = sealOffset)
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(sealOffset)
+      when(replicaManager.inklessMetadataView().isClassicPrefixInRemoteStorage(tp)).thenReturn(classicPrefixInRemoteStorage)
+      when(replicaManager.inklessMetadataView().isSwitchedPhaseOne(tp)).thenReturn(!classicPrefixInRemoteStorage)
+
+      val firstDelta = disklessFollowerDelta(topicName, topicId, brokerId, firstLeaderId,
+        classicToDisklessStartOffset = sealOffset, classicPrefixInRemoteStorage = classicPrefixInRemoteStorage)
+      replicaManager.applyDelta(firstDelta, imageFromTopics(firstDelta.apply()))
+      clearInvocations(mockFetcherManager)
+
+      val leaderChangeDelta = new TopicsDelta(TopicsImage.EMPTY)
+      leaderChangeDelta.replay(new TopicRecord().setName(topicName).setTopicId(topicId))
+      val leaderChangeRecord = new PartitionRecord()
+        .setPartitionId(0)
+        .setTopicId(topicId)
+        .setReplicas(util.Arrays.asList(brokerId, firstLeaderId, secondLeaderId))
+        .setIsr(util.Arrays.asList(brokerId, firstLeaderId, secondLeaderId))
+        .setLeader(secondLeaderId)
+        .setLeaderEpoch(1)
+        .setPartitionEpoch(1)
+      leaderChangeRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicToDisklessStartOffset(sealOffset))
+      if (classicPrefixInRemoteStorage)
+        leaderChangeRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicPrefixInRemoteStorage())
+      leaderChangeDelta.replay(leaderChangeRecord)
+      replicaManager.applyDelta(leaderChangeDelta, imageFromTopics(leaderChangeDelta.apply()))
+
+      if (classicPrefixInRemoteStorage) {
+        verify(mockFetcherManager, never()).addFetcherForPartitions(any())
+      } else {
+        val secondEndpoint = ClusterImageTest.IMAGE1.broker(secondLeaderId).listeners().get("PLAINTEXT")
+        verify(mockFetcherManager).addFetcherForPartitions(Map(tp -> InitialFetchState(
+          topicId = Some(topicId),
+          leader = new BrokerEndPoint(secondLeaderId, secondEndpoint.host(), secondEndpoint.port()),
+          currentLeaderEpoch = 1,
+          initOffset = sealOffset
+        )))
+      }
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
   @Test
   def testFollowerFetchAtClassicToDisklessStartOffsetReturnsEmptyAndIdle(): Unit = {
     val followerId = 2
@@ -8187,6 +8255,45 @@ class ReplicaManagerInklessTest {
       assertEquals(sealOffset, partition.getReplica(followerId).get.stateSnapshot.logEndOffset)
       // ...which drives the normal ISR-expansion path for the now caught-up follower.
       verify(alterPartitionManager).submit(any(), argThat[LeaderAndIsr](_.isr.contains(followerId)))
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @ParameterizedTest(name = "{0}: shrinks ISR for lag = {1}")
+  @CsvSource(Array("PHASE_ONE, true", "PHASE_TWO, false", "BORN_DISKLESS, false"))
+  def testMaybeShrinkIsrGatesDisklessPartitionOnSwitchPhase(phase: String, expectShrink: Boolean): Unit = {
+    val followerId = 2
+    val sealOffset = 5L
+    val tp = disklessTopicPartition.topicPartition()
+    val replicaManager = createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      topicIdMapping = Map(disklessTopicPartition.topic() -> disklessTopicPartition.topicId()),
+      disklessManagedReplicasEnabled = true,
+    )
+    try {
+      val partition = setupSwitchedLeaderWithOutOfSyncFollower(
+        replicaManager, disklessTopicPartition, followerId, sealOffset, followerInIsr = true)
+      phase match {
+        case "PHASE_ONE" =>
+          when(replicaManager.inklessMetadataView().isSwitchedPhaseOne(tp)).thenReturn(true)
+        case "PHASE_TWO" =>
+          when(replicaManager.inklessMetadataView().isClassicPrefixInRemoteStorage(tp)).thenReturn(true)
+        case "BORN_DISKLESS" =>
+          when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp))
+            .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+      }
+      assertTrue(partition.inSyncReplicaIds.contains(followerId))
+      prepareAlterPartitionSubmit()
+
+      // The follower never fetches from this leader, so it is out of sync once the lag time passes.
+      time.sleep(replicaManager.config.replicaLagTimeMaxMs + 1)
+      replicaManager.maybeShrinkIsr()
+
+      if (expectShrink)
+        verify(alterPartitionManager).submit(any(), argThat[LeaderAndIsr](!_.isr.contains(followerId)))
+      else
+        verify(alterPartitionManager, never()).submit(any(), any())
     } finally {
       replicaManager.shutdown(checkpointHW = false)
     }
@@ -9131,8 +9238,10 @@ class ReplicaManagerInklessTest {
   private def setupSwitchedLeaderWithOutOfSyncFollower(replicaManager: ReplicaManager,
                                                        topicIdPartition: TopicIdPartition,
                                                        followerId: Int,
-                                                       sealOffset: Long): Partition = {
+                                                       sealOffset: Long,
+                                                       followerInIsr: Boolean = false): Partition = {
     val leaderId = replicaManager.config.brokerId
+    val isr = if (followerInIsr) List(leaderId, followerId) else List(leaderId)
     // ClusterImageTest.IMAGE1 registers brokers 1 (leader) and 2 (follower) as alive/unfenced, which
     // is what isReplicaIsrEligible consults via metadataCache.getAliveBrokerEpoch on the leader.
     replicaManager.metadataCache.asInstanceOf[KRaftMetadataCache].setImage(imageFromTopics(TopicsImage.EMPTY))
@@ -9148,7 +9257,7 @@ class ReplicaManagerInklessTest {
       .setLeaderEpoch(0)
       .setPartitionEpoch(0)
       .setReplicas(List[Integer](leaderId, followerId).asJava)
-      .setIsr(List[Integer](leaderId).asJava))
+      .setIsr(isr.map(Integer.valueOf).asJava))
 
     val (partition, _) = replicaManager.getOrCreatePartition(
       topicIdPartition.topicPartition(),
@@ -9158,7 +9267,7 @@ class ReplicaManagerInklessTest {
       partitionRegistration(
         leaderId,
         leaderEpoch = 0,
-        isr = Array(leaderId),
+        isr = isr.toArray,
         partitionEpoch = 0,
         replicas = Array(leaderId, followerId)),
       isNew = false,
