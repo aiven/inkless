@@ -215,7 +215,9 @@ sequenceDiagram
     note over PRUNER,RS: WAL prune: scheduled, every inkless.consolidation.cleanup.interval.ms
     PRUNER->>UL: read highestOffsetInRemoteStorage
     PRUNER->>PRUNER: safe prune offset = getSafeConsolidatedDisklessPruneOffset<br/>(floor >= max(seal, logStartOffset))
-    PRUNER->>CP: prune_batches_below_highest_tiered_offset_v1
+    PRUNER->>CP: pruneDisklessLogs<br/>(eligible partitions, configured cap)
+    CP->>CP: prune_batches_below_highest_tiered_offset_v2<br/>(one transaction per partition)
+    CP->>CP: lock one partition only when work exists
     CP->>RS: delete WAL batches with last_offset <= highestOffsetInRemoteStorage
     CP->>CP: advance logs.log_start_offset
     note over CP,RS: Empty WAL files are removed by the existing file-cleaner path
@@ -302,14 +304,17 @@ When consolidation is enabled, the enforcer reads `isConsolidatingDisklessTopic`
 
 ### WAL pruning
 
-`ConsolidatedDisklessLogPruner` runs on each broker at `inkless.consolidation.cleanup.interval.ms` (default 1 minute). For each consolidating partition that isn't in `SWITCH_PENDING`:
+`ConsolidatedDisklessLogPruner` runs on each broker at `inkless.consolidation.cleanup.interval.ms` (default 1 minute). It handles each consolidating partition independently and skips partitions in `SWITCH_PENDING`:
 
 1. It reads `highestOffsetInRemoteStorage` from the `UnifiedLog` (skips if negative: remote storage is not active yet).
 2. It computes a safe prune offset: for born-diskless topics that is `highestOffsetInRemoteStorage`; for switched topics it normally uses `partition.getSafeConsolidatedDisklessPruneOffset(...)`, which protects the seal and the partition's consolidation prune floor. If remote storage ends at `seal - 1` before that floor is ready, it uses `seal - 1` to initialize the cross-tier start without including any diskless batches.
-3. It submits a batch prune request to the control plane (`prune_batches_below_highest_tiered_offset_v1`). On the first request, the control plane initializes `logs.remote_log_start_offset` from the old `logs.log_start_offset`. It then deletes WAL batches with `last_offset` at or below the requested prune offset and advances `logs.log_start_offset` in the same transaction.
-4. On success, the partition's consolidation prune floor is advanced (`maybeAdvanceConsolidationPruneFloor`).
+3. It submits the eligible partitions to `controlPlane.pruneDisklessLogs` with the configured cap. The control plane runs `prune_batches_below_highest_tiered_offset_v2` for each partition in its own transaction. It skips the lock when `log_start_offset` is already past the requested offset and the control plane has set `remote_log_start_offset`. Otherwise, it locks only that partition for the delete. The first prune copies the pre-prune `logs.log_start_offset` into `logs.remote_log_start_offset`, including for an empty log. A switched empty log at `seal - 1` advances to the seal so the handoff completes.
+4. It deletes at most `inkless.consolidation.cleanup.max.batches.per.request` batches per partition per attempt. The default is `2000` batches. Set `0` for no cap. A capped delete advances the WAL start to the first retained batch, and later runs continue the backlog.
+5. On success, `maybeAdvanceConsolidationPruneFloor` advances the partition's consolidation prune floor.
 
 The reconciler sets the prune floor to at least `max(seal, logStartOffset)` when it arms consolidation (`ensureConsolidationPruneFloorAtLeast`), so a switched partition's classic prefix is never pruned from the WAL before it is safely in remote storage.
+
+The `PruneDisklessLogsQueryTime` and `PruneDisklessLogsQueryRate` metrics record one sample per partition, not one sample per scheduled pruner job. `ConsolidationPruneTotalTime` records the whole pruner run.
 
 ### WAL segment deletion
 
@@ -449,6 +454,7 @@ Consolidating diskless topics require `remote.log.copy.disable=false` because WA
 | `diskless.consolidation.fetch.rate.limit.bytes.per.second`    | `Long.MAX_VALUE` (disabled) | Max object-storage read bandwidth for consolidation across all fetcher threads. Dynamic; `0` pauses consolidation.         |
 | `diskless.consolidation.fetch.lagging.request.rate.limit`     | `0` (unlimited)             | Max cold-path request rate (requests/sec) as a safety valve.                                                               |
 | `inkless.consolidation.cleanup.interval.ms`                   | `60000` (1 min)             | How often the WAL pruner runs on each broker.                                                                              |
+| `inkless.consolidation.cleanup.max.batches.per.request`       | `2000`                      | Maximum batches the WAL pruner deletes per partition per attempt. `0` means no cap.                                       |
 
 ### Cross-tier log start offset
 
@@ -460,7 +466,7 @@ Consolidating diskless topics require `remote.log.copy.disable=false` because WA
 
 ## Metrics
 
-The broker registers these under the `io.aiven.inkless.consolidation` group. The auto-generated reference is in [metrics.rst](metrics.rst).
+The broker registers consolidation metrics under the `io.aiven.inkless.consolidation` group and prune totals under the `io.aiven.inkless.delete` group. The auto-generated reference is in [metrics.rst](metrics.rst).
 
 | MBean                                                           | Attribute                                                   | Meaning                                                                                                                                                                                    |
 | --------------------------------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -470,6 +476,7 @@ The broker registers these under the `io.aiven.inkless.consolidation` group. The
 |                                                                 | `ConsolidationRemotePrefixUnknown`                          | 1 while a WAL-gap fetch is waiting on RLMM to decide `OFFSET_MOVED` vs never-tiered `OFFSET_OUT_OF_RANGE`; 0 once decided. Broker aggregate is the count of waiting partitions. A leadership transition or fetcher re-arm can dip the gauge to 0 while the partition is still waiting; the next backed-off fetch restores 1. Register, fetcher removal, and unregister bump a generation. The counter survives unregister so re-registration cannot reuse an in-flight fetch's token. `buildFetch` captures that generation under the fetcher `partitionMapLock` and `fetch` carries it into overlay processing so a bump after the request is built cannot restore the latch. Alert on a sustained non-zero value after `__remote_log_metadata` catch-up, not on the instantaneous reading. |
 | `io.aiven.inkless.consolidation:type=ConsolidationFetchMetrics` | `RecentDataRequestRate` / `LaggingConsumerRequestRate`      | Hot-path (cache-hit) vs cold-path (object-storage) consolidation fetch rates.                                                                                                              |
 | `io.aiven.inkless.delete:type=CrossTierLogStartReporter`        | `PartitionsReported` / `ReportErrors` / `PendingPartitions` | Cross-tier log start offset reporting to the control plane.                                                                                                                                |
+| `io.aiven.inkless.delete:type=ConsolidatedDisklessLogPruner`   | `ConsolidationPruneTotalTime` / `ConsolidationPruneTotalBatchesDeleted` / `ConsolidationPruneTotalBytesDeleted` | Whole-run prune duration in milliseconds and cumulative batches and bytes deleted. These totals update only after a run completes without error. |
 | `io.aiven.inkless.cache:type=CrossTierLogStartCache`            | `CacheHits` / `CacheMisses` / `CacheSize`                   | Cross-tier earliest-offset cache.                                                                                                                                                          |
 | controller                                                      | `DisklessWithoutRemoteStorageCount`                         | Diskless topics where `remote.storage.enable` is `false` or unset, including born-diskless topics that never enter the `Failed` reconciler state.                                            |
 

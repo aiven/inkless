@@ -18,21 +18,28 @@
 
 package io.aiven.inkless.consolidation
 
+import io.aiven.inkless.TimeUtils
 import io.aiven.inkless.control_plane.{ControlPlane, PruneDisklessLogsError, PruneDisklessLogsRequest}
+import io.aiven.inkless.delete.ConsolidatedDisklessLogPrunerMetrics
 import kafka.cluster.Partition
 import kafka.server.ReplicaManager
 import kafka.server.metadata.InklessMetadataView
 import kafka.utils.Logging
 import org.apache.kafka.common.TopicIdPartition
+import org.apache.kafka.common.utils.Time
 import org.apache.kafka.metadata.PartitionRegistration
 
+import java.time.Duration
 import scala.jdk.CollectionConverters.{CollectionHasAsScala, SeqHasAsJava}
 
 class ConsolidatedDisklessLogPruner(replicaManager: ReplicaManager,
                                     inklessMetadataView: InklessMetadataView,
-                                    controlPlane: ControlPlane) extends Runnable with Logging {
+                                    controlPlane: ControlPlane,
+                                    maxBatchesPerRequest: Int,
+                                    metrics: ConsolidatedDisklessLogPrunerMetrics) extends Runnable with Logging {
 
   override def run(): Unit = {
+    val start = TimeUtils.durationMeasurementNow(Time.SYSTEM)
     // Read the classic-to-diskless start offset once per partition and thread it through, so the
     // eligibility check and the per-partition prune decision always see the same value (no TOCTOU
     // between dropping SWITCH_PENDING and computing the safe prune offset).
@@ -61,12 +68,16 @@ class ConsolidatedDisklessLogPruner(replicaManager: ReplicaManager,
         }
       }.toSeq.asJava
     if (!requests.isEmpty) {
-      controlPlane.pruneDisklessLogs(requests, 0).asScala.foreach { pruneDisklessLogsResponse =>
+      var totalBatchesDeleted = 0L
+      var totalBytesDeleted = 0L
+      controlPlane.pruneDisklessLogs(requests, maxBatchesPerRequest).asScala.foreach { pruneDisklessLogsResponse =>
         if (pruneDisklessLogsResponse.error != PruneDisklessLogsError.NONE) {
           logger.warn("Prune diskless logs did not apply for {} (control plane reported {})",
             pruneDisklessLogsResponse.topicIdPartition,
             pruneDisklessLogsResponse.error)
         } else {
+          totalBatchesDeleted += pruneDisklessLogsResponse.batchesDeleted
+          totalBytesDeleted += pruneDisklessLogsResponse.bytesDeleted
           replicaManager.getPartitionOrError(pruneDisklessLogsResponse.topicIdPartition.topicPartition) match {
             case Right(partition) =>
               val newDisklessLogStart = pruneDisklessLogsResponse.disklessLogStartOffset
@@ -78,6 +89,11 @@ class ConsolidatedDisklessLogPruner(replicaManager: ReplicaManager,
           }
         }
       }
+      metrics.recordConsolidationPruneFinishedSuccessfully(
+        Duration.between(start, TimeUtils.durationMeasurementNow(Time.SYSTEM)).toMillis,
+        totalBatchesDeleted,
+        totalBytesDeleted
+      )
     }
   }
 
