@@ -44,7 +44,7 @@ class ConsolidationReconcilerTest {
     fetcherManager: ConsolidationFetcherManager = mock(classOf[ConsolidationFetcherManager]),
     initialFetchOffset: UnifiedLog => Long = _.highWatermark,
     quotaManager: ReplicationQuotaManager = mock(classOf[ReplicationQuotaManager]),
-    replicaManager: ReplicaManager = mock(classOf[ReplicaManager]),
+    replicaManager: ReplicaManager = mockReplicaManager(),
     consolidationMetrics: ConsolidationMetrics = mock(classOf[ConsolidationMetrics])
   ): ConsolidationReconciler = {
     new ConsolidationReconciler(
@@ -56,6 +56,12 @@ class ConsolidationReconcilerTest {
       fetcherManager,
       quotaManager
     )
+  }
+
+  private def mockReplicaManager(dropSucceeds: Boolean = true): ReplicaManager = {
+    val replicaManager = mock(classOf[ReplicaManager])
+    when(replicaManager.maybeDropLocalClassicPrefix(any())).thenReturn(dropSucceeds)
+    replicaManager
   }
 
   // Switched partitions default to phase 2, where consolidation can start.
@@ -121,20 +127,51 @@ class ConsolidationReconcilerTest {
   }
 
   @Test
-  def testSwitchedPartitionInPhaseOneIsRetried(): Unit = {
+  def testSwitchedPartitionInPhaseOneIsRetriedWithoutDroppingThePrefix(): Unit = {
     // The controller committed the seal, but the classic prefix isn't in remote storage yet. No replica
-    // consolidates until it is.
+    // consolidates, and the local prefix stays because it's the only copy.
     val view = mockMetadataView(classicToDisklessStartOffset = 100L, classicPrefixInRemoteStorage = false)
     val fetcherManager = mock(classOf[ConsolidationFetcherManager])
+    val replicaManager = mockReplicaManager()
     val (partition, _) = mockPartition(logStartOffset = 0L, logEndOffset = 100L, isLeader = true,
       remoteLogEnabled = true)
-    val reconciler = newReconciler(view, fetcherManager)
+    val reconciler = newReconciler(view, fetcherManager, replicaManager = replicaManager)
+
+    val fetchStates = initFetchState(reconciler, partition)
+
+    assertTrue(fetchStates.isEmpty)
+    verify(replicaManager, never()).maybeDropLocalClassicPrefix(any())
+    verify(partition, never()).ensureConsolidationPruneFloorAtLeast(anyLong())
+    verify(fetcherManager, never()).addFailedPartition(topicPartition)
+  }
+
+  @Test
+  def testSwitchedPartitionInPhaseTwoDropsThePrefixBeforeConsolidating(): Unit = {
+    val view = mockMetadataView(classicToDisklessStartOffset = 100L)
+    val replicaManager = mockReplicaManager()
+    val (partition, _) = mockPartition(logStartOffset = 0L, logEndOffset = 100L)
+    val reconciler = newReconciler(view, replicaManager = replicaManager)
+
+    val fetchStates = initFetchState(reconciler, partition)
+
+    assertEquals(100L, fetchStates(topicPartition).initOffset)
+    val inOrder = Mockito.inOrder(replicaManager, partition)
+    inOrder.verify(replicaManager).maybeDropLocalClassicPrefix(partition)
+    inOrder.verify(partition).ensureConsolidationPruneFloorAtLeast(100L)
+  }
+
+  @Test
+  def testConsolidationFailsWhenDroppingThePrefixFails(): Unit = {
+    val view = mockMetadataView(classicToDisklessStartOffset = 100L)
+    val fetcherManager = mock(classOf[ConsolidationFetcherManager])
+    val (partition, _) = mockPartition(logStartOffset = 0L, logEndOffset = 100L)
+    val reconciler = newReconciler(view, fetcherManager, replicaManager = mockReplicaManager(dropSucceeds = false))
 
     val fetchStates = initFetchState(reconciler, partition)
 
     assertTrue(fetchStates.isEmpty)
     verify(partition, never()).ensureConsolidationPruneFloorAtLeast(anyLong())
-    verify(fetcherManager, never()).addFailedPartition(topicPartition)
+    verify(fetcherManager).addFailedPartition(topicPartition)
   }
 
   @Test
@@ -338,7 +375,7 @@ class ConsolidationReconcilerTest {
     when(view.getTopicId(topicPartition.topic)).thenReturn(topicId)
 
     val fetcherManager = mock(classOf[ConsolidationFetcherManager])
-    val replicaManager = mock(classOf[ReplicaManager])
+    val replicaManager = mockReplicaManager()
     val (partition, _) = mockPartition(logStartOffset = 0L, logEndOffset = 100L)
     when(replicaManager.onlinePartition(topicPartition)).thenReturn(Some(partition))
     val reconciler = newReconciler(view, fetcherManager, replicaManager = replicaManager)

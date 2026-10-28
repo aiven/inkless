@@ -195,9 +195,20 @@ Brokers also follow different rules in each phase. The consolidation rows apply 
 | --- | --- | --- |
 | Consolidation | Off. The partition runs like a switched partition that doesn't consolidate. | On, from the seal. |
 | Follower at the seal | Stays on the classic fetcher and backs off at the seal. | Leaves the classic fetcher and consolidates from the seal. |
+| Local classic prefix | Kept, and serves reads below the seal. | Deleted. Reads below the seal come from remote storage. |
 | Metadata routing | Clients go to alive ISR members only. | Clients go to any replica, by the managed replica rules. |
 
 The broker applies the metadata routing rules to every switched partition. The replication factor and the remote storage config don't change them. The broker also applies the phase 1 rule while the switch is pending, because the ISR members are the only replicas with a complete copy of the classic prefix.
+
+### Forced deletion of the local classic prefix
+
+In the record that starts phase 2, the controller adds every live replica to the ISR without checking its local copy of the classic prefix. From then on, brokers trust only the remote copy. When a replica applies the flag, it deletes every local segment below the seal before it serves the prefix or consolidates. If the active segment contains the end of the prefix, the replica rolls it first. This forced deletion skips the retention checks. Like local retention, it advances the local log start offset and keeps the log start offset and the leader epoch cache. The replica keeps serving reads below the seal from remote storage, and the leader keeps validating follower fetches.
+
+The broker updates its metadata cache before it applies the delta, so a fetch can see the flag before the deletion runs. Until the deletion finishes, the broker returns `NOT_LEADER_OR_FOLLOWER` for a read of the local prefix, and the client retries.
+
+A follower below the seal stays on the classic fetcher in phase 2. If the leader already deleted that part of its local log, it returns `OFFSET_MOVED_TO_TIERED_STORAGE`, and the follower rebuilds its log from remote storage. When the follower's local LEO equals the seal, it hands off to consolidation.
+
+Forced deletion skips a segment that starts below the seal and ends past it. The broker refuses reads below the seal in that segment until local retention deletes it. If remote storage is off for the topic, or `remote.log.copy.disable` is `true`, the broker keeps the local prefix and logs a warning. Reads of that prefix keep failing.
 
 ## Operator override of the seal offset
 

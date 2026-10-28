@@ -2091,6 +2091,45 @@ public class UnifiedLog implements AutoCloseable {
         });
     }
 
+    /**
+     * Deletes every local segment whose records all sit below {@code offset}, without checking retention,
+     * the high watermark, or remote copy progress. The caller must know that remote storage already holds
+     * those records. If the active segment holds records and the log ends at or below {@code offset}, the
+     * active segment is rolled first so that it can be deleted. Like local retention, this advances the
+     * local log start offset, deletes the files asynchronously, and keeps the log start offset and the
+     * leader epoch cache.
+     *
+     * @param offset The exclusive upper bound of the records to delete
+     * @return The number of segments deleted
+     * @throws IllegalStateException if remote log copy is not enabled for this log
+     */
+    public int forceDeleteLocalSegmentsBelow(long offset) throws IOException {
+        if (!remoteLogEnabledAndRemoteCopyEnabled()) {
+            throw new IllegalStateException("Cannot force-delete local segments of " + topicPartition() +
+                    " because remote log copy is not enabled");
+        }
+        synchronized (lock) {
+            if (logEndOffset() <= offset && activeSegment().size() > 0) {
+                roll();
+            }
+            List<LogSegment> deletable = new ArrayList<>();
+            Iterator<LogSegment> segmentsIterator = localLog.segments().values().iterator();
+            Optional<LogSegment> segmentOpt = nextOption(segmentsIterator);
+            while (segmentOpt.isPresent()) {
+                Optional<LogSegment> nextSegmentOpt = nextOption(segmentsIterator);
+                if (nextSegmentOpt.isPresent() && nextSegmentOpt.get().baseOffset() <= offset) {
+                    deletable.add(segmentOpt.get());
+                    segmentOpt = nextSegmentOpt;
+                } else {
+                    segmentOpt = Optional.empty();
+                }
+            }
+            return deleteSegments(deletable, toDelete ->
+                    logger.info("Deleting segments below offset {} due to forced deletion: {}", offset,
+                            toDelete.stream().map(LogSegment::toString).collect(Collectors.joining(","))));
+        }
+    }
+
     public boolean isFuture() {
         return localLog.isFuture();
     }

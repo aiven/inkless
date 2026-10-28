@@ -66,3 +66,4 @@ core/src/main/scala/kafka/server/ControllerServer.scala    @aiven/inkless @apach
 core/src/main/scala/kafka/server/AbstractFetcherThread.scala @aiven/inkless @apache/kafka  # consolidation fetcher skips ConsumerLag JMX registration
 metadata/src/main/java/org/apache/kafka/controller/ReplicationControlManager.java @aiven/inkless @apache/kafka  # diskless placement, election, and classic-to-diskless switch commits
 metadata/src/main/java/org/apache/kafka/controller/PartitionChangeBuilder.java @aiven/inkless @apache/kafka  # classic-to-diskless switch flag commit
+storage/src/main/java/org/apache/kafka/storage/internals/log/UnifiedLog.java @aiven/inkless @apache/kafka  # forced deletion of the local classic prefix

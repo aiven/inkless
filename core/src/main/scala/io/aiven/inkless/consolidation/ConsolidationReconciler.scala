@@ -157,6 +157,9 @@ class ConsolidationReconciler(replicaManager: ReplicaManager,
         // commit bumps the leader epoch and re-runs reconciliation.
         ConsolidationStartState.Retry(s"Skipping consolidation for $tp because the classic prefix " +
           s"below the seal $seal is not in remote storage yet")
+      case seal if seal >= 0 && !replicaManager.maybeDropLocalClassicPrefix(partition) =>
+        ConsolidationStartState.Failed(new ReconciliationException(
+          s"Cannot start consolidation for $tp because deleting its local classic prefix below the seal $seal failed"))
       case seal if seal >= 0 =>
         val log = partition.localLogOrException
         if (log.logEndOffset < seal) {

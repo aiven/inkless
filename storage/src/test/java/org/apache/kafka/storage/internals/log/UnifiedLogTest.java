@@ -473,6 +473,63 @@ public class UnifiedLogTest {
     }
 
     @Test
+    public void testForceDeleteLocalSegmentsBelowKeepsLogStartOffsetAndLeaderEpochCache() throws IOException {
+        Supplier<MemoryRecords> records = () -> singletonRecords("test".getBytes(), "test".getBytes(), 10L);
+        LogConfig config = new LogTestUtils.LogConfigBuilder()
+                .segmentBytes(records.get().sizeInBytes() * 2)
+                .remoteLogStorageEnable(true)
+                .build();
+        log = createLog(logDir, config, true);
+        for (int i = 0; i < 10; i++) {
+            log.appendAsLeader(records.get(), i < 6 ? 0 : 1);
+        }
+        assertEquals(List.of(0L, 2L, 4L, 6L, 8L), log.logSegments().stream().map(LogSegment::baseOffset).toList());
+
+        // No high watermark and no remote copy progress: retention would delete nothing.
+        assertEquals(3, log.forceDeleteLocalSegmentsBelow(6L));
+
+        assertEquals(6L, log.localLogStartOffset());
+        assertEquals(0L, log.logStartOffset());
+        assertEquals(List.of(6L, 8L), log.logSegments().stream().map(LogSegment::baseOffset).toList());
+        assertEquals(List.of(new EpochEntry(0, 0), new EpochEntry(1, 6)), log.leaderEpochCache().epochEntries());
+
+        // The segment [6, 8) straddles offset 7, so it stays.
+        assertEquals(0, log.forceDeleteLocalSegmentsBelow(7L));
+        assertEquals(6L, log.localLogStartOffset());
+    }
+
+    @Test
+    public void testForceDeleteLocalSegmentsBelowRollsTheActiveSegment() throws IOException {
+        LogConfig config = new LogTestUtils.LogConfigBuilder()
+                .remoteLogStorageEnable(true)
+                .build();
+        log = createLog(logDir, config, true);
+        for (int i = 0; i < 3; i++) {
+            log.appendAsLeader(singletonRecords("test".getBytes(), "test".getBytes(), 10L), 0);
+        }
+        assertEquals(1, log.numberOfSegments());
+
+        assertEquals(1, log.forceDeleteLocalSegmentsBelow(3L));
+
+        assertEquals(3L, log.localLogStartOffset());
+        assertEquals(3L, log.logEndOffset());
+        assertEquals(0L, log.logStartOffset());
+        assertEquals(1, log.numberOfSegments());
+        assertEquals(3L, log.activeSegment().baseOffset());
+        assertEquals(0, log.activeSegment().size());
+    }
+
+    @Test
+    public void testForceDeleteLocalSegmentsBelowRequiresRemoteLogCopy() throws IOException {
+        log = createLog(logDir, new LogTestUtils.LogConfigBuilder().build());
+        log.appendAsLeader(singletonRecords("test".getBytes(), "test".getBytes(), 10L), 0);
+
+        assertThrows(IllegalStateException.class, () -> log.forceDeleteLocalSegmentsBelow(1L));
+        assertEquals(0L, log.localLogStartOffset());
+        assertEquals(1L, log.logEndOffset());
+    }
+
+    @Test
     public void testLogDeletionAfterDeleteRecords() throws IOException {
         Supplier<MemoryRecords> records = () -> singletonRecords("test".getBytes());
         LogConfig logConfig = new LogTestUtils.LogConfigBuilder()

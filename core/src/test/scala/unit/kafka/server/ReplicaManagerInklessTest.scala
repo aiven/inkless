@@ -1900,6 +1900,78 @@ class ReplicaManagerInklessTest {
     }
   }
 
+  // The metadata image shows classicPrefixInRemoteStorage before applyDelta drops the local classic
+  // prefix, so a fetch in that window finds the unchecked local copy still in place.
+  @Test
+  def testFetchSwitchedPartitionInPhaseTwoRejectsReadOfLocalClassicPrefix(): Unit = {
+    val fetchHandlerCtor = mockFetchHandler(Map.empty)
+    val cp = mock(classOf[ControlPlane])
+    val replicaManager = spy(createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      controlPlane = Some(cp),
+      disklessManagedReplicasEnabled = true,
+      disklessRemoteStorageConsolidationEnabled = true,
+      consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+    ))
+    try {
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(100L)
+      stubConsolidatingPartitionWithLocalLeo(replicaManager, localLeo = 200L)
+
+      val fetchParams = new FetchParams(
+        -1, -1L,
+        0L, 1, 1024, FetchIsolation.HIGH_WATERMARK, Optional.empty()
+      )
+      val fetchInfos = Seq(
+        disklessTopicPartition -> new PartitionData(disklessTopicPartition.topicId(), 50L, 0L, 1024, Optional.empty())
+      )
+
+      @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+      val responseCallback = (response: Seq[(TopicIdPartition, FetchPartitionData)]) => responseData = response.toMap
+      replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
+
+      waitForFetchResponse(responseData)
+      assertEquals(Errors.NOT_LEADER_OR_FOLLOWER, responseData(disklessTopicPartition).error)
+      assertEquals(MemoryRecords.EMPTY, responseData(disklessTopicPartition).records)
+      verify(replicaManager, never()).readFromLog(any(), any(), any(), any())
+      verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+      fetchHandlerCtor.close()
+    }
+  }
+
+  @Test
+  def testIsBelowSealInLocalLog(): Unit = {
+    val replicaManager = createReplicaManager(List.empty)
+    try {
+      assertTrue(replicaManager.isBelowSealInLocalLog(
+        seal = 100L, fetchOffset = 50L, localLogStartOffset = 0L, localLogEndOffset = 200L))
+      assertFalse(replicaManager.isBelowSealInLocalLog(
+        seal = 100L, fetchOffset = 50L, localLogStartOffset = 100L, localLogEndOffset = 200L),
+        "A read below the local log start takes the tiered path")
+      assertFalse(replicaManager.isBelowSealInLocalLog(
+        seal = 100L, fetchOffset = 100L, localLogStartOffset = 0L, localLogEndOffset = 200L),
+        "The seal is the first diskless offset")
+      assertFalse(replicaManager.isBelowSealInLocalLog(
+        seal = 100L, fetchOffset = 50L, localLogStartOffset = 0L, localLogEndOffset = 50L),
+        "The local log doesn't hold the offset")
+      assertFalse(replicaManager.isBelowSealInLocalLog(
+        seal = PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET, fetchOffset = 50L,
+        localLogStartOffset = 0L, localLogEndOffset = 200L))
+      assertFalse(replicaManager.isBelowSealInLocalLog(
+        seal = PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING, fetchOffset = 50L,
+        localLogStartOffset = 0L, localLogEndOffset = 200L))
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  // The metadata transformer can route an older consumer (no rackId -> empty clientMetadata) to a
+  // follower whose local logStartOffset is frozen at the classic-to-diskless seal. DeleteRecords /
+  // retention only advance the control-plane cross-tier earliest, so a fetch below it must be rejected
+  // as OFFSET_OUT_OF_RANGE (consumer then resets via ListOffsets(EARLIEST)) instead of serving
+  // logically-deleted records from the follower's stale local log.
   @Test
   def testFetchConsolidatingRejectsFollowerReadBelowCrossTierEarliest(): Unit = {
     val fetchHandlerCtor = mockFetchHandler(Map.empty)
@@ -7471,6 +7543,55 @@ class ReplicaManagerInklessTest {
   }
 
   @Test
+  def testApplyDeltaDropsLeaderLocalClassicPrefixOnClassicPrefixFlagCommit(): Unit = {
+    val topicName = "switched-consolidating-topic"
+    val topicId = Uuid.randomUuid()
+    val tp = new TopicPartition(topicName, 0)
+    val brokerId = 1
+    val otherReplica = 2
+    val sealOffset = 10L
+
+    val mockFetcherManager = mock(classOf[ReplicaFetcherManager])
+    when(mockFetcherManager.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    val ctorInit: MockedConstruction.MockInitializer[ConsolidationFetcherManager] = {
+      case (mockCfm, _) =>
+        when(mockCfm.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    }
+    val consolidationCtor = mockConstruction(classOf[ConsolidationFetcherManager], ctorInit)
+    try {
+      val replicaManager = spy(createReplicaManager(
+        Seq(topicName),
+        disklessRemoteStorageConsolidationEnabled = true,
+        consolidatingDisklessTopics = Set(topicName),
+        mockReplicaFetcherManager = Some(mockFetcherManager),
+        defaultLogConfig = Some(LogTestUtils.createLogConfig(remoteLogStorageEnable = true)),
+        initDisklessLogManager = Some(mock(classOf[InitDisklessLogManager])),
+      ))
+      try {
+        val pendingImage = applyPendingSwitchDelta(replicaManager, topicName, topicId, tp, brokerId, otherReplica,
+          localLeo = sealOffset)
+        val sealImage = commitSealDelta(replicaManager, pendingImage, topicId, tp, brokerId, sealOffset)
+        val log = replicaManager.localLogOrException(tp)
+        assertEquals(0L, log.localLogStartOffset, "Phase 1 keeps the local classic prefix")
+
+        commitClassicPrefixFlagDelta(replicaManager, sealImage, topicId, tp, leaderId = brokerId)
+
+        // The remote tier keeps serving the prefix, so the log start offset and the leader epoch
+        // cache stay.
+        assertTrue(replicaManager.getPartition(tp).isInstanceOf[HostedPartition.Online[Partition]])
+        assertEquals(sealOffset, log.localLogStartOffset)
+        assertEquals(0L, log.logStartOffset)
+        assertEquals(sealOffset, log.logEndOffset)
+        assertEquals(0L, log.leaderEpochCache().epochEntries().get(0).startOffset)
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
+    } finally {
+      consolidationCtor.close()
+    }
+  }
+
+  @Test
   def testSwitchedConsolidatingFollowerAtSealHandsOffToConsolidationOnClassicPrefixFlagCommit(): Unit = {
     val topicName = "switched-consolidating-topic"
     val topicId = Uuid.randomUuid()
@@ -7526,7 +7647,10 @@ class ReplicaManagerInklessTest {
         clearInvocations(mockFetcherManager)
         commitClassicPrefixFlagDelta(replicaManager, sealImage, topicId, tp, leaderId)
 
-        // Phase 2: the follower leaves the classic fetcher and consolidates from the seal.
+        // Phase 2: the follower drops its local prefix, leaves the classic fetcher, and consolidates
+        // from the seal.
+        assertEquals(sealOffset, log.localLogStartOffset)
+        assertEquals(0L, log.logStartOffset)
         verify(mockFetcherManager).removeFetcherForPartitions(Set(tp))
         verify(mockCfm).addFetcherForPartitions(
           Map(tp -> InitialFetchState(
