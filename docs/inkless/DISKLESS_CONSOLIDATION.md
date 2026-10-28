@@ -218,8 +218,8 @@ sequenceDiagram
     PRUNER->>CP: pruneDisklessLogs<br/>(eligible partitions, configured cap)
     CP->>CP: prune_batches_below_highest_tiered_offset_v2<br/>(one transaction per partition)
     CP->>CP: lock one partition only when work exists
-    CP->>RS: delete WAL batches with last_offset <= highestOffsetInRemoteStorage
-    CP->>CP: advance logs.log_start_offset
+    CP->>RS: delete up to the configured cap of WAL batches below the keep-offset<br/>(selected at a batch boundary from highestOffsetInRemoteStorage)
+    CP->>CP: advance logs.log_start_offset, including an empty switched log
     note over CP,RS: Empty WAL files are removed by the existing file-cleaner path
     end
 
@@ -310,6 +310,7 @@ When consolidation is enabled, the enforcer reads `isConsolidatingDisklessTopic`
 2. It computes a safe prune offset: for born-diskless topics that is `highestOffsetInRemoteStorage`; for switched topics it normally uses `partition.getSafeConsolidatedDisklessPruneOffset(...)`, which protects the seal and the partition's consolidation prune floor. If remote storage ends at `seal - 1` before that floor is ready, it uses `seal - 1` to initialize the cross-tier start without including any diskless batches.
 3. It submits the eligible partitions to `controlPlane.pruneDisklessLogs` with the configured cap. The control plane runs `prune_batches_below_highest_tiered_offset_v2` for each partition in its own transaction. It skips the lock when `log_start_offset` is already past the requested offset and the control plane has set `remote_log_start_offset`. Otherwise, it locks only that partition for the delete. The first prune copies the pre-prune `logs.log_start_offset` into `logs.remote_log_start_offset`, including for an empty log. A switched empty log at `seal - 1` advances to the seal so the handoff completes.
 4. It deletes at most `inkless.consolidation.cleanup.max.batches.per.request` batches per partition per attempt. The default is `2000` batches. Set `0` for no cap. A capped delete advances the WAL start to the first retained batch, and later runs continue the backlog.
+   At the defaults, a 1,000,000-batch backlog takes about 500 minutes, or 8 hours, to drain.
 5. On success, `maybeAdvanceConsolidationPruneFloor` advances the partition's consolidation prune floor.
 
 The reconciler sets the prune floor to at least `max(seal, logStartOffset)` when it arms consolidation (`ensureConsolidationPruneFloorAtLeast`), so a switched partition's classic prefix is never pruned from the WAL before it is safely in remote storage.
@@ -318,7 +319,7 @@ The `PruneDisklessLogsQueryTime` and `PruneDisklessLogsQueryRate` metrics record
 
 ### WAL segment deletion
 
-- The control plane deletes batches that belong to a consolidating topic once their `last_offset <= highestOffsetInRemoteStorage`.
+- The control plane selects a keep-offset at a batch boundary from `highestOffsetInRemoteStorage` and deletes at most `inkless.consolidation.cleanup.max.batches.per.request` batches per partition per attempt. An empty switched log still advances its WAL start from `seal - 1` to `seal` during the handoff.
 - The existing `mark_file_to_delete_v1` / file-cleaner path removes files that become empty (no remaining batch metadata).
 
 ## Reassignment

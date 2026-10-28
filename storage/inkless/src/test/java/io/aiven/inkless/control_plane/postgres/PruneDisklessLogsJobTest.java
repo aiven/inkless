@@ -221,7 +221,7 @@ class PruneDisklessLogsJobTest {
         seedBatches(T0P1, 2);
         setRemoteLogStartOffset(T0P0, 0L);
         setRemoteLogStartOffset(T0P1, 0L);
-        raiseDeadlockOnFirstDelete(T0P1);
+        forceDeadlockOnPartition(T0P1);
 
         final List<PruneDisklessLogsResponse> responses = prune(
             List.of(
@@ -497,7 +497,7 @@ class PruneDisklessLogsJobTest {
         }
     }
 
-    private void raiseDeadlockOnFirstDelete(final TopicIdPartition partition) {
+    private void forceDeadlockOnPartition(final TopicIdPartition partition) {
         final String topicId = new java.util.UUID(
             partition.topicId().getMostSignificantBits(),
             partition.topicId().getLeastSignificantBits()

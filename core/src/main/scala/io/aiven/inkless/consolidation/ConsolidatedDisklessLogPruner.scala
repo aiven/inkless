@@ -67,9 +67,9 @@ class ConsolidatedDisklessLogPruner(replicaManager: ReplicaManager,
           }
         }
       }.toSeq.asJava
+    var totalBatchesDeleted = 0L
+    var totalBytesDeleted = 0L
     if (!requests.isEmpty) {
-      var totalBatchesDeleted = 0L
-      var totalBytesDeleted = 0L
       controlPlane.pruneDisklessLogs(requests, maxBatchesPerRequest).asScala.foreach { pruneDisklessLogsResponse =>
         if (pruneDisklessLogsResponse.error != PruneDisklessLogsError.NONE) {
           logger.warn("Prune diskless logs did not apply for {} (control plane reported {})",
@@ -89,12 +89,12 @@ class ConsolidatedDisklessLogPruner(replicaManager: ReplicaManager,
           }
         }
       }
-      metrics.recordConsolidationPruneFinishedSuccessfully(
-        Duration.between(start, TimeUtils.durationMeasurementNow(Time.SYSTEM)).toMillis,
-        totalBatchesDeleted,
-        totalBytesDeleted
-      )
     }
+    metrics.recordConsolidationPruneFinishedSuccessfully(
+      Duration.between(start, TimeUtils.durationMeasurementNow(Time.SYSTEM)).toMillis,
+      totalBatchesDeleted,
+      totalBytesDeleted
+    )
   }
 
   private def safePruneOffset(partition: Partition, seal: Long, highestRemoteOffset: Long): Option[Long] = {

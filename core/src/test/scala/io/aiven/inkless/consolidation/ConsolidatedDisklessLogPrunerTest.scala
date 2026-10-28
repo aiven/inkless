@@ -174,6 +174,31 @@ class ConsolidatedDisklessLogPrunerTest {
   }
 
   @Test
+  def testRunRecordsZeroMetricsWhenNoPartitionsAreEligible(): Unit = {
+    val rm = mock(classOf[ReplicaManager])
+    val view = mock(classOf[InklessMetadataView])
+    val cp = mock(classOf[ControlPlane])
+    val metrics = mock(classOf[ConsolidatedDisklessLogPrunerMetrics])
+    var recordedMetrics: Option[(Long, Long, Long)] = None
+
+    when(view.getConsolidatingDisklessTopicPartitions).thenReturn(util.Collections.emptySet())
+    doAnswer(invocation => {
+      recordedMetrics = Some((
+        invocation.getArgument[Long](0),
+        invocation.getArgument[Long](1),
+        invocation.getArgument[Long](2)
+      ))
+      null
+    }).when(metrics).recordConsolidationPruneFinishedSuccessfully(anyLong(), anyLong(), anyLong())
+
+    newPruner(rm, view, cp, metrics = metrics).run()
+
+    assertTrue(recordedMetrics.exists { case (duration, batches, bytes) =>
+      duration >= 0 && batches == 0L && bytes == 0L
+    })
+  }
+
+  @Test
   def testRunRecordsNoMetricsWhenACompletedPartitionIsFollowedByAnError(): Unit = {
     val rm = mock(classOf[ReplicaManager])
     val view = mock(classOf[InklessMetadataView])
@@ -200,6 +225,29 @@ class ConsolidatedDisklessLogPrunerTest {
     assertThrows(classOf[RuntimeException], () => newPruner(rm, view, cp, metrics = metrics).run())
 
     verify(partition).maybeAdvanceConsolidationPruneFloor(88L)
+    verify(metrics, never()).recordConsolidationPruneFinishedSuccessfully(anyLong(), anyLong(), anyLong())
+  }
+
+  @Test
+  def testRunAdvancesNoFloorAndRecordsNoMetricsWhenControlPlaneThrows(): Unit = {
+    val rm = mock(classOf[ReplicaManager])
+    val view = mock(classOf[InklessMetadataView])
+    val cp = mock(classOf[ControlPlane])
+    val metrics = mock(classOf[ConsolidatedDisklessLogPrunerMetrics])
+
+    when(view.getConsolidatingDisklessTopicPartitions).thenReturn(util.Set.of(tip, secondTip))
+    when(view.getClassicToDisklessStartOffset(topicPartition)).thenReturn(100L)
+    when(view.getClassicToDisklessStartOffset(secondTopicPartition)).thenReturn(100L)
+    val partition = readyPartition(50L, Some(50L))
+    val secondPartition = readyPartitionFor(secondTopicPartition, secondTopicId, 50L, Some(50L))
+    when(rm.getPartitionOrError(topicPartition)).thenReturn(Right(partition))
+    when(rm.getPartitionOrError(secondTopicPartition)).thenReturn(Right(secondPartition))
+    when(cp.pruneDisklessLogs(any(), anyInt())).thenThrow(new RuntimeException("second partition failed"))
+
+    assertThrows(classOf[RuntimeException], () => newPruner(rm, view, cp, metrics = metrics).run())
+
+    verify(partition, never()).maybeAdvanceConsolidationPruneFloor(anyLong())
+    verify(secondPartition, never()).maybeAdvanceConsolidationPruneFloor(anyLong())
     verify(metrics, never()).recordConsolidationPruneFinishedSuccessfully(anyLong(), anyLong(), anyLong())
   }
 
