@@ -50,6 +50,10 @@ import io.aiven.inkless.control_plane.MetadataView;
  * </ul>
  *
  * <p>For unmanaged replicas (RF = 1), uses legacy behavior: hash-based selection from all alive brokers.
+ *
+ * <p>A switched partition's classic prefix lives only on local disks while the switch is pending and in
+ * phase 1. For such a partition, the transformer routes to alive ISR members only and advertises them as
+ * the ISR. This rule applies for any replication factor and remote storage config.
  */
 public class InklessTopicMetadataTransformer implements Closeable {
     private final MetadataView metadataView;
@@ -99,11 +103,14 @@ public class InklessTopicMetadataTransformer implements Closeable {
             for (final var partition : topic.partitions()) {
                 final List<Integer> assignedReplicas = partition.replicaNodes();
                 final boolean isManagedReplicas = assignedReplicas.size() > 1;
+                final boolean hasLocalClassicPrefix =
+                    metadataView.isSwitchedWithLocalClassicPrefix(topicName, partition.partitionIndex());
 
-                if (isManagedReplicas) {
+                if (isManagedReplicas || hasLocalClassicPrefix) {
                     transformManagedReplicasPartitionMetadata(
                         clientAZ, topic.topicId(), partition,
-                        assignedReplicas, isRemoteStorageEnabled,
+                        assignedReplicas, eligibleReplicas(assignedReplicas, partition.isrNodes(), hasLocalClassicPrefix),
+                        isRemoteStorageEnabled || hasLocalClassicPrefix,
                         snapshot.ids(), snapshot.racks()
                     );
                 } else {
@@ -147,11 +154,14 @@ public class InklessTopicMetadataTransformer implements Closeable {
             for (final var partition : topic.partitions()) {
                 final List<Integer> assignedReplicas = partition.replicaNodes();
                 final boolean isManagedReplicas = assignedReplicas.size() > 1;
+                final boolean hasLocalClassicPrefix =
+                    metadataView.isSwitchedWithLocalClassicPrefix(topicName, partition.partitionIndex());
 
-                if (isManagedReplicas) {
+                if (isManagedReplicas || hasLocalClassicPrefix) {
                     transformManagedReplicasPartitionDescribe(
                         clientAZ, topic.topicId(), partition,
-                        assignedReplicas, isRemoteStorageEnabled,
+                        assignedReplicas, eligibleReplicas(assignedReplicas, partition.isrNodes(), hasLocalClassicPrefix),
+                        isRemoteStorageEnabled || hasLocalClassicPrefix,
                         snapshot.ids(), snapshot.racks()
                     );
                 } else {
@@ -170,12 +180,13 @@ public class InklessTopicMetadataTransformer implements Closeable {
         final Uuid topicId,
         final MetadataResponseData.MetadataResponsePartition partition,
         final List<Integer> assignedReplicas,
+        final List<Integer> eligibleReplicas,
         final boolean isRemoteStorageEnabled,
         final Set<Integer> aliveBrokerIds,
         final Map<Integer, String> brokerRacks
     ) {
         final LeaderSelectionResult result = selectLeaderForManagedReplicas(
-            clientAZ, topicId, partition.partitionIndex(), assignedReplicas, isRemoteStorageEnabled,
+            clientAZ, topicId, partition.partitionIndex(), assignedReplicas, eligibleReplicas, isRemoteStorageEnabled,
             aliveBrokerIds, brokerRacks
         );
 
@@ -201,12 +212,13 @@ public class InklessTopicMetadataTransformer implements Closeable {
         final Uuid topicId,
         final DescribeTopicPartitionsResponseData.DescribeTopicPartitionsResponsePartition partition,
         final List<Integer> assignedReplicas,
+        final List<Integer> eligibleReplicas,
         final boolean isRemoteStorageEnabled,
         final Set<Integer> aliveBrokerIds,
         final Map<Integer, String> brokerRacks
     ) {
         final LeaderSelectionResult result = selectLeaderForManagedReplicas(
-            clientAZ, topicId, partition.partitionIndex(), assignedReplicas, isRemoteStorageEnabled,
+            clientAZ, topicId, partition.partitionIndex(), assignedReplicas, eligibleReplicas, isRemoteStorageEnabled,
             aliveBrokerIds, brokerRacks
         );
 
@@ -266,22 +278,42 @@ public class InklessTopicMetadataTransformer implements Closeable {
     }
 
     /**
+     * Returns the replicas that the transformer may advertise. If a switched partition's classic
+     * prefix lives only on local disks, the ISR members are the only replicas with a complete copy.
+     */
+    private static List<Integer> eligibleReplicas(
+        final List<Integer> assignedReplicas,
+        final List<Integer> isrNodes,
+        final boolean hasLocalClassicPrefix
+    ) {
+        if (!hasLocalClassicPrefix) {
+            return assignedReplicas;
+        }
+        return assignedReplicas.stream()
+            .filter(isrNodes::contains)
+            .toList();
+    }
+
+    /**
      * Select leader for managed replicas.
      *
      * <p>When remote storage is enabled: same-AZ replica > cross-AZ replica > unavailable
      * <p>When remote storage is disabled: same-AZ replica > same-AZ any broker > cross-AZ replica > cross-AZ any broker
+     *
+     * <p>Only {@code eligibleReplicas}, a subset of {@code assignedReplicas}, count as replicas to route to.
      */
     private LeaderSelectionResult selectLeaderForManagedReplicas(
         final String clientAZ,
         final Uuid topicId,
         final int partitionIndex,
         final List<Integer> assignedReplicas,
+        final List<Integer> eligibleReplicas,
         final boolean isRemoteStorageEnabled,
         final Set<Integer> aliveBrokerIds,
         final Map<Integer, String> brokerRacks
     ) {
         // Compute broker sets for routing decisions
-        final List<Integer> aliveReplicas = assignedReplicas.stream()
+        final List<Integer> aliveReplicas = eligibleReplicas.stream()
             .filter(aliveBrokerIds::contains)
             .toList();
         final List<Integer> offlineReplicas = assignedReplicas.stream()
@@ -294,7 +326,7 @@ public class InklessTopicMetadataTransformer implements Closeable {
         final boolean partitionAvailable;
 
         // Track if any replicas are offline but we can still route
-        final boolean hasOfflineReplicas = aliveReplicas.size() < assignedReplicas.size();
+        final boolean hasOfflineReplicas = aliveReplicas.size() < eligibleReplicas.size();
 
         if (isRemoteStorageEnabled) {
             // Remote storage enabled: must stay on replicas (RLM requires UnifiedLog)

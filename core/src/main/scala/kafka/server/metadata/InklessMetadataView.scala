@@ -103,9 +103,37 @@ class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConf
   }
 
   def isReplicaInIsr(topicPartition: TopicPartition, replicaId: Int): Boolean = {
+    partitionRegistration(topicPartition).exists(_.isr.contains(replicaId))
+  }
+
+  /**
+   * Returns the `classicPrefixInRemoteStorage` flag, which starts phase 2 of the classic-to-diskless
+   * switch. The flag is false for a partition that never switched.
+   */
+  def isClassicPrefixInRemoteStorage(topicPartition: TopicPartition): Boolean = {
+    partitionRegistration(topicPartition).exists(_.classicPrefixInRemoteStorage)
+  }
+
+  /**
+   * Returns true for a switched partition in phase 1: the controller committed the seal and the
+   * classic prefix isn't in remote storage yet. A pending switch has no committed seal, so it's excluded.
+   */
+  def isSwitchedPhaseOne(topicPartition: TopicPartition): Boolean = {
+    partitionRegistration(topicPartition).exists { partition =>
+      partition.classicToDisklessStartOffset >= 0 && !partition.classicPrefixInRemoteStorage
+    }
+  }
+
+  override def isSwitchedWithLocalClassicPrefix(topicName: String, partition: Int): Boolean = {
+    partitionRegistration(new TopicPartition(topicName, partition)).exists { registration =>
+      registration.classicToDisklessStartOffset != PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET &&
+        !registration.classicPrefixInRemoteStorage
+    }
+  }
+
+  private def partitionRegistration(topicPartition: TopicPartition): Option[PartitionRegistration] = {
     Option(metadataCache.currentImage().topics().getTopic(topicPartition.topic()))
       .flatMap(topicImage => Option(topicImage.partitions().get(topicPartition.partition())))
-      .exists(_.isr.contains(replicaId))
   }
 
   /**

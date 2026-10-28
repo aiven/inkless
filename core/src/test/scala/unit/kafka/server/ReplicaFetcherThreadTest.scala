@@ -39,7 +39,8 @@ import org.apache.kafka.server.common.{KRaftVersion, MetadataVersion, OffsetAndE
 import org.apache.kafka.server.network.BrokerEndPoint
 import org.apache.kafka.server.ReplicaState
 import org.apache.kafka.server.PartitionFetchState
-import org.apache.kafka.server.config.ReplicationConfigs
+import org.apache.kafka.server.config.{ReplicationConfigs, ServerConfigs}
+import org.apache.kafka.server.log.remote.storage.RemoteLogManagerConfig
 import org.apache.kafka.storage.internals.log.{LogAppendInfo, LogConfig, RecordValidationStats, UnifiedLog}
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats
 import org.junit.jupiter.api.Assertions._
@@ -819,13 +820,13 @@ class ReplicaFetcherThreadTest {
       "Delay must be applied from doWork, not inline in processPartitionData")
     verify(replicaFetcherManager, times(0)).removeFetcherForPartitions(any())
 
-    thread.backOffPartitionsAwaitingIsrRecovery()
+    thread.backOffPartitionsWaitingAtSeal()
 
     val fetchState = thread.fetchState(t1p0).get
     assertTrue(fetchState.isDelayed,
       s"Partition must be delayed after the at-seal fetch, got $fetchState")
     assertEquals(config.replicaFetchBackoffMs.toLong, fetchState.delay.orElse(0L))
-    assertEquals(mutable.Buffer.empty, thread.partitionsAwaitingIsrRecovery)
+    assertEquals(mutable.Buffer.empty, thread.partitionsWaitingAtSeal)
   }
 
   @Test
@@ -852,13 +853,43 @@ class ReplicaFetcherThreadTest {
       expectEviction = false)
   }
 
+  @Test
+  def shouldNotEvictConsolidatingPartitionAtSealUntilClassicPrefixIsInRemoteStorage(): Unit = {
+    verifyDisklessSwitchEviction(
+      classicToDisklessStartOffset = 100L,
+      logEndOffsetAfterAppend = 100L,
+      expectEviction = false,
+      consolidatingTopic = true,
+      classicPrefixInRemoteStorage = false)
+  }
+
+  @Test
+  def shouldEvictConsolidatingPartitionAtSealOnceClassicPrefixIsInRemoteStorage(): Unit = {
+    verifyDisklessSwitchEviction(
+      classicToDisklessStartOffset = 100L,
+      logEndOffsetAfterAppend = 100L,
+      expectEviction = true,
+      replicaInIsr = false,
+      consolidatingTopic = true,
+      classicPrefixInRemoteStorage = true)
+  }
+
   private def verifyDisklessSwitchEviction(
     classicToDisklessStartOffset: Long,
     logEndOffsetAfterAppend: Long,
     expectEviction: Boolean,
-    replicaInIsr: Boolean = true
+    replicaInIsr: Boolean = true,
+    consolidatingTopic: Boolean = false,
+    classicPrefixInRemoteStorage: Boolean = false
   ): Unit = {
     val props = TestUtils.createBrokerConfig(1)
+    if (consolidatingTopic) {
+      props.put(ServerConfigs.DISKLESS_STORAGE_SYSTEM_ENABLE_CONFIG, "true")
+      props.put(ServerConfigs.DISKLESS_REMOTE_STORAGE_CONSOLIDATION_ENABLE_CONFIG, "true")
+      props.put(RemoteLogManagerConfig.REMOTE_LOG_STORAGE_SYSTEM_ENABLE_PROP, "true")
+      props.put(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, "true")
+      props.put(ServerConfigs.DISKLESS_MANAGED_REPLICAS_ENABLE_CONFIG, "true")
+    }
     val config = KafkaConfig.fromProps(props)
 
     val mockBlockingSend: BlockingSend = mock(classOf[BlockingSend])
@@ -879,6 +910,8 @@ class ReplicaFetcherThreadTest {
     val inklessMetadataView: InklessMetadataView = mock(classOf[InklessMetadataView])
     when(inklessMetadataView.getClassicToDisklessStartOffset(t1p0)).thenReturn(classicToDisklessStartOffset)
     when(inklessMetadataView.isReplicaInIsr(t1p0, config.brokerId)).thenReturn(replicaInIsr)
+    when(inklessMetadataView.isConsolidatingDisklessTopic(t1p0.topic)).thenReturn(consolidatingTopic)
+    when(inklessMetadataView.isClassicPrefixInRemoteStorage(t1p0)).thenReturn(classicPrefixInRemoteStorage)
 
     val replicaFetcherManager: ReplicaFetcherManager = mock(classOf[ReplicaFetcherManager])
 
@@ -921,7 +954,7 @@ class ReplicaFetcherThreadTest {
       verify(replicaManager, times(0)).startConsolidationFetchersForCaughtUpClassicPartitions(any())
     }
     assertEquals(mutable.Buffer.empty, thread.partitionsToEvictAfterDisklessSwitch)
-    assertEquals(mutable.Buffer.empty, thread.partitionsAwaitingIsrRecovery)
+    assertEquals(mutable.Buffer.empty, thread.partitionsWaitingAtSeal)
   }
 
   private def newOffsetForLeaderPartitionResult(

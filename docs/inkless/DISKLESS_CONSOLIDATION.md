@@ -242,7 +242,9 @@ flowchart TD
     seal -- "SWITCH_PENDING" --> retry[Retry: classic switch in progress]
     seal -- "seal >= 0" --> remote{remote.storage.enable?}
     remote -- "off" --> failed[Failed: invariant violation\nsee FailedPartitionsCount]
-    remote -- "on" --> leo{local LEO vs seal?}
+    remote -- "on" --> phase{classicPrefixInRemoteStorage?}
+    phase -- "false (phase 1)" --> retry3[Retry: classic prefix not in remote storage yet]
+    phase -- "true (phase 2)" --> leo{local LEO vs seal?}
     leo -- "LEO < seal, leader" --> rebuild[Ready: arm at LEO\nrebuild classic prefix from remote\nvia OFFSET_MOVED_TO_TIERED_STORAGE]
     leo -- "LEO < seal, follower" --> retry2[Retry: wait for classic catch-up fetcher]
     leo -- "LEO >= seal" --> resume[Ready: arm at LEO\nprune floor at least max of seal and logStartOffset]
