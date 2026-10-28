@@ -648,8 +648,23 @@ public abstract class AbstractControlPlaneTest {
         ))).containsExactly(new RepairDisklessLogResponse(false));
         assertThat(controlPlane.pruneDisklessLogs(List.of(
             new PruneDisklessLogsRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 9)
-        ))).containsExactly(new PruneDisklessLogsResponse(
-            EXISTING_TOPIC_1_ID_PARTITION_0, -1, PruneDisklessLogsError.UNKNOWN_TOPIC_OR_PARTITION));
+        ), 0)).containsExactly(new PruneDisklessLogsResponse(
+            EXISTING_TOPIC_1_ID_PARTITION_0, -1, -1, -1, PruneDisklessLogsError.UNKNOWN_TOPIC_OR_PARTITION));
+    }
+
+    @Test
+    void pruneReportsUnknownAndSoftDeletedLogs() {
+        final TopicIdPartition unknown = new TopicIdPartition(NONEXISTENT_TOPIC_ID, 0, NONEXISTENT_TOPIC);
+        assertThat(controlPlane.pruneDisklessLogs(List.of(
+            new PruneDisklessLogsRequest(unknown, 9)
+        ), 0)).containsExactly(new PruneDisklessLogsResponse(
+            unknown, -1, -1, -1, PruneDisklessLogsError.UNKNOWN_TOPIC_OR_PARTITION));
+
+        controlPlane.deleteTopics(Set.of(EXISTING_TOPIC_1_ID));
+        assertThat(controlPlane.pruneDisklessLogs(List.of(
+            new PruneDisklessLogsRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 9)
+        ), 0)).containsExactly(new PruneDisklessLogsResponse(
+            EXISTING_TOPIC_1_ID_PARTITION_0, -1, -1, -1, PruneDisklessLogsError.UNKNOWN_TOPIC_OR_PARTITION));
     }
 
     @Test
@@ -1933,7 +1948,8 @@ public abstract class AbstractControlPlaneTest {
         void firstPruneFreezesPreviousWalStart() {
             assertThat(controlPlane.pruneDisklessLogs(List.of(
                 new PruneDisklessLogsRequest(tidp, 19)
-            ))).containsExactly(new PruneDisklessLogsResponse(tidp, 20, PruneDisklessLogsError.NONE));
+            ), 3)).containsExactly(new PruneDisklessLogsResponse(
+                tidp, 20, 1, 10, PruneDisklessLogsError.NONE));
 
             assertThat(controlPlane.getCrossTierLogStart(tidp)).hasValue(10);
             assertThat(controlPlane.listOffsets(List.of(
@@ -1949,9 +1965,33 @@ public abstract class AbstractControlPlaneTest {
         void pruneWithoutWalDeletionCompletesHandoff() {
             assertThat(controlPlane.pruneDisklessLogs(List.of(
                 new PruneDisklessLogsRequest(tidp, 9)
-            ))).containsExactly(new PruneDisklessLogsResponse(tidp, 10, PruneDisklessLogsError.NONE));
+            ), 1)).containsExactly(new PruneDisklessLogsResponse(
+                tidp, 10, 0, 0, PruneDisklessLogsError.NONE));
 
             assertThat(controlPlane.getCrossTierLogStart(tidp)).hasValue(10);
+        }
+
+        @Test
+        void capLimitsOnePruneAndReportsCounts() {
+            assertThat(controlPlane.pruneDisklessLogs(List.of(
+                new PruneDisklessLogsRequest(tidp, 29)
+            ), 1)).containsExactly(new PruneDisklessLogsResponse(
+                tidp, 20, 1, 10, PruneDisklessLogsError.NONE));
+
+            assertThat(controlPlane.pruneDisklessLogs(List.of(
+                new PruneDisklessLogsRequest(tidp, 29)
+            ), 1)).containsExactly(new PruneDisklessLogsResponse(
+                tidp, 30, 1, 10, PruneDisklessLogsError.NONE));
+        }
+
+        @Test
+        void noOpAfterLogStartPassesTieredOffsetReportsZeroCounts() {
+            controlPlane.pruneDisklessLogs(List.of(new PruneDisklessLogsRequest(tidp, 19)), 0);
+
+            assertThat(controlPlane.pruneDisklessLogs(List.of(
+                new PruneDisklessLogsRequest(tidp, 19)
+            ), 1)).containsExactly(new PruneDisklessLogsResponse(
+                tidp, 20, 0, 0, PruneDisklessLogsError.NONE));
         }
 
         @Test
@@ -1960,7 +2000,7 @@ public abstract class AbstractControlPlaneTest {
                 new AdvanceCrossTierLogStartOffsetRequest(topicId, 0, 5)
             ));
 
-            controlPlane.pruneDisklessLogs(List.of(new PruneDisklessLogsRequest(tidp, 19)));
+            controlPlane.pruneDisklessLogs(List.of(new PruneDisklessLogsRequest(tidp, 19)), 0);
 
             assertThat(controlPlane.getCrossTierLogStart(tidp)).hasValue(5);
         }
@@ -2000,11 +2040,12 @@ public abstract class AbstractControlPlaneTest {
         void laterPruneKeepsClassicStart() {
             initSwitchedLog();
             commitDisklessBatchAtSeal();
-            controlPlane.pruneDisklessLogs(List.of(new PruneDisklessLogsRequest(tidp, seal - 1)));
+            controlPlane.pruneDisklessLogs(List.of(new PruneDisklessLogsRequest(tidp, seal - 1)), 0);
 
             assertThat(controlPlane.pruneDisklessLogs(List.of(
                 new PruneDisklessLogsRequest(tidp, seal + 9)
-            ))).containsExactly(new PruneDisklessLogsResponse(tidp, seal + 10, PruneDisklessLogsError.NONE));
+            ), 0)).containsExactly(new PruneDisklessLogsResponse(
+                tidp, seal + 10, 1, 10, PruneDisklessLogsError.NONE));
 
             assertThat(controlPlane.getCrossTierLogStart(tidp)).hasValue(classicLogStart);
             assertThat(controlPlane.listOffsets(List.of(
@@ -2019,7 +2060,7 @@ public abstract class AbstractControlPlaneTest {
         @Test
         void remoteRetentionAdvancesEarliestAfterFirstPrune() {
             initSwitchedLog();
-            controlPlane.pruneDisklessLogs(List.of(new PruneDisklessLogsRequest(tidp, seal - 1)));
+            controlPlane.pruneDisklessLogs(List.of(new PruneDisklessLogsRequest(tidp, seal - 1)), 0);
 
             final long expiredUpTo = 50;
             assertThat(controlPlane.advanceCrossTierLogStartOffset(List.of(
@@ -2046,7 +2087,7 @@ public abstract class AbstractControlPlaneTest {
                 new AdvanceCrossTierLogStartOffsetRequest(topicId, 0, deletedUpTo)
             ))).containsExactly(AdvanceCrossTierLogStartOffsetResponse.success(deletedUpTo));
 
-            controlPlane.pruneDisklessLogs(List.of(new PruneDisklessLogsRequest(tidp, seal - 1)));
+            controlPlane.pruneDisklessLogs(List.of(new PruneDisklessLogsRequest(tidp, seal - 1)), 0);
 
             assertThat(controlPlane.getCrossTierLogStart(tidp)).hasValue(deletedUpTo);
             assertThat(controlPlane.listOffsets(List.of(
@@ -2061,7 +2102,7 @@ public abstract class AbstractControlPlaneTest {
 
             final long deletedUpTo = 50;
             controlPlane.deleteRecords(List.of(new DeleteRecordsRequest(tidp, deletedUpTo)));
-            controlPlane.pruneDisklessLogs(List.of(new PruneDisklessLogsRequest(tidp, seal - 1)));
+            controlPlane.pruneDisklessLogs(List.of(new PruneDisklessLogsRequest(tidp, seal - 1)), 0);
 
             assertThat(controlPlane.getCrossTierLogStart(tidp)).hasValue(deletedUpTo);
             assertThat(controlPlane.listOffsets(List.of(
@@ -2090,7 +2131,8 @@ public abstract class AbstractControlPlaneTest {
 
             assertThat(controlPlane.pruneDisklessLogs(List.of(
                 new PruneDisklessLogsRequest(tidp, seal - 1)
-            ))).containsExactly(new PruneDisklessLogsResponse(tidp, seal, PruneDisklessLogsError.NONE));
+            ), 0)).containsExactly(new PruneDisklessLogsResponse(
+                tidp, seal, 0, 0, PruneDisklessLogsError.NONE));
 
             assertThat(controlPlane.getCrossTierLogStart(tidp)).hasValue(classicLogStart);
             final long expectedHighWatermark = commitBatchAtSeal ? seal + 10 : seal;

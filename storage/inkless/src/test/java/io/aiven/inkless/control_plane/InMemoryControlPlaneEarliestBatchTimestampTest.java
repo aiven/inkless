@@ -150,7 +150,7 @@ class InMemoryControlPlaneEarliestBatchTimestampTest {
     }
 
     private void prune(final TopicIdPartition partition, final long highestTieredOffset) {
-        controlPlane.pruneDisklessLogs(List.of(new PruneDisklessLogsRequest(partition, highestTieredOffset)));
+        controlPlane.pruneDisklessLogs(List.of(new PruneDisklessLogsRequest(partition, highestTieredOffset)), 0);
     }
 
     private Long earliestTs(final TopicIdPartition partition) {

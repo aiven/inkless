@@ -61,7 +61,7 @@ class ConsolidatedDisklessLogPruner(replicaManager: ReplicaManager,
         }
       }.toSeq.asJava
     if (!requests.isEmpty) {
-      controlPlane.pruneDisklessLogs(requests).asScala.foreach { pruneDisklessLogsResponse =>
+      controlPlane.pruneDisklessLogs(requests, 0).asScala.foreach { pruneDisklessLogsResponse =>
         if (pruneDisklessLogsResponse.error != PruneDisklessLogsError.NONE) {
           logger.warn("Prune diskless logs did not apply for {} (control plane reported {})",
             pruneDisklessLogsResponse.topicIdPartition,
