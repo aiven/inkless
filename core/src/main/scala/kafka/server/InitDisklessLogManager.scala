@@ -125,8 +125,9 @@ class InitDisklessLogManager(
     val payload = DisklessInitMetadata(topicName, classicToDisklessStartOffset, producerStates, classicPrefixInRemoteStorage)
     val newState = AwaitingMetadata(partition, topicId, Some(payload))
     if (tracked.put(tp, newState) != null) {
-      // A replaced state may have queued a flag request, and removing it stops the queue from sending
-      // a request that nothing awaits.
+      // A replaced state may have queued an InitDisklessLog retry or a flag request, and removing it
+      // stops the queue from sending a request that nothing awaits.
+      sendingToControllerQueue.remove(tp)
       sendingFlagToControllerQueue.remove(tp)
     }
     refreshMetrics(tp)
@@ -213,15 +214,30 @@ class InitDisklessLogManager(
         // the init diskless log operation won't progress.
         // Only count a failure when this callback observed `tp` as still
         // tracked. `removePartition` completes the queue promise with `false`
-        // (via `queue.remove`) AFTER clearing `tracked`, so the cancellation
-        // path lands here with `tracked.remove(tp) == null` and must not
-        // increment the failed meter.
-        if (tracked.remove(tp) != null) {
+        // (via `queue.remove`) AFTER clearing `tracked`, so a cancellation
+        // finds nothing to remove and must not increment the failed meter.
+        // A stale rejection after a seal commit must not remove the state that
+        // replaced this one.
+        if (removeIfStillTracked(tp, state)) {
           metrics.markFailed()
         }
       }
       refreshMetrics(tp)
     }(ExecutionContext.parasitic)
+  }
+
+  // Removes `tp` only while it still holds `state`, compared by reference as in `enqueueAwaitingMetadata`.
+  private def removeIfStillTracked(tp: TopicPartition, state: InitDisklessLogState): Boolean = {
+    var removed = false
+    tracked.computeIfPresent(tp, (_, currentState) =>
+      if (currentState eq state) {
+        removed = true
+        null
+      } else {
+        currentState
+      }
+    )
+    removed
   }
 
   private def enqueueAwaitingMetadata(tp: TopicPartition, state: AwaitingMetadata): Unit = {

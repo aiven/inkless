@@ -335,10 +335,10 @@ object SendingFlagToController {
           // A retry can't change that.
           case Errors.INVALID_REQUEST | Errors.UNKNOWN_TOPIC_ID | Errors.UNKNOWN_TOPIC_OR_PARTITION =>
             InitDisklessLogBatchQueue.PermanentFailure
-          // `FENCED_LEADER_EPOCH` is retriable, unlike in `InitDisklessLog`. A same-leader epoch bump, such as
-          // an ISR shrink, fences an in-flight request but doesn't re-register the watch, because the broker
-          // didn't become leader. The retry sends the current epoch. If leadership moved, `shouldSend`
-          // and `removePartition` stop the retry.
+          // `FENCED_LEADER_EPOCH` is retriable, unlike in `InitDisklessLog`. A same-leader epoch bump,
+          // such as a reassignment that removes a replica, fences an in-flight request but doesn't re-register
+          // the watch, because the broker didn't become leader. The retry sends the current epoch.
+          // If leadership moved, `shouldSend` and `removePartition` stop the retry.
           case _ => InitDisklessLogBatchQueue.RetriableFailure
         }
         outcomes += ParsedResponse(

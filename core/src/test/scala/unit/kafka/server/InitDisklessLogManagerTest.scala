@@ -1758,6 +1758,48 @@ class InitDisklessLogManagerTest {
   }
 
   @Test
+  def testLostInitDisklessLogResponseAfterSealCommitSendsNoRetry(): Unit = {
+    // Given a leader whose InitDisklessLog request is still in flight when the seal commit reaches it
+    val partition = mockPartition(hw = 100, leo = 100)
+    manager.registerPartition(partition, topicId)
+    fireLinger()
+    val sealRequest = channelManager.requests.poll()
+    assertEquals(ApiKeys.INIT_DISKLESS_LOG, sealRequest.apiKey)
+    initWithFlagUnset(partition)
+    assertState[WaitingForUpload](tp0)
+    val failedBefore = meterCount(InitDisklessLogManager.InitFailedPerSecMetricName)
+
+    // When the lost response times out
+    sealRequest.timeout()
+    fireRetry()
+
+    // Then no retry goes out, because the controller would reject it, and the upload watch survives
+    assertTrue(channelManager.requests.isEmpty)
+    assertState[WaitingForUpload](tp0)
+    assertEquals(failedBefore, meterCount(InitDisklessLogManager.InitFailedPerSecMetricName))
+  }
+
+  @Test
+  def testStaleInitDisklessLogRejectionAfterSealCommitKeepsTheUploadWatch(): Unit = {
+    // Given a leader whose InitDisklessLog request is still in flight when the seal commit reaches it
+    val partition = mockPartition(hw = 100, leo = 100)
+    manager.registerPartition(partition, topicId)
+    fireLinger()
+    val sealRequest = channelManager.requests.poll()
+    assertEquals(ApiKeys.INIT_DISKLESS_LOG, sealRequest.apiKey)
+    initWithFlagUnset(partition)
+    assertState[WaitingForUpload](tp0)
+    val failedBefore = meterCount(InitDisklessLogManager.InitFailedPerSecMetricName)
+
+    // When the controller rejects that request because the partition is no longer switch-pending
+    sealRequest.complete(makeErrorResponse(topicId, 0, Errors.INVALID_REQUEST))
+
+    // Then the upload watch survives and nothing counts as a failed init
+    assertState[WaitingForUpload](tp0)
+    assertEquals(failedBefore, meterCount(InitDisklessLogManager.InitFailedPerSecMetricName))
+  }
+
+  @Test
   def testLeadershipLostAtPollTimeDropsThePartition(): Unit = {
     val partition = mockPartition(hw = 100, leo = 100)
     initWithFlagUnset(partition)
