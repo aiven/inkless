@@ -190,6 +190,7 @@ public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
         int disklessPartitions = 0;
         int disklessOfflinePartitions = 0;
         int disklessWithoutRemoteStorage = 0;
+        int disklessSwitchedPartitionsPendingUpload = 0;
         for (TopicImage topicImage : newImage.topics().topicsById().values()) {
             // Check diskless from newImage configs directly for consistency with delta path
             final boolean isDiskless = isDisklessTopic(newImage.configs(), topicImage.name());
@@ -203,6 +204,9 @@ public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
                 totalPartitions++;
                 if (isDiskless) {
                     disklessPartitions++;
+                    if (ControllerMetricsChanges.isPendingUpload(partition)) {
+                        disklessSwitchedPartitionsPendingUpload++;
+                    }
                     if (!partition.hasLeader()) {
                         disklessOfflinePartitions++;
                     }
@@ -223,6 +227,7 @@ public class ControllerMetadataMetricsPublisher implements MetadataPublisher {
         metrics.setDisklessPartitionCount(disklessPartitions);
         metrics.setDisklessOfflinePartitionCount(disklessOfflinePartitions);
         metrics.setDisklessWithoutRemoteStorageCount(disklessWithoutRemoteStorage);
+        metrics.setDisklessSwitchedPartitionsPendingUploadCount(disklessSwitchedPartitionsPendingUpload);
     }
 
     private static boolean isDisklessWithoutRemoteStorage(MetadataImage image, String topicName) {
