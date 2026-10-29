@@ -248,6 +248,8 @@ Diskless topics have fundamentally different ISR (In-Sync Replicas) semantics co
 
 **Implication for client rack awareness:** With managed replicas, the transformer prefers routing to assigned replicas in the client's AZ (improving cache locality and deterministic routing). With legacy RF=1, the transformer hashes to any broker in the client's AZ. In both cases, cross-AZ routing is a last resort.
 
+The legacy RF=1 hashing applies only to untiered topics. A consolidating topic, which has `remote.storage.enable=true`, routes to its replicas at every replication factor, because only a replica stores the local log. For more information, see [DISKLESS_CONSOLIDATION.md](DISKLESS_CONSOLIDATION.md).
+
 ### Advantages
 
 ✅ **No protocol changes required** - Works with existing Kafka clients  
