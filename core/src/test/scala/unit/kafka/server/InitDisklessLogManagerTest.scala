@@ -20,9 +20,9 @@ import io.aiven.inkless.control_plane.{ControlPlane, InitDisklessLogProducerStat
 import kafka.cluster.Partition
 import org.apache.kafka.clients.ClientResponse
 import org.apache.kafka.common.{TopicPartition, Uuid}
-import org.apache.kafka.common.message.{InitDisklessLogRequestData, InitDisklessLogResponseData}
+import org.apache.kafka.common.message.{InitDisklessLogRequestData, InitDisklessLogResponseData, SetClassicPrefixInRemoteStorageRequestData, SetClassicPrefixInRemoteStorageResponseData}
 import org.apache.kafka.common.protocol.Errors
-import org.apache.kafka.common.requests.{AbstractRequest, InitDisklessLogRequest, InitDisklessLogResponse, RequestHeader}
+import org.apache.kafka.common.requests.{AbstractRequest, InitDisklessLogRequest, InitDisklessLogResponse, RequestHeader, SetClassicPrefixInRemoteStorageRequest, SetClassicPrefixInRemoteStorageResponse}
 import org.apache.kafka.common.protocol.ApiKeys
 import org.apache.kafka.common.record.internal.RecordBatch
 import org.apache.kafka.server.metrics.KafkaYammerMetrics
@@ -33,8 +33,11 @@ import org.apache.kafka.common.utils.MockTime
 import org.apache.kafka.storage.internals.log.{BatchMetadata, ProducerStateEntry, ProducerStateManager, UnifiedLog}
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.{AfterEach, BeforeEach, Test}
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 import org.mockito.ArgumentMatchers.any
 import org.mockito.Mockito._
+import org.mockito.invocation.InvocationOnMock
 
 import java.util
 import java.util.Optional
@@ -51,7 +54,7 @@ class InitDisklessLogManagerTest {
 
   private var channelManager: MockInitDisklessLogChannelManager = _
   private var controlPlane: ControlPlane = _
-  private var mockTime: MockTime = _
+  private var mockTime: HookedMockTime = _
   private var scheduler: MockScheduler = _
   private var manager: InitDisklessLogManager = _
   private var listenersByTp: mutable.Map[TopicPartition, PartitionListener] = _
@@ -60,7 +63,7 @@ class InitDisklessLogManagerTest {
   def setUp(): Unit = {
     channelManager = new MockInitDisklessLogChannelManager()
     controlPlane = mock(classOf[ControlPlane])
-    mockTime = new MockTime()
+    mockTime = new HookedMockTime()
     scheduler = new MockScheduler(mockTime)
     listenersByTp = mutable.Map.empty
     manager = new InitDisklessLogManager(
@@ -85,6 +88,11 @@ class InitDisklessLogManagerTest {
 
   private def fireRetry(): Unit = {
     mockTime.sleep(manager.retryPeriodMs + 1)
+    scheduler.tick()
+  }
+
+  private def fireUploadCheck(): Unit = {
+    mockTime.sleep(manager.uploadCheckPeriodMs)
     scheduler.tick()
   }
 
@@ -154,6 +162,9 @@ class InitDisklessLogManagerTest {
     }).when(partition).maybeAddListener(any(classOf[PartitionListener]))
     when(log.highWatermark).thenReturn(hw)
     when(log.logEndOffset).thenReturn(leo)
+    when(log.logStartOffset).thenReturn(0L)
+    // Matches the value of a log whose remote log manager hasn't copied anything yet.
+    when(log.highestOffsetInRemoteStorage).thenReturn(-1L)
     when(log.producerStateManager()).thenReturn(producerStateManager)
     when(producerStateManager.activeProducers()).thenReturn(new util.HashMap())
 
@@ -1276,7 +1287,8 @@ class InitDisklessLogManagerTest {
       topicId = topicId,
       topicName = tp0.topic(),
       classicToDisklessStartOffset = 100L,
-      producerStates = util.List.of(new CpProducerState(1L, 0.toShort, 0, 1, 100L, 1000L))
+      producerStates = util.List.of(new CpProducerState(1L, 0.toShort, 0, 1, 100L, 1000L)),
+      classicPrefixInRemoteStorage = true
     )
 
     fireLinger()
@@ -1295,7 +1307,8 @@ class InitDisklessLogManagerTest {
       topicId = topicId,
       topicName = tp0.topic(),
       classicToDisklessStartOffset = 100L,
-      producerStates = util.List.of()
+      producerStates = util.List.of(),
+      classicPrefixInRemoteStorage = true
     )
 
     fireLinger()
@@ -1316,7 +1329,8 @@ class InitDisklessLogManagerTest {
       topicId = topicId,
       topicName = tp0.topic(),
       classicToDisklessStartOffset = 100L,
-      producerStates = util.List.of()
+      producerStates = util.List.of(),
+      classicPrefixInRemoteStorage = true
     )
 
     fireLinger()
@@ -1338,20 +1352,538 @@ class InitDisklessLogManagerTest {
       topicId = topicId,
       topicName = tp0.topic(),
       classicToDisklessStartOffset = 100L,
-      producerStates = util.List.of()
+      producerStates = util.List.of(),
+      classicPrefixInRemoteStorage = true
     )
     manager.initOnControlPlane(
       partition = partition,
       topicId = topicId,
       topicName = tp0.topic(),
       classicToDisklessStartOffset = 100L,
-      producerStates = util.List.of()
+      producerStates = util.List.of(),
+      classicPrefixInRemoteStorage = true
     )
 
     fireLinger()
 
     verify(controlPlane, times(1)).initDisklessLog(any())
     assertTrue(manager.getTrackedPartitions.isEmpty)
+  }
+
+  private val classicSeal = 100L
+
+  // Makes the control plane accept every request in a batch.
+  private def stubControlPlaneInitSuccess(): Unit = {
+    doAnswer((invocation: InvocationOnMock) =>
+      util.Collections.nCopies(invocation.getArgument[util.List[_]](0).size(), CpInitResponse.success())
+    ).when(controlPlane).initDisklessLog(any())
+  }
+
+  // Hands the partition to the manager as the become-leader hook does, with the flag unset.
+  private def startInitWithFlagUnset(partition: Partition, seal: Long = classicSeal, topicId: Uuid = topicId): Unit = {
+    stubControlPlaneInitSuccess()
+    manager.initOnControlPlane(
+      partition = partition,
+      topicId = topicId,
+      topicName = partition.topicPartition.topic(),
+      classicToDisklessStartOffset = seal,
+      producerStates = util.List.of(),
+      classicPrefixInRemoteStorage = false
+    )
+  }
+
+  // Runs the control-plane init to completion, so the partition lands in the state that follows AwaitingMetadata.
+  private def initWithFlagUnset(partition: Partition, seal: Long = classicSeal): Unit = {
+    startInitWithFlagUnset(partition, seal)
+    fireLinger()
+  }
+
+  private def setRemoteProgress(partition: Partition, logStartOffset: Long = 0L, highestRemoteOffset: Long): Unit = {
+    val log = partition.log.get
+    when(log.logStartOffset).thenReturn(logStartOffset)
+    when(log.highestOffsetInRemoteStorage).thenReturn(highestRemoteOffset)
+  }
+
+  // Leaves the partition in SendingFlagToController with the flag request still lingering.
+  private def driveToSendingFlag(partition: Partition, seal: Long = classicSeal): Unit = {
+    setRemoteProgress(partition, highestRemoteOffset = seal - 1)
+    initWithFlagUnset(partition, seal)
+    assertState[SendingFlagToController](partition.topicPartition)
+  }
+
+  private def makeSetFlagResponse(
+    topicId: Uuid,
+    partitionIds: Seq[Int],
+    error: Errors = Errors.NONE
+  ): SetClassicPrefixInRemoteStorageResponseData = {
+    val partitions = partitionIds.map { id =>
+      new SetClassicPrefixInRemoteStorageResponseData.PartitionResponse()
+        .setPartitionId(id)
+        .setErrorCode(error.code())
+    }
+    new SetClassicPrefixInRemoteStorageResponseData().setTopics(util.List.of(
+      new SetClassicPrefixInRemoteStorageResponseData.TopicResponse()
+        .setTopicId(topicId)
+        .setPartitions(partitions.asJava)
+    ))
+  }
+
+  private def pollFlagRequest(): MockInitDisklessLogChannelManager#CapturedRequest = {
+    assertEquals(1, channelManager.requests.size())
+    val captured = channelManager.requests.poll()
+    assertEquals(ApiKeys.SET_CLASSIC_PREFIX_IN_REMOTE_STORAGE, captured.apiKey)
+    captured
+  }
+
+  private def gaugeValue(name: String): Long = {
+    val (_, metric) = KafkaYammerMetrics.defaultRegistry.allMetrics.asScala
+      .find { case (mn, _) => mn.getType == "InitDisklessLogManager" && mn.getName == name }
+      .getOrElse(throw new AssertionError(s"Gauge $name not registered on InitDisklessLogManager"))
+    metric.asInstanceOf[com.yammer.metrics.core.Gauge[_]].value().asInstanceOf[Number].longValue()
+  }
+
+  @Test
+  def testInitSuccessWithFlagUnsetWaitsForUpload(): Unit = {
+    // Given a partition whose classic prefix isn't in remote storage
+    val partition = mockPartition(hw = 100, leo = 100)
+
+    // When the control-plane init succeeds
+    initWithFlagUnset(partition)
+
+    // Then the partition stays tracked, waiting for the upload, and no flag request is sent
+    assertState[WaitingForUpload](tp0)
+    fireLinger()
+    assertTrue(channelManager.requests.isEmpty)
+  }
+
+  @Test
+  def testWaitingForUploadAdvancesOnlyWhenHighestRemoteOffsetReachesSealMinusOne(): Unit = {
+    val partition = mockPartition(hw = 100, leo = 100)
+    initWithFlagUnset(partition)
+    assertState[WaitingForUpload](tp0)
+
+    // When the remote log manager has copied less than the whole prefix
+    setRemoteProgress(partition, highestRemoteOffset = classicSeal - 2)
+    fireUploadCheck()
+    fireUploadCheck()
+
+    // Then the partition keeps waiting and the poller keeps running
+    assertState[WaitingForUpload](tp0)
+    assertTrue(channelManager.requests.isEmpty)
+
+    // When the last prefix offset reaches remote storage
+    setRemoteProgress(partition, highestRemoteOffset = classicSeal - 1)
+    fireUploadCheck()
+
+    // Then the partition moves on and the flag request goes out after the linger
+    assertState[SendingFlagToController](tp0)
+    assertTrue(channelManager.requests.isEmpty)
+    fireLinger()
+    pollFlagRequest()
+  }
+
+  @ParameterizedTest(name = "testPrefixWithNothingToUploadAdvancesImmediately with seal: {0}")
+  @ValueSource(longs = Array(0L, 100L))
+  def testPrefixWithNothingToUploadAdvancesImmediately(seal: Long): Unit = {
+    // Given a leader whose log start offset already reached the seal: a switch sealed at offset 0,
+    // or a prefix that retention removed
+    val partition = mockPartition(hw = seal, leo = seal)
+    setRemoteProgress(partition, logStartOffset = seal, highestRemoteOffset = -1L)
+
+    // When the control-plane init succeeds
+    initWithFlagUnset(partition, seal)
+
+    // Then the first evaluation advances the partition with no poll period and no upload
+    assertState[SendingFlagToController](tp0)
+  }
+
+  @Test
+  def testFlagRequestContentsAndBatching(): Unit = {
+    // Given two partitions of one topic and one partition of another, all with their prefix uploaded
+    val tp1 = new TopicPartition(tp0.topic(), 1)
+    val otherTopicId = Uuid.randomUuid()
+    val otherTp = new TopicPartition("other-topic", 0)
+    val p0 = mockPartition(tp = tp0, hw = 100, leo = 100, leaderEpoch = 3)
+    val p1 = mockPartition(tp = tp1, hw = 100, leo = 100, leaderEpoch = 4)
+    val p2 = mockPartition(tp = otherTp, hw = 100, leo = 100, leaderEpoch = 5)
+    Seq(p0, p1, p2).foreach(p => setRemoteProgress(p, highestRemoteOffset = classicSeal - 1))
+
+    // When all three finish the control-plane init in the same linger window
+    startInitWithFlagUnset(p0)
+    startInitWithFlagUnset(p1)
+    startInitWithFlagUnset(p2, topicId = otherTopicId)
+    fireLinger()
+    assertState[SendingFlagToController](tp0)
+    assertState[SendingFlagToController](tp1)
+    assertState[SendingFlagToController](otherTp)
+
+    // Then one request carries all of them with the broker identity, seal, and current leader epochs
+    fireLinger()
+    val request = pollFlagRequest().setFlagRequestData
+    assertEquals(brokerId, request.brokerId())
+    assertEquals(brokerEpoch, request.brokerEpoch())
+    val partitionsByTopic = request.topics().asScala.map(t => t.topicId() -> t.partitions().asScala.toList).toMap
+    assertEquals(Set(topicId, otherTopicId), partitionsByTopic.keySet)
+
+    val sameTopic = partitionsByTopic(topicId).sortBy(_.partitionId())
+    assertEquals(List(0, 1), sameTopic.map(_.partitionId()))
+    assertEquals(List(3, 4), sameTopic.map(_.leaderEpoch()))
+    assertEquals(List(classicSeal, classicSeal), sameTopic.map(_.classicToDisklessStartOffset()))
+
+    val other = partitionsByTopic(otherTopicId).head
+    assertEquals(0, other.partitionId())
+    assertEquals(5, other.leaderEpoch())
+    assertEquals(classicSeal, other.classicToDisklessStartOffset())
+  }
+
+  @Test
+  def testFlagAcceptedUntracksPartition(): Unit = {
+    val partition = mockPartition(hw = 100, leo = 100)
+    driveToSendingFlag(partition)
+    val completedBefore = meterCount(InitDisklessLogManager.FlagRequestCompletedPerSecMetricName)
+    val failedBefore = meterCount(InitDisklessLogManager.FlagRequestFailedPerSecMetricName)
+
+    // When the controller accepts the flag
+    fireLinger()
+    pollFlagRequest().complete(makeSetFlagResponse(topicId, Seq(0)))
+
+    // Then the partition is no longer tracked, the completion is counted, and nothing counts as a failure
+    assertTrue(manager.getTrackedPartitions.isEmpty)
+    assertEquals(completedBefore + 1, meterCount(InitDisklessLogManager.FlagRequestCompletedPerSecMetricName))
+    assertEquals(failedBefore, meterCount(InitDisklessLogManager.FlagRequestFailedPerSecMetricName))
+  }
+
+  @Test
+  def testFlagInvalidRequestUntracksAndCountsFailure(): Unit = {
+    val partition = mockPartition(hw = 100, leo = 100)
+    driveToSendingFlag(partition)
+    val failedBefore = meterCount(InitDisklessLogManager.FlagRequestFailedPerSecMetricName)
+    val initFailedBefore = meterCount(InitDisklessLogManager.InitFailedPerSecMetricName)
+
+    // When the controller rejects the request as inconsistent with the partition's switch state
+    fireLinger()
+    pollFlagRequest().complete(makeSetFlagResponse(topicId, Seq(0), Errors.INVALID_REQUEST))
+
+    // Then the partition is dropped, the flag failure is counted apart from init failures, and no retry follows
+    assertTrue(manager.getTrackedPartitions.isEmpty)
+    assertEquals(failedBefore + 1, meterCount(InitDisklessLogManager.FlagRequestFailedPerSecMetricName))
+    assertEquals(initFailedBefore, meterCount(InitDisklessLogManager.InitFailedPerSecMetricName))
+    fireRetry()
+    assertTrue(channelManager.requests.isEmpty)
+  }
+
+  @Test
+  def testFlagFencedLeaderEpochRetriesWithRefreshedEpoch(): Unit = {
+    val partition = mockPartition(hw = 100, leo = 100, leaderEpoch = 1)
+    driveToSendingFlag(partition)
+    fireLinger()
+    val first = pollFlagRequest()
+    assertEquals(1, first.setFlagRequestData.topics().get(0).partitions().get(0).leaderEpoch())
+
+    // When an epoch bump with the same leader fences the in-flight request
+    when(partition.getLeaderEpoch).thenReturn(2)
+    first.complete(makeSetFlagResponse(topicId, Seq(0), Errors.FENCED_LEADER_EPOCH))
+
+    // Then the partition keeps its place and the retry carries the current epoch
+    assertState[SendingFlagToController](tp0)
+    fireRetry()
+    val retry = pollFlagRequest()
+    assertEquals(2, retry.setFlagRequestData.topics().get(0).partitions().get(0).leaderEpoch())
+    retry.complete(makeSetFlagResponse(topicId, Seq(0)))
+    assertTrue(manager.getTrackedPartitions.isEmpty)
+  }
+
+  @ParameterizedTest(name = "testFlagRequestRetriesAfterNotControllerOrTimeout with timeout: {0}")
+  @ValueSource(booleans = Array(true, false))
+  def testFlagRequestRetriesAfterNotControllerOrTimeout(timeout: Boolean): Unit = {
+    val partition = mockPartition(hw = 100, leo = 100)
+    driveToSendingFlag(partition)
+    val retriedBefore = meterCount(InitDisklessLogManager.FlagRequestRetriedPerSecMetricName)
+    val initRetriedBefore = meterCount(InitDisklessLogManager.InitRetriedPerSecMetricName)
+    fireLinger()
+    val first = pollFlagRequest()
+    if (timeout) first.timeout()
+    else first.complete(makeSetFlagResponse(topicId, Seq(0), Errors.NOT_CONTROLLER))
+    assertState[SendingFlagToController](tp0)
+    assertEquals(retriedBefore + 1, meterCount(InitDisklessLogManager.FlagRequestRetriedPerSecMetricName))
+    assertEquals(initRetriedBefore, meterCount(InitDisklessLogManager.InitRetriedPerSecMetricName))
+
+    fireRetry()
+    pollFlagRequest().complete(makeSetFlagResponse(topicId, Seq(0)))
+    assertTrue(manager.getTrackedPartitions.isEmpty)
+  }
+
+  @Test
+  def testRemovePartitionWhileWaitingForUploadSendsNothing(): Unit = {
+    val partition = mockPartition(hw = 100, leo = 100)
+    initWithFlagUnset(partition)
+    assertState[WaitingForUpload](tp0)
+
+    // When leadership is lost and the prefix would otherwise count as uploaded
+    manager.removePartition(tp0)
+    setRemoteProgress(partition, highestRemoteOffset = classicSeal - 1)
+    fireUploadCheck()
+    fireLinger()
+
+    // Then nothing is tracked and no flag request goes out
+    assertTrue(manager.getTrackedPartitions.isEmpty)
+    assertTrue(channelManager.requests.isEmpty)
+  }
+
+  @Test
+  def testRemovePartitionWhileSendingFlagSendsNothing(): Unit = {
+    val partition = mockPartition(hw = 100, leo = 100)
+    driveToSendingFlag(partition)
+
+    // When the partition is removed before the linger elapses
+    manager.removePartition(tp0)
+    fireLinger()
+
+    // Then no flag request goes out
+    assertTrue(manager.getTrackedPartitions.isEmpty)
+    assertTrue(channelManager.requests.isEmpty)
+  }
+
+  @Test
+  def testRemovePartitionDuringInFlightFlagRequestIsNotCountedAsFailure(): Unit = {
+    val partition = mockPartition(hw = 100, leo = 100)
+    driveToSendingFlag(partition)
+    fireLinger()
+    val inFlight = pollFlagRequest()
+    val failedBefore = meterCount(InitDisklessLogManager.FlagRequestFailedPerSecMetricName)
+
+    // When the partition is removed and a retriable error arrives afterward
+    manager.removePartition(tp0)
+    inFlight.complete(makeSetFlagResponse(topicId, Seq(0), Errors.NOT_CONTROLLER))
+
+    // Then neither the failure meter nor the retry path fires
+    assertEquals(failedBefore, meterCount(InitDisklessLogManager.FlagRequestFailedPerSecMetricName))
+    fireRetry()
+    assertTrue(channelManager.requests.isEmpty)
+  }
+
+  @Test
+  def testFailoverReRegistersTheUploadWatch(): Unit = {
+    // Given a partition waiting for the upload on the old leader
+    val oldLeader = mockPartition(hw = 100, leo = 100)
+    initWithFlagUnset(oldLeader)
+    assertState[WaitingForUpload](tp0)
+
+    // When the old leader loses leadership and a new leader whose remote offset already covers the prefix registers
+    manager.removePartition(tp0)
+    assertTrue(manager.getTrackedPartitions.isEmpty)
+    val newLeader = mockPartition(hw = 100, leo = 100, leaderEpoch = 2)
+    setRemoteProgress(newLeader, highestRemoteOffset = classicSeal - 1)
+    doReturn(util.List.of(CpInitResponse.alreadyInitialized())).when(controlPlane).initDisklessLog(any())
+    manager.initOnControlPlane(
+      partition = newLeader,
+      topicId = topicId,
+      topicName = tp0.topic(),
+      classicToDisklessStartOffset = classicSeal,
+      producerStates = util.List.of(),
+      classicPrefixInRemoteStorage = false
+    )
+    fireLinger()
+
+    // Then it converges to the flag request with no other action
+    assertState[SendingFlagToController](tp0)
+    fireLinger()
+    val request = pollFlagRequest().setFlagRequestData
+    assertEquals(2, request.topics().get(0).partitions().get(0).leaderEpoch())
+  }
+
+  @Test
+  def testReInitWhileSendingFlagReplacesTheQueuedRequest(): Unit = {
+    // Given a partition queued for the flag request
+    val partition = mockPartition(hw = 100, leo = 100)
+    driveToSendingFlag(partition)
+
+    // When a new leader-change callback re-inits it before the linger elapses
+    initWithFlagUnset(partition)
+
+    // Then the stale queue entry sends nothing and one request follows the fresh state
+    assertTrue(channelManager.requests.isEmpty)
+    assertState[SendingFlagToController](tp0)
+    fireLinger()
+    pollFlagRequest()
+    assertTrue(channelManager.requests.isEmpty)
+  }
+
+  @Test
+  def testReInitWithLowerSealRestartsTheUploadWatch(): Unit = {
+    // Given a partition waiting for an upload that stopped short of the original seal
+    val partition = mockPartition(hw = 100, leo = 100)
+    val loweredSeal = classicSeal - 20
+    setRemoteProgress(partition, highestRemoteOffset = loweredSeal - 1)
+    initWithFlagUnset(partition)
+    assertState[WaitingForUpload](tp0)
+
+    // When an operator re-seal lowers the seal and the manager re-inits the partition
+    initWithFlagUnset(partition, seal = loweredSeal)
+
+    // Then the watch checks the lowered seal and the flag request carries it
+    assertState[SendingFlagToController](tp0)
+    fireLinger()
+    val request = pollFlagRequest().setFlagRequestData
+    assertEquals(loweredSeal, request.topics().get(0).partitions().get(0).classicToDisklessStartOffset())
+  }
+
+  @Test
+  def testStaleInitCompletionDuringReInitLeavesTheReplacementToItsOwnInit(): Unit = {
+    // Given a queued control-plane init for the original seal, and an upload that already covers a lower seal
+    val partition = mockPartition(hw = 100, leo = 100)
+    val loweredSeal = classicSeal - 20
+    setRemoteProgress(partition, highestRemoteOffset = loweredSeal - 1)
+    startInitWithFlagUnset(partition)
+
+    // When the original init completes after a re-seal installs the replacement but before it queues it.
+    // The manager reads the clock in that window, when it refreshes the metrics.
+    var staleInitCompleted = false
+    mockTime.runOnNextRead(() => {
+      fireLinger()
+      staleInitCompleted = true
+    })
+    startInitWithFlagUnset(partition, seal = loweredSeal)
+    assertTrue(staleInitCompleted)
+    verify(controlPlane, times(1)).initDisklessLog(any())
+
+    // Then the replacement waits for its own init, and the flag request that follows carries the lower seal
+    assertState[AwaitingMetadata](tp0)
+    fireLinger()
+    verify(controlPlane, times(2)).initDisklessLog(any())
+    assertState[SendingFlagToController](tp0)
+    fireLinger()
+    val request = pollFlagRequest().setFlagRequestData
+    assertEquals(loweredSeal, request.topics().get(0).partitions().get(0).classicToDisklessStartOffset())
+  }
+
+  @Test
+  def testLostInitDisklessLogResponseAfterSealCommitSendsNoRetry(): Unit = {
+    // Given a leader whose InitDisklessLog request is still in flight when the seal commit reaches it
+    val partition = mockPartition(hw = 100, leo = 100)
+    manager.registerPartition(partition, topicId)
+    fireLinger()
+    val sealRequest = channelManager.requests.poll()
+    assertEquals(ApiKeys.INIT_DISKLESS_LOG, sealRequest.apiKey)
+    initWithFlagUnset(partition)
+    assertState[WaitingForUpload](tp0)
+    val failedBefore = meterCount(InitDisklessLogManager.InitFailedPerSecMetricName)
+
+    // When the lost response times out
+    sealRequest.timeout()
+    fireRetry()
+
+    // Then no retry goes out, because the controller would reject it, and the upload watch survives
+    assertTrue(channelManager.requests.isEmpty)
+    assertState[WaitingForUpload](tp0)
+    assertEquals(failedBefore, meterCount(InitDisklessLogManager.InitFailedPerSecMetricName))
+  }
+
+  @Test
+  def testStaleInitDisklessLogRejectionAfterSealCommitKeepsTheUploadWatch(): Unit = {
+    // Given a leader whose InitDisklessLog request is still in flight when the seal commit reaches it
+    val partition = mockPartition(hw = 100, leo = 100)
+    manager.registerPartition(partition, topicId)
+    fireLinger()
+    val sealRequest = channelManager.requests.poll()
+    assertEquals(ApiKeys.INIT_DISKLESS_LOG, sealRequest.apiKey)
+    initWithFlagUnset(partition)
+    assertState[WaitingForUpload](tp0)
+    val failedBefore = meterCount(InitDisklessLogManager.InitFailedPerSecMetricName)
+
+    // When the controller rejects that request because the partition is no longer switch-pending
+    sealRequest.complete(makeErrorResponse(topicId, 0, Errors.INVALID_REQUEST))
+
+    // Then the upload watch survives and nothing counts as a failed init
+    assertState[WaitingForUpload](tp0)
+    assertEquals(failedBefore, meterCount(InitDisklessLogManager.InitFailedPerSecMetricName))
+  }
+
+  @Test
+  def testLeadershipLostAtPollTimeDropsThePartition(): Unit = {
+    val partition = mockPartition(hw = 100, leo = 100)
+    initWithFlagUnset(partition)
+    assertState[WaitingForUpload](tp0)
+
+    // When the broker stops being the leader before the next poll
+    when(partition.isLeader).thenReturn(false)
+    setRemoteProgress(partition, highestRemoteOffset = classicSeal - 1)
+    fireUploadCheck()
+    fireLinger()
+
+    // Then the partition is dropped and no flag request goes out
+    assertTrue(manager.getTrackedPartitions.isEmpty)
+    assertTrue(channelManager.requests.isEmpty)
+  }
+
+  @ParameterizedTest(name = "testSkippedFlagRequestIsNotCountedAsFailure with leadershipLost: {0}")
+  @ValueSource(booleans = Array(true, false))
+  def testSkippedFlagRequestIsNotCountedAsFailure(leadershipLost: Boolean): Unit = {
+    val partition = mockPartition(hw = 100, leo = 100)
+    driveToSendingFlag(partition)
+    val failedBefore = meterCount(InitDisklessLogManager.FlagRequestFailedPerSecMetricName)
+
+    // When the broker stops being the leader, or a topic deletion removes the log, before the linger elapses
+    if (leadershipLost) when(partition.isLeader).thenReturn(false)
+    else when(partition.log).thenReturn(None)
+    fireLinger()
+
+    // Then the request is skipped, the partition is dropped, and nothing counts as a failure
+    assertTrue(channelManager.requests.isEmpty)
+    assertTrue(manager.getTrackedPartitions.isEmpty)
+    assertEquals(failedBefore, meterCount(InitDisklessLogManager.FlagRequestFailedPerSecMetricName))
+  }
+
+  @Test
+  def testUploadCheckFailureKeepsWatchingAndRetriesOnNextPoll(): Unit = {
+    val partition = mockPartition(hw = 100, leo = 100)
+    initWithFlagUnset(partition)
+    assertState[WaitingForUpload](tp0)
+
+    // When reading the log throws during a poll
+    val log = partition.log.get
+    when(log.logStartOffset).thenThrow(new RuntimeException("log read failed"))
+    fireUploadCheck()
+
+    // Then the partition stays tracked and the next poll still runs
+    assertState[WaitingForUpload](tp0)
+    doReturn(0L).when(log).logStartOffset
+    setRemoteProgress(partition, highestRemoteOffset = classicSeal - 1)
+    fireUploadCheck()
+    assertState[SendingFlagToController](tp0)
+  }
+
+  @Test
+  def testUploadStateGaugesAndInFlightPartitionsExcludeUploadStates(): Unit = {
+    val partition = mockPartition(hw = 100, leo = 100)
+
+    // When a partition waits for the upload
+    initWithFlagUnset(partition)
+    mockTime.sleep(5000)
+
+    // Then the upload gauge counts it with its age, and InFlightPartitions leaves it out
+    assertEquals(1L, gaugeValue(InitDisklessLogManager.WaitingForUploadPartitionsMetricName))
+    assertTrue(gaugeValue(InitDisklessLogManager.OldestWaitingForUploadAgeMsMetricName) >= 5000L)
+    assertEquals(0L, gaugeValue(InitDisklessLogManager.InFlightPartitionsMetricName))
+    assertEquals(0L, gaugeValue(InitDisklessLogManager.SendingFlagToControllerPartitionsMetricName))
+
+    // When the prefix is uploaded
+    setRemoteProgress(partition, highestRemoteOffset = classicSeal - 1)
+    fireUploadCheck()
+
+    // Then the partition moves to the flag gauge, and InFlightPartitions still leaves it out
+    assertEquals(0L, gaugeValue(InitDisklessLogManager.WaitingForUploadPartitionsMetricName))
+    assertEquals(0L, gaugeValue(InitDisklessLogManager.OldestWaitingForUploadAgeMsMetricName))
+    assertEquals(1L, gaugeValue(InitDisklessLogManager.SendingFlagToControllerPartitionsMetricName))
+    assertEquals(0L, gaugeValue(InitDisklessLogManager.InFlightPartitionsMetricName))
+
+    // When the controller accepts the flag
+    fireLinger()
+    pollFlagRequest().complete(makeSetFlagResponse(topicId, Seq(0)))
+
+    // Then every gauge is back to zero
+    assertEquals(0L, gaugeValue(InitDisklessLogManager.SendingFlagToControllerPartitionsMetricName))
+    assertEquals(0L, gaugeValue(InitDisklessLogManager.OldestSendingFlagToControllerAgeMsMetricName))
   }
 }
 
@@ -1364,13 +1896,28 @@ private[server] class MockInitDisklessLogChannelManager extends NodeToController
     requestBuilder: AbstractRequest.Builder[_ <: AbstractRequest],
     callback: ControllerRequestCompletionHandler
   ) {
+    def apiKey: ApiKeys = requestBuilder.apiKey
+
     def requestData: InitDisklessLogRequestData = {
       requestBuilder.build(ApiKeys.INIT_DISKLESS_LOG.latestVersion()).asInstanceOf[InitDisklessLogRequest].data()
+    }
+
+    def setFlagRequestData: SetClassicPrefixInRemoteStorageRequestData = {
+      requestBuilder.build(ApiKeys.SET_CLASSIC_PREFIX_IN_REMOTE_STORAGE.latestVersion())
+        .asInstanceOf[SetClassicPrefixInRemoteStorageRequest].data()
     }
 
     def complete(responseData: InitDisklessLogResponseData): Unit = {
       val response = new InitDisklessLogResponse(responseData)
       val header = new RequestHeader(ApiKeys.INIT_DISKLESS_LOG, ApiKeys.INIT_DISKLESS_LOG.latestVersion(), "", 0)
+      val clientResponse = new ClientResponse(header, callback, "-1", 0L, 0L, false, null, null, response)
+      callback.onComplete(clientResponse)
+    }
+
+    def complete(responseData: SetClassicPrefixInRemoteStorageResponseData): Unit = {
+      val response = new SetClassicPrefixInRemoteStorageResponse(responseData)
+      val header = new RequestHeader(
+        ApiKeys.SET_CLASSIC_PREFIX_IN_REMOTE_STORAGE, ApiKeys.SET_CLASSIC_PREFIX_IN_REMOTE_STORAGE.latestVersion(), "", 0)
       val clientResponse = new ClientResponse(header, callback, "-1", 0L, 0L, false, null, null, response)
       callback.onComplete(clientResponse)
     }
@@ -1392,5 +1939,22 @@ private[server] class MockInitDisklessLogChannelManager extends NodeToController
     callback: ControllerRequestCompletionHandler
   ): Unit = {
     requests.add(CapturedRequest(request, callback))
+  }
+}
+
+/**
+ * `MockTime` that runs a one-shot hook on the next clock read, so a test can deliver a response at a
+ * point inside a manager call that no other seam reaches.
+ */
+private[server] class HookedMockTime extends MockTime {
+  @volatile private var onNextRead: Option[() => Unit] = None
+
+  def runOnNextRead(hook: () => Unit): Unit = onNextRead = Some(hook)
+
+  override def milliseconds(): Long = {
+    val hook = onNextRead
+    onNextRead = None
+    hook.foreach(_())
+    super.milliseconds()
   }
 }

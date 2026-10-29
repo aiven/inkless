@@ -200,6 +200,7 @@ New JMX metrics are available on the active controller (`kafka.controller:type=K
 | `DisklessPartitionCount` | Total number of partitions in diskless topics |
 | `DisklessOfflinePartitionCount` | Diskless partitions without a leader (leader=-1), typically because no eligible assigned replica is available to lead |
 | `DisklessWithoutRemoteStorageCount` | Diskless topics where `remote.storage.enable` is `false` or unset. These topics don't consolidate until an operator sets `remote.storage.enable=true` while consolidation is on. |
+| `DisklessSwitchedPartitionsPendingUploadCount` | Switched partitions that have a committed seal and no `classicPrefixInRemoteStorage` flag yet (phase 1). A partition leaves the count after its leader sees the classic prefix in remote storage and the controller sets the flag. |
 
 These metrics are tracked separately from classic partition metrics to avoid false alerts — diskless topics may show offline replicas in KRaft metadata while remaining fully available via the metadata transformer.
 

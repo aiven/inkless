@@ -4013,6 +4013,45 @@ class ReplicaManager(val config: KafkaConfig,
   }
 
   /**
+   * Rolls the active segment of a switched leader whose classic prefix isn't in remote storage yet.
+   *
+   * The remote log manager copies closed segments only. A replica that sealed behind the previous
+   * leader keeps the tail of the prefix in its active segment, and a replica added after the seal
+   * keeps all of it there. Consolidation then appends diskless records to that same segment, so the
+   * log can end past the seal with the tail still active. Without this roll, the tail becomes
+   * uploadable only when the segment rolls on size or age, which never happens on an idle topic.
+   * The roll changes no offsets, and the log lock orders it with consolidation appends. Once the
+   * active segment starts at or above the seal, this is a no-op, so it's safe to run on every
+   * local-leader change, not only on become-leader. A leader below the seal stays online only to
+   * rebuild the prefix from remote storage. It doesn't hold the tail, so it isn't rolled.
+   *
+   * Must run after `maybeReconcileSwitchedLeader`, which settles the log end offset against the seal.
+   */
+  private def maybeRollSwitchedLeaderForUpload(tp: TopicPartition,
+                                               newRegistration: PartitionRegistration): Unit = {
+    val seal = newRegistration.classicToDisklessStartOffset
+    if (seal < 0 || newRegistration.classicPrefixInRemoteStorage) return
+
+    onlinePartition(tp).filter(_.isLeader).foreach { partition =>
+      partition.log.foreach { log =>
+        try {
+          val activeSegmentBaseOffset = log.activeSegment().baseOffset()
+          if (log.logEndOffset >= seal && activeSegmentBaseOffset < seal) {
+            stateChangeLogger.info(s"Rolling the active segment of switched leader partition $tp " +
+              s"at LEO ${log.logEndOffset} (seal $seal, active segment base offset $activeSegmentBaseOffset) " +
+              s"so the remote log manager can upload the classic prefix tail")
+            log.roll()
+          }
+        } catch {
+          case e @ (_: KafkaStorageException | _: java.io.IOException) =>
+            stateChangeLogger.error(s"Unable to roll the active segment of switched leader partition $tp: ${e.getMessage}", e)
+            markPartitionOffline(tp)
+        }
+      }
+    }
+  }
+
+  /**
    * Reconcile a switched follower's local tail against the committed seal.
    *
    * Non-consolidating switched replicas must not retain local records at or above the seal.
@@ -4136,16 +4175,17 @@ class ReplicaManager(val config: KafkaConfig,
           val previousPartition = Option(delta.image().getTopic(info.topicId)).flatMap { topicImage =>
             Option(topicImage.partitions().get(tp.partition))
           }
-          val disklessStartOffsetJustCommitted = previousPartition.exists { previous =>
-            previous.classicToDisklessStartOffset < 0
+          val disklessStartOffsetChanged = previousPartition.exists { previous =>
+            previous.classicToDisklessStartOffset != partitionRegistration.classicToDisklessStartOffset
           }
 
           val becameLocalLeader = previousPartition.forall(_.leader != config.nodeId) &&
             partitionRegistration.leader == config.nodeId
           // Init Diskless Log on Control Plane if this broker is leader and either:
-          // - classicToDisklessStartOffset was just committed to the metadata log (offset transition)
+          // - classicToDisklessStartOffset changed in the metadata log: the first commit, or an
+          //   operator re-seal that doesn't bump the leader epoch but moves the upload watch's seal
           // - this broker just became leader (failover with already-committed offset)
-          val shouldInitOnControlPlane = disklessStartOffsetJustCommitted || becameLocalLeader
+          val shouldInitOnControlPlane = disklessStartOffsetChanged || becameLocalLeader
 
           if (shouldInitOnControlPlane) {
             onlinePartition(tp) match {
@@ -4165,7 +4205,8 @@ class ReplicaManager(val config: KafkaConfig,
                   topicId = info.topicId,
                   topicName = tp.topic,
                   classicToDisklessStartOffset = partitionRegistration.classicToDisklessStartOffset,
-                  producerStates = producerStates
+                  producerStates = producerStates,
+                  classicPrefixInRemoteStorage = partitionRegistration.classicPrefixInRemoteStorage
                 )
               case Some(_) =>
                 stateChangeLogger.info(
@@ -4342,6 +4383,7 @@ class ReplicaManager(val config: KafkaConfig,
     // serving reads.
     localLeaders.foreachEntry { (tp, info) =>
       maybeReconcileSwitchedLeader(tp, info.topicId, info.partition)
+      maybeRollSwitchedLeaderForUpload(tp, info.partition)
     }
 
     if (consolidatingDisklessPartitionsToStartFetching.nonEmpty) {
