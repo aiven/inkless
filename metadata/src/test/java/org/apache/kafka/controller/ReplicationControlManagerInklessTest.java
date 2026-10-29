@@ -21,6 +21,7 @@ import org.apache.kafka.clients.admin.AlterConfigOp;
 import org.apache.kafka.common.DirectoryId;
 import org.apache.kafka.common.ElectionType;
 import org.apache.kafka.common.Uuid;
+import org.apache.kafka.common.config.ConfigException;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.common.errors.InvalidRequestException;
@@ -3329,7 +3330,7 @@ public class ReplicationControlManagerInklessTest {
         @Test
         void testDefaultDisklessEnableRejectsRemoteLogCopyDisable() {
             // log.diskless.enable is applied after LogConfig validation. A create that only
-            // sets remote.log.copy.disable=true must still be rejected, because validConfigRecords
+            // sets remote.log.copy.disable=true must still be rejected, because the controller
             // would persist diskless.enable=true and remote.storage.enable=true.
             final ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
                 .setDefaultDisklessEnable(true)
@@ -3411,6 +3412,118 @@ public class ReplicationControlManagerInklessTest {
                 .anyMatch(r -> r.name().equals(DISKLESS_ENABLE_CONFIG) && r.value().equals("false")));
             assertTrue(configRecords.stream()
                 .noneMatch(r -> r.name().equals(REMOTE_LOG_STORAGE_ENABLE_CONFIG)));
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = {"explicit", "default", "force"})
+        void testValidationSeesAutoEnabledRemoteStorage(String disklessSource) {
+            // LogConfig checks the local retention only for tiered topics, so the validated configs
+            // must include the remote.storage.enable=true that the controller persists.
+            final RecordingConfigurationValidator validator = new RecordingConfigurationValidator(false);
+            final ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDefaultDisklessEnable(disklessSource.equals("default"))
+                .setDisklessForceEnabled(disklessSource.equals("force"))
+                .setDisklessForceIncludeTopicRegexes(List.of("foo"))
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .setDisklessRemoteStorageConsolidationEnabled(true)
+                .setConfigurationValidator(validator)
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+
+            final Map<String, String> topicConfigs = disklessSource.equals("explicit")
+                ? Map.of(DISKLESS_ENABLE_CONFIG, "true")
+                : Map.of();
+            final ControllerResult<CreateTopicsResponseData> result = createTopicWithConfigs(ctx, "foo", topicConfigs);
+            assertEquals(NONE.code(), result.response().topics().find("foo").errorCode());
+            assertEquals("true", validator.validatedConfigs("foo").get(REMOTE_LOG_STORAGE_ENABLE_CONFIG));
+            assertEquals(1, configRecords(result).stream()
+                .filter(r -> r.name().equals(REMOTE_LOG_STORAGE_ENABLE_CONFIG) && r.value().equals("true"))
+                .count());
+        }
+
+        @ParameterizedTest
+        @ValueSource(booleans = {false, true})
+        void testInvalidAutoEnabledRemoteStorageRejectsCreate(boolean validateOnly) {
+            final ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .setDisklessRemoteStorageConsolidationEnabled(true)
+                .setConfigurationValidator(new RecordingConfigurationValidator(true))
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+
+            final CreateTopicsRequestData request = new CreateTopicsRequestData().setValidateOnly(validateOnly);
+            final CreateTopicsRequestData.CreatableTopicConfigCollection configs =
+                new CreateTopicsRequestData.CreatableTopicConfigCollection();
+            configs.add(new CreateTopicsRequestData.CreatableTopicConfig()
+                .setName(DISKLESS_ENABLE_CONFIG)
+                .setValue("true"));
+            request.topics().add(new CreatableTopic()
+                .setName("foo")
+                .setNumPartitions(-1)
+                .setReplicationFactor((short) -1)
+                .setConfigs(configs));
+
+            final ControllerResult<CreateTopicsResponseData> result = ctx.replicationControl.createTopics(
+                anonymousContextFor(ApiKeys.CREATE_TOPICS), request, Set.of("foo"));
+            assertEquals(Errors.INVALID_CONFIG.code(), result.response().topics().find("foo").errorCode());
+            assertEquals(RecordingConfigurationValidator.REJECTION, result.response().topics().find("foo").errorMessage());
+            assertTrue(result.records().isEmpty());
+        }
+
+        @Test
+        void testClassicTopicValidationDoesNotSeeRemoteStorage() {
+            final RecordingConfigurationValidator validator = new RecordingConfigurationValidator(false);
+            final ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder()
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .setDisklessRemoteStorageConsolidationEnabled(true)
+                .setConfigurationValidator(validator)
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+
+            final ControllerResult<CreateTopicsResponseData> result = createTopicWithConfigs(ctx, "foo",
+                Map.of(SEGMENT_BYTES_CONFIG, "1048576"));
+            assertEquals(NONE.code(), result.response().topics().find("foo").errorCode());
+            assertFalse(validator.validatedConfigs("foo").containsKey(REMOTE_LOG_STORAGE_ENABLE_CONFIG));
+            assertTrue(configRecords(result).stream()
+                .noneMatch(r -> r.name().equals(REMOTE_LOG_STORAGE_ENABLE_CONFIG)));
+        }
+
+        /**
+         * Records the configs that the controller validates for each topic. If {@code rejectRemoteStorage}
+         * is true, rejects every topic with {@code remote.storage.enable=true}, the way LogConfig rejects a
+         * tiered topic whose local retention is larger than its retention.
+         */
+        private static final class RecordingConfigurationValidator implements ConfigurationValidator {
+            static final String REJECTION = "Rejected remote.storage.enable=true";
+
+            private final boolean rejectRemoteStorage;
+            private final Map<String, Map<String, String>> validated = new HashMap<>();
+
+            RecordingConfigurationValidator(boolean rejectRemoteStorage) {
+                this.rejectRemoteStorage = rejectRemoteStorage;
+            }
+
+            @Override
+            public void validate(ConfigResource resource) { }
+
+            @Override
+            public void validate(ConfigResource resource, Map<String, String> newConfigs, Map<String, String> existingConfigs) {
+                validated.put(resource.name(), Map.copyOf(newConfigs));
+                if (rejectRemoteStorage && "true".equals(newConfigs.get(REMOTE_LOG_STORAGE_ENABLE_CONFIG))) {
+                    throw new ConfigException(REJECTION);
+                }
+            }
+
+            Map<String, String> validatedConfigs(String topicName) {
+                assertTrue(validated.containsKey(topicName), "The controller should validate the configs of " + topicName);
+                return validated.get(topicName);
+            }
         }
 
         private ControllerResult<CreateTopicsResponseData> createTopicWithConfigs(

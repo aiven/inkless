@@ -818,6 +818,7 @@ public class ReplicationControlManager {
                 topicErrors.put(topic.name(), ApiError.fromThrowable(e));
                 continue;
             }
+            maybeAddRemoteStorageEnableForConsolidation(topic.name(), keyToOps);
             if (keyToOps.isEmpty()) {
                 keyToOps = null;
             }
@@ -887,7 +888,7 @@ public class ReplicationControlManager {
         createTopicConfigInterceptors.intercept(topic.name(), creationConfigs);
         // Include remote.storage.enable=true in creationConfigs for diskless topics.
         // This affects the CreateTopicsResponse effective-config view and topic policy checks.
-        // The actual persistence happens in validConfigRecords() via ConfigRecord.
+        // The persisted ConfigRecord comes from maybeAddRemoteStorageEnableForConsolidation().
         // Exclude system topics — they are never diskless regardless of defaultDisklessEnable.
         final boolean disklessEnabledOnCreation = disklessEnabledOnTopicCreation(creationConfigs);
         if (disklessEnabledOnCreation &&
@@ -925,7 +926,7 @@ public class ReplicationControlManager {
                     "Replication factor for diskless topics must be 1 or -1 when managed replicas are disabled.");
             }
             // Reject diskless topic creation with remote.storage.enable explicitly set to false.
-            // Undefined (absent) is fine — validConfigRecords() will auto-enable it.
+            // Undefined (absent) is fine — maybeAddRemoteStorageEnableForConsolidation() auto-enables it.
             // Invalid boolean formats (e.g. "foo") are handled by ConfigurationControlManager's
             // config validation pipeline, not here.
             if (isDisklessRemoteStorageConsolidationEnabled &&
@@ -1106,6 +1107,28 @@ public class ReplicationControlManager {
         return disklessConfigEnabled;
     }
 
+    /**
+     * Adds {@code remote.storage.enable=true} to the config ops of a new diskless topic when consolidation
+     * is on, so that LogConfig validation checks the topic as a tiered topic. Without the flag in the
+     * validated request, a create could store a local retention larger than the topic retention, and every
+     * later AlterConfigs on the topic would fail.
+     *
+     * <p>Runs after the create-topic interceptors, which can set {@code diskless.enable}. An explicit
+     * {@code remote.storage.enable} is kept, so the later checks reject a {@code false} value.
+     */
+    private void maybeAddRemoteStorageEnableForConsolidation(
+        String topicName,
+        Map<String, Entry<OpType, String>> keyToOps
+    ) {
+        if (!isDisklessRemoteStorageConsolidationEnabled || isSystemTopic(topicName)) return;
+        Entry<OpType, String> disklessOp = keyToOps.get(DISKLESS_ENABLE_CONFIG);
+        boolean disklessEnabled = disklessOp != null
+            ? Boolean.parseBoolean(disklessOp.getValue())
+            : defaultDisklessEnable;
+        if (!disklessEnabled) return;
+        keyToOps.putIfAbsent(REMOTE_LOG_STORAGE_ENABLE_CONFIG, new SimpleImmutableEntry<>(SET, "true"));
+    }
+
     private List<ApiMessageAndVersion> validConfigRecords(CreatableTopic topic, List<ApiMessageAndVersion> configRecords, boolean disklessEnabled) {
         final List<ApiMessageAndVersion> validConfigRecord = new ArrayList<>();
         boolean isDisklessEnableDefined = false;
@@ -1140,20 +1163,6 @@ public class ReplicationControlManager {
                 .setValue(String.valueOf(disklessEnabled))
                 .setResourceName(topic.name())
                 .setResourceType(ResourceType.TOPIC.code()), (short) 0));
-        }
-        // Persist remote.storage.enable=true to the metadata log for diskless topics.
-        // This is the source of truth; the creationConfigs update in createTopic() only
-        // affects the CreateTopicsResponse payload.
-        if (disklessEnabled && isDisklessRemoteStorageConsolidationEnabled) {
-            boolean isRemoteStorageEnableDefined = validConfigRecord.stream()
-                .anyMatch(r -> ((ConfigRecord) r.message()).name().equals(REMOTE_LOG_STORAGE_ENABLE_CONFIG));
-            if (!isRemoteStorageEnableDefined) {
-                validConfigRecord.add(new ApiMessageAndVersion(new ConfigRecord()
-                    .setName(REMOTE_LOG_STORAGE_ENABLE_CONFIG)
-                    .setValue("true")
-                    .setResourceName(topic.name())
-                    .setResourceType(ResourceType.TOPIC.code()), (short) 0));
-            }
         }
         return validConfigRecord;
     }
@@ -3574,7 +3583,7 @@ public class ReplicationControlManager {
     }
 
     /**
-     * Mirror the topic-creation auto-enable (see {@link #validConfigRecords}) on the classic-to-diskless
+     * Mirror the topic-creation auto-enable (see {@link #maybeAddRemoteStorageEnableForConsolidation}) on the classic-to-diskless
      * switch: inject {@code remote.storage.enable=true} into the incremental AlterConfigs request before
      * validation.
      * Gating on the switch flag (not consolidation) makes {@code diskless.enable} imply
