@@ -271,6 +271,23 @@ public class InklessUntieredDisklessMigrationTest {
                         .configs(Map.of(DISKLESS_ENABLE_CONFIG, "true", REMOTE_LOG_STORAGE_ENABLE_CONFIG, "false"))))
                         .all().get(30, TimeUnit.SECONDS));
 
+                // The controller validates a new diskless topic with remote storage on, so a create that inherits
+                // a broker local retention larger than the topic retention fails at create time.
+                final ExecutionException bornTooShort = assertThrows(ExecutionException.class, () ->
+                    admin.createTopics(List.of(new NewTopic("born-short-retention", 1, REPLICATION_FACTOR)
+                        .configs(Map.of(DISKLESS_ENABLE_CONFIG, "true",
+                            TopicConfig.RETENTION_MS_CONFIG, String.valueOf(LOCAL_RETENTION_MS / 2)))))
+                        .all().get(30, TimeUnit.SECONDS));
+                assertInstanceOf(InvalidConfigurationException.class, bornTooShort.getCause());
+                assertTrue(bornTooShort.getCause().getMessage().contains(TopicConfig.LOCAL_LOG_RETENTION_MS_CONFIG),
+                    bornTooShort.getCause().getMessage());
+                admin.createTopics(List.of(new NewTopic("born-short-retention", 1, REPLICATION_FACTOR)
+                    .configs(Map.of(DISKLESS_ENABLE_CONFIG, "true",
+                        TopicConfig.RETENTION_MS_CONFIG, String.valueOf(LOCAL_RETENTION_MS / 2),
+                        TopicConfig.LOCAL_LOG_RETENTION_MS_CONFIG, String.valueOf(LOCAL_RETENTION_MS / 4)))))
+                    .all().get(30, TimeUnit.SECONDS);
+                alterTopic(admin, "born-short-retention", Map.of(TopicConfig.MAX_MESSAGE_BYTES_CONFIG, "2097152"));
+
                 // The broker local retention is larger than the topic retention, so only an alter with a topic-level bound passes.
                 final ExecutionException tooShort = assertThrows(ExecutionException.class, () ->
                     alterTopic(admin, shortRetention, Map.of(REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true")));
