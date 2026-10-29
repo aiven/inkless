@@ -66,10 +66,15 @@ sequenceDiagram
     Leader->>InitManager: initOnControlPlane(from metadata)
     InitManager->>ControlPlane: InitDisklessLog(topic, partition,<br/>classic log start, seal offset, producerStates)
     ControlPlane-->>InitManager: Success or already initialized
-    InitManager-->>Leader: Mark done and allow diskless appends
+    InitManager-->>Leader: Allow diskless appends
+
+    InitManager->>Leader: Wait until the classic prefix is in remote storage
+    Leader-->>InitManager: logStartOffset >= seal or<br/>highestOffsetInRemoteStorage >= seal - 1
+    InitManager->>Controller: SetClassicPrefixInRemoteStorage(seal, leaderEpoch)
+    Controller->>MetadataLog: PartitionChangeRecord<br/>classicPrefixInRemoteStorage = true
 ```
 
-### Step 1: Mark the Switch as Pending
+### Step 1: mark the switch as pending
 
 When `diskless.enable` changes from `false` to `true`, the controller emits the topic config update and one `PartitionChangeRecord` per partition in the same atomic write. Each partition change sets:
 
@@ -78,7 +83,7 @@ When `diskless.enable` changes from `false` to `true`, the controller emits the 
 
 Setting the leader to the current leader bumps the leader epoch, which forces the leader broker to process a `makeLeader` transition even when leadership did not otherwise change. Brokers rely on receiving the config change and the pending marker in the same metadata delta.
 
-### Step 2: Seal the Classic Log
+### Step 2: seal the classic log
 
 When a leader broker applies the metadata delta for a diskless topic with `classicToDisklessStartOffset = -2`, it seals the existing local `Partition` before calling `makeLeader`.
 
@@ -86,7 +91,7 @@ Sealing happens under the `leaderIsrUpdateLock` write lock. If there are undecid
 
 If the metadata delta also elects a new leader for the partition, the new leader seals before it is placed in the leader role. This prevents the new leader from accepting classic writes during the switch.
 
-### Step 3: Propose the Final Start Offset
+### Step 3: propose the final start offset
 
 After sealing, the leader registers the partition with `InitDisklessLogManager`. The manager waits in `WaitingForReplication` until:
 
@@ -102,7 +107,7 @@ Once HW catches up to LEO, the partition moves to `SendingToController`. The bro
 
 At this point `HW == LEO`, so the proposed start offset is the sealed LEO and is safely replicated to the ISR.
 
-### Step 4: Persist the Final Start Offset
+### Step 4: persist the final start offset
 
 The controller handles `InitDisklessLog` as a serialized write operation. For each partition, it validates that:
 
@@ -115,7 +120,7 @@ If validation succeeds, the controller writes a `PartitionChangeRecord` containi
 
 If the broker is stale, the controller rejects the request. A lower leader epoch is a permanent failure for that broker's attempt; retriable controller or transport failures are retried by the broker.
 
-### Step 5: Initialize the Diskless Log
+### Step 5: initialize the diskless log
 
 After the final offset is committed to the metadata log, brokers receive a new metadata delta with `classicToDisklessStartOffset >= 0`. The local leader then initializes the diskless log on the control plane using the authoritative data from metadata, not the earlier controller response.
 
@@ -128,7 +133,34 @@ The leader calls the control-plane `InitDisklessLog` API with:
 
 Control-plane initialization is batched and retried on transient failures. An `INVALID_REQUEST` response from the control plane is treated as success because it means the diskless log is already initialized.
 
-Once control-plane initialization succeeds, `InitDisklessLogManager` marks the partition done and removes it from tracking. Produce requests can then use the diskless append path from the committed start offset onward.
+Once control-plane initialization succeeds, produce requests can use the diskless append path from the committed start offset onward. If `classicPrefixInRemoteStorage` is already `true`, `InitDisklessLogManager` removes the partition from tracking. Otherwise `InitDisklessLogManager` keeps tracking the partition for the next step.
+
+### Step 6: request the `classicPrefixInRemoteStorage` flag
+
+In phase 1, the leader tracks the partition in the `WaitingForUpload` state until the classic prefix is in remote storage. The remote log manager copies closed segments only, in offset order. The manager polls the log once per second to detect the upload. The classic prefix is in remote storage when either of these is true:
+
+* `logStartOffset >= classicToDisklessStartOffset`: the prefix is empty, or retention or `DeleteRecords` already removed it.
+* `highestOffsetInRemoteStorage >= classicToDisklessStartOffset - 1`: the remote log manager copied the whole prefix.
+
+When the check passes, the partition moves to `SendingFlagToController`. The broker batches ready partitions and sends `SetClassicPrefixInRemoteStorage` to the controller with the seal offset and the current leader epoch. The controller sets `classicPrefixInRemoteStorage`, which starts phase 2, and `InitDisklessLogManager` removes the partition from tracking.
+
+The broker handles the controller response per partition:
+
+* `NONE`: the controller set the flag.
+* `INVALID_REQUEST`, `UNKNOWN_TOPIC_ID`, or `UNKNOWN_TOPIC_OR_PARTITION`: the broker stops. The partition isn't in the state the request assumed, and a retry can't change that.
+* Any other error, including `FENCED_LEADER_EPOCH` and `NOT_CONTROLLER`: the broker retries with backoff. An epoch bump that keeps the same leader fences the in-flight request. The retry sends the current epoch.
+
+If an operator lowers the seal in phase 1, the leader restarts the watch with the new seal. The re-seal keeps the same leader and leader epoch. The broker detects the changed seal in the metadata delta. For more information, see [Operator override of the seal offset](#operator-override-of-the-seal-offset).
+
+A partition in phase 1 counts toward the `DisklessSwitchedPartitionsPendingUploadCount` controller metric until the controller sets the flag. For more information, see [Controller Metrics](FEATURES.md#controller-metrics).
+
+The leader reports the progress of this step under `kafka.server:type=InitDisklessLogManager`:
+
+* `WaitingForUploadPartitions` and `SendingFlagToControllerPartitions`: the number of partitions in each state.
+* `OldestWaitingForUploadAgeMs` and `OldestSendingFlagToControllerAgeMs`: how long the oldest partition has been in each state, or `0` if none is. A growing `OldestWaitingForUploadAgeMs` points to a prefix that the remote log manager doesn't copy.
+* `FlagRequestCompletedPerSec`, `FlagRequestFailedPerSec`, and `FlagRequestRetriedPerSec`: per-partition outcomes of the flag request. `FlagRequestFailedPerSec` counts only controller rejections. A request that the broker skips after a leadership change or a topic deletion doesn't count.
+
+`InFlightPartitions` counts only the partitions in steps 3 to 5, so it reaches `0` while partitions still wait for the upload.
 
 ## Additional Behavior
 
@@ -139,7 +171,7 @@ When a broker applies a newly committed seal offset, it reconciles the local cla
 * if local LEO is above the seal, it truncates to the seal because offsets at and above the seal belong to diskless storage
 * if a leader's local LEO is below the seal, it marks the partition offline because the classic prefix is incomplete
 
-If leadership changes while the switch is pending, the new leader seals and re-drives the `InitDisklessLog` controller request. If leadership changes after the final offset is committed, the new leader skips the controller step and initializes the control plane directly from metadata.
+If leadership changes while the switch is pending, the new leader seals and re-drives the `InitDisklessLog` controller request. If leadership changes after the controller commits the final offset, the new leader skips the controller step and initializes the control plane directly from metadata. If the flag is still unset, the new leader also rolls its active segment when that segment holds part of the classic prefix, so the remote log manager can copy it. The new leader then watches the upload itself, as in [Step 6](#step-6-request-the-classicprefixinremotestorage-flag).
 
 ## Switch phases
 
@@ -155,7 +187,7 @@ A switched partition runs in one of two phases. The `classicPrefixInRemoteStorag
 | Reassignment | The controller stages the move as it does for a classic topic. New replicas are adding and dropped replicas are removing until the adding replicas join the ISR. | The target replicas replace the current replicas in one step. |
 | `AlterDisklessSwitch` | Accepted. See [Operator override](#operator-override-of-the-seal-offset). | Rejected with `INVALID_REQUEST`. |
 
-The controller sets the flag when it handles a `SetClassicPrefixInRemoteStorage` request from the current leader. In the same record, the controller sets the ISR, can complete a reassignment, and elects a leader if needed. No broker sends this request yet. Every switched partition remains in phase 1.
+The controller sets the flag when it handles a `SetClassicPrefixInRemoteStorage` request from the current leader. In the same record, the controller sets the ISR, can complete a reassignment, and elects a leader if needed. The leader sends this request after the remote log manager uploads the classic prefix, or after retention or `DeleteRecords` removes it. For more information, see [Step 6](#step-6-request-the-classicprefixinremotestorage-flag).
 
 ## Operator override of the seal offset
 

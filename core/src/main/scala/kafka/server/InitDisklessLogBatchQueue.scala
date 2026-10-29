@@ -21,8 +21,8 @@ import io.aiven.inkless.control_plane.ControlPlane
 import kafka.utils.Logging
 import org.apache.kafka.clients.ClientResponse
 import org.apache.kafka.common.TopicPartition
-import org.apache.kafka.common.message.InitDisklessLogResponseData
-import org.apache.kafka.common.requests.{InitDisklessLogRequest, InitDisklessLogResponse}
+import org.apache.kafka.common.message.{InitDisklessLogResponseData, SetClassicPrefixInRemoteStorageResponseData}
+import org.apache.kafka.common.requests.{InitDisklessLogRequest, InitDisklessLogResponse, SetClassicPrefixInRemoteStorageRequest, SetClassicPrefixInRemoteStorageResponse}
 import org.apache.kafka.common.utils.ExponentialBackoff
 import org.apache.kafka.server.common.{ControllerRequestCompletionHandler, NodeToControllerChannelManager}
 import org.apache.kafka.server.util.Scheduler
@@ -331,6 +331,69 @@ class SendingToControllerBatchQueue(
     } else {
       response.responseBody match {
         case initDisklessLogResponse: InitDisklessLogResponse => Right(initDisklessLogResponse.data())
+        case _ => Left("unexpected response body type")
+      }
+    }
+  }
+}
+
+class SendingFlagToControllerBatchQueue(
+  controllerChannelManager: NodeToControllerChannelManager,
+  scheduler: Scheduler,
+  brokerId: Int,
+  brokerEpochSupplier: () => Long,
+  lingerMs: Long,
+  retryPeriodMs: Long,
+  maxRetryTimeMs: Long,
+  onRetry: () => Unit = () => ()
+) extends RetriableInitDisklessLogBatchQueue[SendingFlagToController](
+  scheduler = scheduler,
+  brokerId = brokerId,
+  brokerEpochSupplier = brokerEpochSupplier,
+  lingerMs = lingerMs,
+  retryPeriodMs = retryPeriodMs,
+  maxRetryTimeMs = maxRetryTimeMs,
+  onRetry = onRetry
+) {
+  logIdent = s"[SendingFlagToControllerBatchQueue] "
+
+  override protected def shouldSend(state: SendingFlagToController): Boolean = {
+    if (!state.partition.isLeader) {
+      state.warn(s"Skipping SetClassicPrefixInRemoteStorage controller request because this broker is no longer leader for ${state.tp}")
+      false
+    } else if (state.partition.log.isEmpty) {
+      state.warn(s"Skipping SetClassicPrefixInRemoteStorage controller request because log is no longer present for ${state.tp}")
+      false
+    } else {
+      true
+    }
+  }
+
+  override protected def sendBatch(
+    states: Iterable[SendingFlagToController],
+    brokerId: Int,
+    brokerEpoch: Long,
+    onBatchComplete: Either[String, Iterable[ParsedResponse]] => Unit
+  ): Unit = {
+    val requestData = SendingFlagToController.buildRequestData(states, brokerId, brokerEpoch)
+    val request = new SetClassicPrefixInRemoteStorageRequest.Builder(requestData)
+    controllerChannelManager.sendRequest(request, new ControllerRequestCompletionHandler {
+      override def onComplete(response: ClientResponse): Unit = {
+        onBatchComplete(extractControllerResponse(response).map(SendingFlagToController.parseBatchResponse))
+      }
+
+      override def onTimeout(): Unit = onBatchComplete(Left("timeout"))
+    })
+  }
+
+  private def extractControllerResponse(response: ClientResponse): Either[String, SetClassicPrefixInRemoteStorageResponseData] = {
+    if (response.authenticationException != null) {
+      Left("authentication exception")
+    } else if (response.versionMismatch != null) {
+      Left("version mismatch")
+    } else {
+      response.responseBody match {
+        case setFlagResponse: SetClassicPrefixInRemoteStorageResponse => Right(setFlagResponse.data())
         case _ => Left("unexpected response body type")
       }
     }
