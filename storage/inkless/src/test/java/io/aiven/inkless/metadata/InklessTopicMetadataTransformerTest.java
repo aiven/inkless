@@ -788,6 +788,155 @@ class InklessTopicMetadataTransformerTest {
     }
 
     /**
+     * Tests for switched partitions whose classic prefix lives only on local disks (switch pending or
+     * phase 1). The ISR members are the only replicas with a complete copy, and the transformer routes to
+     * them alone.
+     */
+    @Nested
+    class SwitchedWithLocalClassicPrefix {
+        @BeforeEach
+        void setup() {
+            when(metadataView.isDisklessTopic(eq(TOPIC_DISKLESS))).thenReturn(true);
+            when(metadataView.isRemoteStorageEnabled(eq(TOPIC_DISKLESS))).thenReturn(false);
+            when(metadataView.isSwitchedWithLocalClassicPrefix(eq(TOPIC_DISKLESS), eq(0))).thenReturn(true);
+            when(metadataView.getAliveBrokerNodes(LISTENER_NAME)).thenReturn(List.of(
+                new Node(0, "host", 9092, "az0"),
+                new Node(1, "host", 9093, "az1"),
+                new Node(2, "host", 9094, "az0"),
+                new Node(3, "host", 9095, "az1")
+            ));
+        }
+
+        @Test
+        void clusterMetadata_routesToIsrMembersOnly() {
+            // Replica 2 is the only replica in az0, but it's outside the ISR.
+            final var topicMetadata = List.of(
+                new MetadataResponseTopic()
+                    .setName(TOPIC_DISKLESS)
+                    .setTopicId(TOPIC_DISKLESS_ID)
+                    .setPartitions(List.of(
+                        new MetadataResponsePartition()
+                            .setPartitionIndex(0)
+                            .setLeaderId(1)
+                            .setReplicaNodes(List.of(1, 2, 3))
+                            .setIsrNodes(List.of(1, 3))
+                            .setOfflineReplicas(Collections.emptyList())
+                            .setLeaderEpoch(7)
+                    ))
+            );
+
+            final var transformer = new InklessTopicMetadataTransformer(metadataView, NO_AZ_LISTENER_MAP);
+            transformer.transformClusterMetadata(LISTENER_NAME, "diskless_az=az0", topicMetadata);
+
+            final var partition = topicMetadata.get(0).partitions().get(0);
+            // Neither the out-of-ISR replica nor a same-AZ non-replica broker.
+            assertThat(partition.leaderId()).isIn(1, 3);
+            assertThat(partition.replicaNodes()).isEqualTo(List.of(1, 2, 3));
+            assertThat(partition.isrNodes()).isEqualTo(List.of(1, 3));
+            assertThat(partition.offlineReplicas()).isEmpty();
+            assertThat(partition.errorCode()).isEqualTo(Errors.NONE.code());
+            assertThat(partition.leaderEpoch()).isEqualTo(7);
+        }
+
+        @Test
+        void clusterMetadata_singleReplicaStaysOnTheReplica() {
+            // RF=1 would otherwise take the legacy path, which routes to any alive broker.
+            final var topicMetadata = List.of(
+                new MetadataResponseTopic()
+                    .setName(TOPIC_DISKLESS)
+                    .setTopicId(TOPIC_DISKLESS_ID)
+                    .setPartitions(List.of(
+                        new MetadataResponsePartition()
+                            .setPartitionIndex(0)
+                            .setLeaderId(1)
+                            .setReplicaNodes(List.of(1))
+                            .setIsrNodes(List.of(1))
+                            .setOfflineReplicas(Collections.emptyList())
+                            .setLeaderEpoch(7)
+                    ))
+            );
+
+            final var transformer = new InklessTopicMetadataTransformer(metadataView, NO_AZ_LISTENER_MAP);
+            transformer.transformClusterMetadata(LISTENER_NAME, "diskless_az=az0", topicMetadata);
+
+            final var partition = topicMetadata.get(0).partitions().get(0);
+            assertThat(partition.leaderId()).isEqualTo(1);
+            assertThat(partition.replicaNodes()).isEqualTo(List.of(1));
+            assertThat(partition.isrNodes()).isEqualTo(List.of(1));
+            assertThat(partition.errorCode()).isEqualTo(Errors.NONE.code());
+        }
+
+        @Test
+        void clusterMetadata_unavailableWhenNoIsrMemberIsAlive() {
+            // Replica 3 is alive but outside the ISR, and the only ISR member is offline.
+            when(metadataView.getAliveBrokerNodes(LISTENER_NAME)).thenReturn(List.of(
+                new Node(0, "host", 9092, "az0"),
+                new Node(2, "host", 9094, "az0"),
+                new Node(3, "host", 9095, "az1")
+            ));
+
+            final var topicMetadata = List.of(
+                new MetadataResponseTopic()
+                    .setName(TOPIC_DISKLESS)
+                    .setTopicId(TOPIC_DISKLESS_ID)
+                    .setPartitions(List.of(
+                        new MetadataResponsePartition()
+                            .setPartitionIndex(0)
+                            .setErrorCode(Errors.LEADER_NOT_AVAILABLE.code())
+                            .setLeaderId(-1)
+                            .setReplicaNodes(List.of(1, 3))
+                            .setIsrNodes(List.of(1))
+                            .setOfflineReplicas(Collections.emptyList())
+                            .setLeaderEpoch(7)
+                    ))
+            );
+
+            final var transformer = new InklessTopicMetadataTransformer(metadataView, NO_AZ_LISTENER_MAP);
+            transformer.transformClusterMetadata(LISTENER_NAME, "diskless_az=az0", topicMetadata);
+
+            final var partition = topicMetadata.get(0).partitions().get(0);
+            assertThat(partition.leaderId()).isEqualTo(-1);
+            assertThat(partition.errorCode()).isEqualTo(Errors.LEADER_NOT_AVAILABLE.code());
+            assertThat(partition.isrNodes()).isEmpty();
+            assertThat(partition.offlineReplicas()).containsExactly(1);
+            assertThat(partition.replicaNodes()).isEqualTo(List.of(1, 3));
+        }
+
+        @Test
+        void describeTopicResponse_routesToIsrMembersOnly() {
+            final var describeResponse = new DescribeTopicPartitionsResponseData()
+                .setTopics(new DescribeTopicPartitionsResponseTopicCollection(List.of(
+                    new DescribeTopicPartitionsResponseTopic()
+                        .setName(TOPIC_DISKLESS)
+                        .setTopicId(TOPIC_DISKLESS_ID)
+                        .setPartitions(List.of(
+                            new DescribeTopicPartitionsResponsePartition()
+                                .setPartitionIndex(0)
+                                .setLeaderId(1)
+                                .setReplicaNodes(List.of(1, 2, 3))
+                                .setIsrNodes(List.of(1, 3))
+                                .setOfflineReplicas(Collections.emptyList())
+                                .setEligibleLeaderReplicas(List.of(10))
+                                .setLastKnownElr(List.of(10))
+                                .setLeaderEpoch(7)
+                        ))
+                ).iterator()));
+
+            final var transformer = new InklessTopicMetadataTransformer(metadataView, NO_AZ_LISTENER_MAP);
+            transformer.transformDescribeTopicResponse(LISTENER_NAME, "diskless_az=az0", describeResponse);
+
+            final var partition = describeResponse.topics().find(TOPIC_DISKLESS).partitions().get(0);
+            assertThat(partition.leaderId()).isIn(1, 3);
+            assertThat(partition.replicaNodes()).isEqualTo(List.of(1, 2, 3));
+            assertThat(partition.isrNodes()).isEqualTo(List.of(1, 3));
+            assertThat(partition.offlineReplicas()).isEmpty();
+            assertThat(partition.eligibleLeaderReplicas()).isEmpty();
+            assertThat(partition.lastKnownElr()).isEmpty();
+            assertThat(partition.errorCode()).isEqualTo(Errors.NONE.code());
+        }
+    }
+
+    /**
      * Tests for managed replicas (RF > 1) with tiered mode (remote storage enabled).
      * Priority: same-AZ replica > cross-AZ replica > unavailable (no fallback to non-replica)
      */

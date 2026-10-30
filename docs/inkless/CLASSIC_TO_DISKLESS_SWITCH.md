@@ -164,7 +164,7 @@ The leader reports the progress of this step under `kafka.server:type=InitDiskle
 
 ## Additional Behavior
 
-Followers also seal during the switch. While the switch is pending (`-2`), they keep using the classic fetcher to replicate the frozen classic prefix. After the final start offset is committed, followers continue until their local LEO reaches the committed seal offset, then hand off from the classic prefix.
+Followers also seal during the switch. They use the classic fetcher to replicate the frozen classic prefix while the switch is pending (`-2`). After the controller commits the final start offset, each follower keeps fetching until its local LEO equals the committed seal offset, then hands off from the classic prefix. On a consolidating topic, the follower starts consolidating only in phase 2. For more information, see [Switch phases](#switch-phases).
 
 When a broker applies a newly committed seal offset, it reconciles the local classic log:
 
@@ -188,6 +188,16 @@ A switched partition runs in one of two phases. The `classicPrefixInRemoteStorag
 | `AlterDisklessSwitch` | Accepted. See [Operator override](#operator-override-of-the-seal-offset). | Rejected with `INVALID_REQUEST`. |
 
 The controller sets the flag when it handles a `SetClassicPrefixInRemoteStorage` request from the current leader. In the same record, the controller sets the ISR, can complete a reassignment, and elects a leader if needed. The leader sends this request after the remote log manager uploads the classic prefix, or after retention or `DeleteRecords` removes it. For more information, see [Step 6](#step-6-request-the-classicprefixinremotestorage-flag).
+
+Brokers also follow different rules in each phase. The consolidation rows apply when `diskless.remote.storage.consolidation.enable` is `true`:
+
+| Broker behavior | Phase 1 | Phase 2 |
+| --- | --- | --- |
+| Consolidation | Off. The partition runs like a switched partition that doesn't consolidate. | On, from the seal. |
+| Follower at the seal | Leaves the classic fetcher once it's in the ISR, like a follower that doesn't consolidate. | Leaves the classic fetcher and consolidates from the seal. |
+| Metadata routing | Clients go to alive ISR members only. | Clients go to any replica, by the managed replica rules. |
+
+The broker applies the metadata routing rules to every switched partition. The replication factor and the remote storage config don't change them. The broker also applies the phase 1 rule while the switch is pending, because the ISR members are the only replicas with a complete copy of the classic prefix.
 
 ## Operator override of the seal offset
 
