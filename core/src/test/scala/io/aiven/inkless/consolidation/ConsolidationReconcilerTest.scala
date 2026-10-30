@@ -58,12 +58,15 @@ class ConsolidationReconcilerTest {
     )
   }
 
-  private def mockMetadataView(classicToDisklessStartOffset: Long): InklessMetadataView = {
+  // Switched partitions default to phase 2, where consolidation can start.
+  private def mockMetadataView(classicToDisklessStartOffset: Long,
+                               classicPrefixInRemoteStorage: Boolean = true): InklessMetadataView = {
     val view = mock(classOf[InklessMetadataView])
     when(view.isConsolidatingDisklessTopic(topicPartition.topic)).thenReturn(true)
     // A consolidating diskless topic has remote storage on (see invariant in ConsolidationReconciler).
     when(view.isRemoteStorageEnabled(topicPartition.topic)).thenReturn(true)
     when(view.getClassicToDisklessStartOffset(topicPartition)).thenReturn(classicToDisklessStartOffset)
+    when(view.isClassicPrefixInRemoteStorage(topicPartition)).thenReturn(classicPrefixInRemoteStorage)
     when(view.getTopicId(topicPartition.topic)).thenReturn(topicId)
     view
   }
@@ -115,6 +118,23 @@ class ConsolidationReconcilerTest {
     assertEquals(100L, fetchStates(topicPartition).initOffset)
     verify(partition, never()).truncateTo(anyLong(), anyBoolean())
     verify(partition).ensureConsolidationPruneFloorAtLeast(100L)
+  }
+
+  @Test
+  def testSwitchedPartitionInPhaseOneIsRetried(): Unit = {
+    // The controller committed the seal, but the classic prefix isn't in remote storage yet, so no
+    // replica consolidates.
+    val view = mockMetadataView(classicToDisklessStartOffset = 100L, classicPrefixInRemoteStorage = false)
+    val fetcherManager = mock(classOf[ConsolidationFetcherManager])
+    val (partition, _) = mockPartition(logStartOffset = 0L, logEndOffset = 100L, isLeader = true,
+      remoteLogEnabled = true)
+    val reconciler = newReconciler(view, fetcherManager)
+
+    val fetchStates = initFetchState(reconciler, partition)
+
+    assertTrue(fetchStates.isEmpty)
+    verify(partition, never()).ensureConsolidationPruneFloorAtLeast(anyLong())
+    verify(fetcherManager, never()).addFailedPartition(topicPartition)
   }
 
   @Test
@@ -314,6 +334,7 @@ class ConsolidationReconcilerTest {
     when(view.isDisklessTopic(topicPartition.topic)).thenReturn(true)
     when(view.isRemoteStorageEnabled(topicPartition.topic)).thenReturn(true)
     when(view.getClassicToDisklessStartOffset(topicPartition)).thenReturn(100L)
+    when(view.isClassicPrefixInRemoteStorage(topicPartition)).thenReturn(true)
     when(view.getTopicId(topicPartition.topic)).thenReturn(topicId)
 
     val fetcherManager = mock(classOf[ConsolidationFetcherManager])

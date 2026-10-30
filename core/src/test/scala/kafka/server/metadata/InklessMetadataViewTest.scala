@@ -218,7 +218,9 @@ class InklessMetadataViewTest {
     props
   }
 
-  private def partitionRegistration(disklessLeaderEpoch: Option[Int] = None, seal: Option[Long] = None): PartitionRegistration = {
+  private def partitionRegistration(disklessLeaderEpoch: Option[Int] = None,
+                                    seal: Option[Long] = None,
+                                    classicPrefixInRemoteStorage: Boolean = false): PartitionRegistration = {
     val builder = new PartitionRegistration.Builder()
       .setReplicas(Array(1))
       .setDirectories(DirectoryId.unassignedArray(1))
@@ -229,6 +231,7 @@ class InklessMetadataViewTest {
       .setPartitionEpoch(0)
     disklessLeaderEpoch.foreach(builder.setDisklessLeaderEpoch)
     seal.foreach(builder.setClassicToDisklessStartOffset)
+    builder.setClassicPrefixInRemoteStorage(classicPrefixInRemoteStorage)
     builder.build()
   }
 
@@ -309,6 +312,36 @@ class InklessMetadataViewTest {
     val tp = new TopicPartition("missing", 0)
     stubImageWithoutTopic(tp.topic())
     assertFalse(metadataView.isReplicaInIsr(tp, 1))
+  }
+
+  @Test
+  def testSwitchPhasePredicatesFollowTheImage(): Unit = {
+    val bornDiskless = new TopicPartition("switched", 0)
+    val pending = new TopicPartition("switched", 1)
+    val phaseOne = new TopicPartition("switched", 2)
+    val phaseTwo = new TopicPartition("switched", 3)
+    stubImageTopic("switched", util.Map.of(
+      Integer.valueOf(0), partitionRegistration(),
+      Integer.valueOf(1), partitionRegistration(seal = Some(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)),
+      Integer.valueOf(2), partitionRegistration(seal = Some(42L)),
+      Integer.valueOf(3), partitionRegistration(seal = Some(42L), classicPrefixInRemoteStorage = true)))
+
+    assertEquals(List(false, false, false, true),
+      List(bornDiskless, pending, phaseOne, phaseTwo).map(metadataView.isClassicPrefixInRemoteStorage))
+    assertEquals(List(false, false, true, false),
+      List(bornDiskless, pending, phaseOne, phaseTwo).map(metadataView.isSwitchedPhaseOne))
+    assertEquals(List(false, true, true, false),
+      List(bornDiskless, pending, phaseOne, phaseTwo).map(tp =>
+        metadataView.isSwitchedWithLocalClassicPrefix(tp.topic, tp.partition)))
+  }
+
+  @Test
+  def testSwitchPhasePredicatesAreFalseWhenTopicMissing(): Unit = {
+    val tp = new TopicPartition("missing", 0)
+    stubImageWithoutTopic(tp.topic())
+    assertFalse(metadataView.isClassicPrefixInRemoteStorage(tp))
+    assertFalse(metadataView.isSwitchedPhaseOne(tp))
+    assertFalse(metadataView.isSwitchedWithLocalClassicPrefix(tp.topic, tp.partition))
   }
 
   @Nested
