@@ -51,8 +51,11 @@ If not specified above, features are untested and assumed to be inoperable.
     - when `diskless.managed.rf.enable=false` (default): the replication factor must be `1` or `-1` (resolves to 1);
     - when `diskless.managed.rf.enable=true`: any valid RF is accepted — RF=-1 resolves to `default.replication.factor`, explicit RF values (1, 2, 3, ...) are accepted, and placement uses standard rack-aware assignment;
     - manual replica assignments are accepted only when `diskless.managed.rf.enable=true` (rejected in legacy mode).
+    - if the control plane is unavailable, a diskless topic gets the retriable `KAFKA_STORAGE_ERROR`. KRaft has already created the topic. The retry gets `TOPIC_ALREADY_EXISTS`, and the controller inserts the missing control-plane rows. A `validateOnly` request never writes to the control plane.
 - `DELETE_TOPICS`
     - the response returns after the controller stamps the diskless logs deleted. Brokers drain batches in the background. Objects stay until that drain finishes and FileCleaner passes `file.cleaner.retention.period.ms`. Size `topic.purger.max.batches.per.cycle` and `topic.purger.interval.ms` for the drain rate you want.
+    - if the control plane is unavailable, a diskless topic gets the retriable `KAFKA_STORAGE_ERROR` and stays in KRaft metadata.
+    - the controller deletes a diskless topic from the control plane before it deletes the topic from KRaft. If the KRaft step fails, retry the deletion until it succeeds. A topic that stays in KRaft loses its data once brokers purge its logs. A later `CREATE_TOPICS` for that name then gets `TOPIC_ALREADY_EXISTS` and brings the topic back empty, under the same topic ID. To trace this case, match the topic IDs in the controller's `Deleting diskless topics from the control plane` and `Inserting control-plane rows for existing diskless topics` log lines.
 - `DELETE_RECORDS`
 - `OFFSET_FOR_LEADER_EPOCH`
 - `DESCRIBE_CONFIGS`
