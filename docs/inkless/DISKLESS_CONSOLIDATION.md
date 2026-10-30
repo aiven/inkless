@@ -113,7 +113,7 @@ This is the read-from-remote path that lets a consolidated topic survive losing 
 
 #### Followers
 
-Followers must never replicate diskless records into their local log. When a partition has fully switched and a follower fetches at or beyond the seal, `fetchMessages` returns an empty response with the high watermark clamped to the seal. The classic fetcher loop then sees the partition as caught up and goes idle. The follower keeps its classic local prefix intact and can still serve consumer reads from it. The consolidation fetcher described in [Implementation](#implementation) is the component that materializes the diskless region into the local log. It runs on managed replicas only.
+Followers must never replicate diskless records into their local log. When a partition has fully switched and a follower fetches at or beyond the seal, `fetchMessages` returns an empty response with the high watermark clamped to the seal. The classic fetcher loop then sees the partition as caught up and goes idle. In phase 1 of the switch, the follower keeps its classic local prefix intact and can still serve consumer reads from it. In phase 2, it deletes that prefix and serves reads below the seal from remote storage. For more information, see [Switch phases](CLASSIC_TO_DISKLESS_SWITCH.md#switch-phases). The consolidation fetcher writes the diskless region into the local log, on managed replicas only. For more information, see [how consolidation runs](#implementation).
 
 ### Cross-tier log start offset
 
@@ -242,7 +242,9 @@ flowchart TD
     seal -- "SWITCH_PENDING" --> retry[Retry: classic switch in progress]
     seal -- "seal >= 0" --> remote{remote.storage.enable?}
     remote -- "off" --> failed[Failed: invariant violation\nsee FailedPartitionsCount]
-    remote -- "on" --> leo{local LEO vs seal?}
+    remote -- "on" --> phase{classicPrefixInRemoteStorage?}
+    phase -- "false (phase 1)" --> retry3[Retry: classic prefix not in remote storage yet]
+    phase -- "true (phase 2)" --> leo{local LEO vs seal?}
     leo -- "LEO < seal, leader" --> rebuild[Ready: arm at LEO\nrebuild classic prefix from remote\nvia OFFSET_MOVED_TO_TIERED_STORAGE]
     leo -- "LEO < seal, follower" --> retry2[Retry: wait for classic catch-up fetcher]
     leo -- "LEO >= seal" --> resume[Ready: arm at LEO\nprune floor at least max of seal and logStartOffset]

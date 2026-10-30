@@ -185,12 +185,14 @@ class ReplicaFetcherThread(name: String,
 
     // Stop fetching once the switch is complete: seal is committed, local LEO has reached it,
     // and this replica is in ISR. A consolidating partition evicts without waiting for ISR so
-    // it can hand off to the consolidation fetcher.
+    // it can hand off to the consolidation fetcher. In phase 1 of the switch nothing consolidates,
+    // so the partition follows the ISR rule.
     val inklessMetadataView = replicaMgr.inklessMetadataView()
     val classicToDisklessStartOffset = inklessMetadataView.getClassicToDisklessStartOffset(topicPartition)
     def isConsolidatingPartition: Boolean =
       brokerConfig.disklessRemoteStorageConsolidationEnabled &&
-        inklessMetadataView.isConsolidatingDisklessTopic(topicPartition.topic)
+        inklessMetadataView.isConsolidatingDisklessTopic(topicPartition.topic) &&
+        inklessMetadataView.isClassicPrefixInRemoteStorage(topicPartition)
     if (shouldEvictFullySwitchedDisklessPartitions &&
         classicToDisklessStartOffset >= 0 &&
         log.logEndOffset >= classicToDisklessStartOffset) {
@@ -231,6 +233,7 @@ class ReplicaFetcherThread(name: String,
       info(s"Evicting partitions from this replica fetcher because they have completed the " +
         s"classic-to-diskless switch and the local log has caught up to the seal offset: $toEvict")
       replicaMgr.replicaFetcherManager.removeFetcherForPartitions(toEvict)
+      replicaMgr.maybeDropLocalClassicPrefix(toEvict)
       replicaMgr.startConsolidationFetchersForCaughtUpClassicPartitions(toEvict)
     }
   }

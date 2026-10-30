@@ -102,6 +102,10 @@ object ReplicaManager {
 
   val HighWatermarkFilename = "replication-offset-checkpoint"
 
+  // A faster retry doesn't help: the remote log manager refreshes a follower's view of remote storage
+  // on a much slower interval.
+  private[server] val DeferredClassicPrefixDeletionRetryMs = 1000L
+
   private val LeaderCountMetricName = "LeaderCount"
   private val PartitionCountMetricName = "PartitionCount"
   private val OfflineReplicaCountMetricName = "OfflineReplicaCount"
@@ -417,6 +421,10 @@ class ReplicaManager(val config: KafkaConfig,
       None
     }
 
+  // Switched partitions in phase 2 that keep part of the local classic prefix because this broker's
+  // remote log metadata doesn't cover it yet.
+  private val deferredClassicPrefixDeletions = ConcurrentHashMap.newKeySet[TopicPartition]()
+
   private var logDirFailureHandler: LogDirFailureHandler = _
 
   private class LogDirFailureHandler(name: String) extends ShutdownableThread(name) {
@@ -499,6 +507,15 @@ class ReplicaManager(val config: KafkaConfig,
   private def consolidationActiveFor(topic: String): Boolean =
     config.disklessRemoteStorageConsolidationEnabled && _inklessMetadataView.isConsolidatingDisklessTopic(topic)
 
+  /**
+   * Returns true when this broker consolidates the partition. Unlike the topic-level check, it is false
+   * in phase 1 of the switch: the seal is committed, but `classicPrefixInRemoteStorage` is unset, so
+   * the classic prefix lives only on local disks and every local log stays at the seal. A pending
+   * switch still reads as consolidating because the pending paths gate on the sentinel themselves.
+   */
+  private def consolidationActiveFor(tp: TopicPartition): Boolean =
+    consolidationActiveFor(tp.topic) && !_inklessMetadataView.isSwitchedPhaseOne(tp)
+
   private[server] def disklessSwitchedReplicasOutsideIsrCount: Int = onlinePartitionsIterator.count { partition =>
     val topicPartition = partition.topicPartition
     val seal = _inklessMetadataView.getClassicToDisklessStartOffset(topicPartition)
@@ -510,15 +527,15 @@ class ReplicaManager(val config: KafkaConfig,
   def recordConsolidationFetchBytesIn(bytes: Long): Unit = consolidationFetchBytesInPerSec.mark(bytes)
 
   def underReplicatedPartitionCount: Int = leaderPartitionsIterator.count { partition =>
-    partition.isUnderReplicated && !consolidationActiveFor(partition.topic)
+    partition.isUnderReplicated && !consolidationActiveFor(partition.topicPartition)
   }
 
   def underMinIsrPartitionCount: Int = leaderPartitionsIterator.count { partition =>
-    partition.isUnderMinIsr && !consolidationActiveFor(partition.topic)
+    partition.isUnderMinIsr && !consolidationActiveFor(partition.topicPartition)
   }
 
   def atMinIsrPartitionCount: Int = leaderPartitionsIterator.count { partition =>
-    partition.isAtMinIsr && !consolidationActiveFor(partition.topic)
+    partition.isAtMinIsr && !consolidationActiveFor(partition.topicPartition)
   }
 
   def startHighWatermarkCheckPointThread(): Unit = {
@@ -554,6 +571,10 @@ class ReplicaManager(val config: KafkaConfig,
     // Inkless threads
     inklessSharedState.map { sharedState =>
       val availability = sharedState.controlPlaneAvailability()
+
+      scheduler.schedule("inkless-deferred-classic-prefix-deletion",
+        () => retryDeferredClassicPrefixDeletions(),
+        ReplicaManager.DeferredClassicPrefixDeletionRetryMs, ReplicaManager.DeferredClassicPrefixDeletionRetryMs)
 
       scheduler.schedule("inkless-retention-enforcer",
         () => ReplicaManager.runIfControlPlaneAvailable(availability, "inkless-retention-enforcer") {
@@ -2589,7 +2610,7 @@ class ReplicaManager(val config: KafkaConfig,
         val classicToDisklessStartOffset = _inklessMetadataView.getClassicToDisklessStartOffset(tp.topicPartition())
         // partitions with switching in progress should always serve from local log
         var shouldReadFromUnifiedLog = classicToDisklessStartOffset == PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING
-        if (consolidationActiveFor(tp.topic)) {
+        if (consolidationActiveFor(tp.topicPartition())) {
           getPartitionOrError(tp.topicPartition) match {
             case Right(partition) =>
               // Deref partition.log once: it is swapped on log recreation and dir change, so
@@ -2657,13 +2678,16 @@ class ReplicaManager(val config: KafkaConfig,
                 // Followers ask for their own LEO on a leader below the seal, so they are excluded.
                 if (params.isFromConsumer && fetchPartitionData.fetchOffset >= logEndOffset)
                   disklessSwitchedPrefixMissingFetchRate.mark()
-                // Only a consumer read that starts inside the local log and reaches its end can take
-                // a supplement. Outside that window the anchor asks object storage for classic
-                // offsets, or an empty read passes the exhaustion guard in
-                // buildConsolidationSupplementFetchInfos. A pending switch has no committed seal.
+                // Only a consumer read that starts inside the local log, at or above the seal, and
+                // reaches its end can take a supplement. Outside that window the anchor asks object
+                // storage for classic offsets, or an empty read passes the exhaustion guard in
+                // buildConsolidationSupplementFetchInfos. Below the seal, readFromLog refuses the
+                // local prefix, so an empty read there would anchor the supplement past records the
+                // consumer hasn't seen. A pending switch has no committed seal.
                 if (inklessSharedState.isDefined &&
                   params.isFromConsumer &&
                   classicToDisklessStartOffset != PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING &&
+                  fetchPartitionData.fetchOffset >= classicToDisklessStartOffset &&
                   fetchPartitionData.fetchOffset >= localLogStartOffset &&
                   fetchPartitionData.fetchOffset < logEndOffset &&
                   localReadFrontier >= logEndOffset)
@@ -3096,6 +3120,37 @@ class ReplicaManager(val config: KafkaConfig,
   }
 
   /**
+   * Returns true when a local read returned records of the classic prefix in phase 2 of the switch.
+   *
+   * The controller adds every live replica to the ISR in phase 2 without checking its local copy of the
+   * prefix, so only the remote copy is trusted. The check runs on what the read returned, not on the
+   * log offsets before it: forced deletion advances the local log start offset before it removes the
+   * segments, a log directory move can swap the log, and `DelayedFetch` reads without `fetchMessages`.
+   * Tiered reads leave the local read through `OffsetOutOfRangeException`, so they never reach it.
+   */
+  private def servesLocalClassicPrefix(tp: TopicIdPartition, fetchOffset: Long, fetchedData: FetchDataInfo): Boolean =
+    fetchedData.records.sizeInBytes > 0 && isBelowSealInPhaseTwo(tp, fetchOffset)
+
+  private def isBelowSealInPhaseTwo(tp: TopicIdPartition, offset: Long): Boolean =
+    _inklessMetadataView.isDisklessTopic(tp.topic) &&
+      offset < _inklessMetadataView.getClassicToDisklessStartOffset(tp.topicPartition) &&
+      _inklessMetadataView.isClassicPrefixInRemoteStorage(tp.topicPartition)
+
+  /**
+   * Returns true when a consumer read below the seal in phase 2 takes the tiered path although the local
+   * log still holds the offset. Forced deletion can't remove a segment that also holds records at or
+   * above the seal. A follower that started consolidating on a release that didn't wait for phase 2 has
+   * one. The bound is the one forced deletion uses: a tiered read past it fails with
+   * `OFFSET_OUT_OF_RANGE` and resets the consumer. `RemoteLogManager.read` takes the epoch from the
+   * local leader epoch cache, so the offset must also sit below the log end offset.
+   */
+  private def readsLocalClassicPrefixFromRemoteStorage(tp: TopicIdPartition, params: FetchParams,
+                                                       log: UnifiedLog, offset: Long): Boolean =
+    params.isFromConsumer && remoteLogManager.isDefined && log.remoteLogEnabled() &&
+      offset <= log.highestOffsetInRemoteStorage && offset < log.logEndOffset &&
+      isBelowSealInPhaseTwo(tp, offset)
+
+  /**
    * Returns true when this offset sits below the classic-to-diskless seal and beyond what this replica
    * has replicated: the leader holds it and this replica will, so the fetch waits rather than being
    * answered or refused. Used by both halves of that decision, the read and the purgatory.
@@ -3199,6 +3254,18 @@ class ReplicaManager(val config: KafkaConfig,
             updateFetchState = !readFromPurgatory,
             allowReplica = allowReplica)
 
+          if (servesLocalClassicPrefix(tp, offset, readInfo.fetchedData)) {
+            // A log directory move can promote a log that still holds the prefix, and nothing else
+            // retries the deletion then.
+            if (log.remoteLogEnabled() && !log.config.remoteLogCopyDisable)
+              deferredClassicPrefixDeletions.add(tp.topicPartition)
+            if (readsLocalClassicPrefixFromRemoteStorage(tp, params, log, offset))
+              throw new OffsetOutOfRangeException(s"Partition ${tp.topicPartition} serves offset $offset " +
+                "below the seal from remote storage")
+            throw new NotLeaderOrFollowerException(s"Partition ${tp.topicPartition} serves the classic " +
+              s"prefix below the seal from remote storage only, and the local log still holds offset $offset")
+          }
+
           val fetchDataInfo = checkFetchDataInfo(partition, readInfo.fetchedData)
 
           new LogReadResult(fetchDataInfo,
@@ -3276,7 +3343,8 @@ class ReplicaManager(val config: KafkaConfig,
     //   2) `log` instance should not be null here as that would have been caught earlier with NotLeaderOrFollowerException or ReplicaNotAvailableException.
     //   3) fetch offset is within the offset range of the remote storage layer
     if (remoteLogManager.isDefined && log != null && log.remoteLogEnabled() &&
-      log.logStartOffset <= offset && offset < log.localLogStartOffset())
+      log.logStartOffset <= offset &&
+      (offset < log.localLogStartOffset() || readsLocalClassicPrefixFromRemoteStorage(tp, params, log, offset)))
     {
       val highWatermark = log.highWatermark
       val leaderLogStartOffset = log.logStartOffset
@@ -3953,7 +4021,8 @@ class ReplicaManager(val config: KafkaConfig,
    *    storage enabled. In that case the classic prefix [0, seal) lives in the remote tier and
    *    can be rebuilt, so the partition is left online for the ConsolidationReconciler to
    *    rebuild from remote (the inline comment below carries the mechanism). Fencing here would
-   *    preempt that recovery: the reconciler only sees online partitions.
+   *    preempt that recovery: the reconciler only sees online partitions. Before the controller
+   *    records the prefix as in remote storage, the reconciler retries instead of rebuilding.
    *
    * Must run after makeLeader (so the log exists) and before any consolidation fetcher starts.
    */
@@ -4049,6 +4118,146 @@ class ReplicaManager(val config: KafkaConfig,
         }
       }
     }
+  }
+
+  /**
+   * Deletes the local copy of the classic prefix once the switch reaches phase 2.
+   *
+   * The controller commits `classicPrefixInRemoteStorage` and adds every live replica to the ISR in the
+   * same record, without checking their local copies. From then on no replica may serve or consolidate
+   * from its local prefix, the leader included. Forced deletion keeps the log start offset and the leader
+   * epoch cache: reads below the seal take the tiered path, and the leader can still check a follower's
+   * divergence at the seal. A replica below the seal drops what it holds, and its classic fetcher
+   * rebuilds the rest from remote storage.
+   *
+   * The leader sets the flag from its own view of remote storage, which a follower's remote log metadata
+   * can trail. Until this broker's view covers a segment, a tiered read of it would answer
+   * `OFFSET_OUT_OF_RANGE` and reset the consumer, so the segment stays local, reads of it get a
+   * retriable error, and `retryDeferredClassicPrefixDeletions` retries the deletion.
+   *
+   * It's a no-op once the prefix is gone, so it runs on every local change and when the classic fetcher
+   * evicts a partition at the seal. The eviction covers a follower that applies the flag before its
+   * leader does: the follower deletes its prefix, then fetches the rest of it from a leader in phase 1.
+   */
+  def maybeDropLocalClassicPrefix(topicPartitions: Set[TopicPartition]): Unit =
+    topicPartitions.foreach(tp => onlinePartition(tp).foreach(partition => maybeDropLocalClassicPrefix(partition)))
+
+  private def maybeDropLocalClassicPrefix(partition: Partition): Unit = {
+    val tp = partition.topicPartition
+    maybeDropLocalClassicPrefix(partition,
+      _inklessMetadataView.getClassicToDisklessStartOffset(tp),
+      _inklessMetadataView.isClassicPrefixInRemoteStorage(tp))
+  }
+
+  private def maybeDropLocalClassicPrefix(tp: TopicPartition, newRegistration: PartitionRegistration): Unit = {
+    onlinePartition(tp).foreach { partition =>
+      maybeDropLocalClassicPrefix(partition, newRegistration.classicToDisklessStartOffset,
+        newRegistration.classicPrefixInRemoteStorage)
+    }
+  }
+
+  private def maybeDropLocalClassicPrefix(partition: Partition,
+                                          seal: Long,
+                                          classicPrefixInRemoteStorage: Boolean): Unit = {
+    val tp = partition.topicPartition
+    if (seal < 0 || !classicPrefixInRemoteStorage) {
+      deferredClassicPrefixDeletions.remove(tp)
+      return
+    }
+
+    partition.log match {
+      case Some(log) if log.localLogStartOffset < Math.min(seal, log.logEndOffset) =>
+        if (!log.remoteLogEnabled() || log.config.remoteLogCopyDisable) {
+          deferredClassicPrefixDeletions.remove(tp)
+          stateChangeLogger.warn(s"Keeping the local classic prefix of switched partition $tp below the " +
+            s"seal $seal because remote log copy is disabled")
+          return
+        }
+        try {
+          val deletedSegments = log.forceDeleteLocalSegmentsBelow(seal)
+          if (deletedSegments > 0) {
+            stateChangeLogger.info(s"Forced deletion removed $deletedSegments local segment(s) below the " +
+              s"classic-to-diskless seal $seal of $tp; the local log start offset is now ${log.localLogStartOffset}")
+          }
+          val prefixEnd = Math.min(seal, log.logEndOffset)
+          val awaitsRemoteLogMetadata = log.localLogStartOffset < prefixEnd &&
+            log.logStartOffset < prefixEnd && log.highestOffsetInRemoteStorage < prefixEnd - 1
+          if (!awaitsRemoteLogMetadata) {
+            deferredClassicPrefixDeletions.remove(tp)
+          } else if (deferredClassicPrefixDeletions.add(tp)) {
+            stateChangeLogger.info(s"Keeping the local classic prefix of switched partition $tp from " +
+              s"${log.localLogStartOffset} until the remote log metadata on this broker covers it: the highest " +
+              s"offset in remote storage is ${log.highestOffsetInRemoteStorage}, and the seal is $seal")
+          }
+        } catch {
+          // Not markPartitionOffline: a fetcher thread runs this at eviction, and applyDelta joins idle
+          // fetcher threads while it holds replicaStateChangeLock.
+          case e: java.io.IOException =>
+            deferredClassicPrefixDeletions.remove(tp)
+            logDirFailureChannel.maybeAddOfflineLogDir(log.parentDir,
+              s"Unable to delete the local classic prefix of switched partition $tp below the seal $seal", e)
+          case e: KafkaStorageException =>
+            // UnifiedLog has already reported the log directory, or a log directory move closed this log.
+            deferredClassicPrefixDeletions.remove(tp)
+            stateChangeLogger.error(s"Unable to delete the local classic prefix of switched partition $tp " +
+              s"below the seal $seal: ${e.getMessage}", e)
+        }
+      case _ =>
+        deferredClassicPrefixDeletions.remove(tp)
+    }
+  }
+
+  private[server] def retryDeferredClassicPrefixDeletions(): Unit = {
+    deferredClassicPrefixDeletions.asScala.foreach { tp =>
+      onlinePartition(tp) match {
+        case Some(partition) => maybeDropLocalClassicPrefix(partition)
+        case None => deferredClassicPrefixDeletions.remove(tp)
+      }
+    }
+  }
+
+  private[server] def isClassicPrefixDeletionDeferred(tp: TopicPartition): Boolean =
+    deferredClassicPrefixDeletions.contains(tp)
+
+  /**
+   * Returns true if a log directory move must not promote the future log yet: in phase 2 of the switch,
+   * the caught-up future log still holds local classic prefix records that the current log no longer
+   * holds. The read path refuses those records, so promoting would turn reads that the current log serves
+   * from remote storage into retriable errors. First runs forced deletion on the future log. Both logs
+   * live on this broker, so the future log inherits the remote storage progress of the current log.
+   *
+   * Only the log directory move thread appends to the future log, so its prefix can't grow back before
+   * that thread promotes it. A storage error propagates and fails the partition in that thread.
+   */
+  def shouldDelayFutureReplicaPromotion(partition: Partition): Boolean = {
+    val tp = partition.topicPartition
+    if (!_inklessMetadataView.isDisklessTopic(tp.topic)) return false
+    val seal = _inklessMetadataView.getClassicToDisklessStartOffset(tp)
+    if (seal < 0 || !_inklessMetadataView.isClassicPrefixInRemoteStorage(tp)) return false
+
+    (partition.log, partition.futureLog) match {
+      case (Some(current), Some(future)) if future.logEndOffset == current.logEndOffset =>
+        if (future.remoteLogEnabled() && !future.config.remoteLogCopyDisable) {
+          future.updateHighestOffsetInRemoteStorage(current.highestOffsetInRemoteStorage)
+          future.forceDeleteLocalSegmentsBelow(seal)
+        }
+        future.localLogStartOffset < Math.min(seal, future.logEndOffset) &&
+          future.localLogStartOffset < current.localLogStartOffset
+      case _ => false
+    }
+  }
+
+  /**
+   * Rolls the future log at the seal before a log directory move appends records at or above it. The move
+   * copies what the current log returns into the active segment of the future log, so without the roll
+   * one segment would contain both the end of the classic prefix and the start of the diskless suffix.
+   * Forced deletion can't remove that segment, and promotion would wait until local retention deletes it.
+   */
+  def maybeRollFutureLogAtSeal(partition: Partition, fetchOffset: Long): Unit = {
+    val tp = partition.topicPartition
+    if (_inklessMetadataView.isDisklessTopic(tp.topic) &&
+        fetchOffset == _inklessMetadataView.getClassicToDisklessStartOffset(tp))
+      partition.futureLog.filter(_.activeSegment.size > 0).foreach(_.roll())
   }
 
   /**
@@ -4150,9 +4359,11 @@ class ReplicaManager(val config: KafkaConfig,
    *    immediately;
    *  - switch pending (seal == -2): keep replicating the frozen classic prefix on the classic
    *    fetcher until the controller commits the seal;
-   *  - switched (seal >= 0): only consolidate once the local LEO has reached the committed seal, so
-   *    that the whole classic prefix has been replicated locally; while below the seal it stays on
-   *    the classic fetcher, which self-evicts and hands off to consolidation at the seal.
+   *  - switched (seal >= 0): only consolidate in phase 2 (`classicPrefixInRemoteStorage` set) and once
+   *    the local LEO has reached the committed seal. In phase 1 the follower runs like a switched
+   *    partition that doesn't consolidate. Below the seal it stays on the classic fetcher, which
+   *    rebuilds the prefix from remote storage if the leader has tiered it, self-evicts at the seal,
+   *    and hands off to consolidation in phase 2.
    * Non-consolidating topics are never routed to the consolidation fetcher.
    */
   private def isReadyForConsolidation(tp: TopicPartition, partition: Partition): Boolean = {
@@ -4160,7 +4371,9 @@ class ReplicaManager(val config: KafkaConfig,
     _inklessMetadataView.getClassicToDisklessStartOffset(tp) match {
       case PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET => true
       case PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING => false
-      case committedSeal => partition.localLogOrException.logEndOffset >= committedSeal
+      case committedSeal =>
+        _inklessMetadataView.isClassicPrefixInRemoteStorage(tp) &&
+          partition.localLogOrException.logEndOffset >= committedSeal
     }
   }
 
@@ -4280,13 +4493,14 @@ class ReplicaManager(val config: KafkaConfig,
     val consolidatingDisklessPartitionsToStartFetching = new mutable.HashMap[TopicPartition, Partition]
     localLeaders.foreachEntry { (tp, info) =>
       val isDiskless = _inklessMetadataView.isDisklessTopic(tp.topic())
-      val isConsolidatingDisklessTopic = consolidationActiveFor(tp.topic)
+      val isConsolidatingDisklessTopic = consolidationActiveFor(tp)
       val existingPartition = onlinePartition(tp)
       // A pending classic-to-diskless switch must always seal+register below, even for a
       // consolidating topic (where isConsolidatingDisklessTopic is already true), or the
       // consolidating branch would claim the partition, skip the seal, and strand the switch
-      // in CLASSIC_TO_DISKLESS_SWITCH_PENDING. Consolidation starts later: the seal commit bumps
-      // the partition epoch, re-entering this method via localChanges.leaders, no longer pending.
+      // in CLASSIC_TO_DISKLESS_SWITCH_PENDING. Consolidation starts later: the seal commit starts
+      // phase 1, where isConsolidatingDisklessTopic stays false, and the classicPrefixInRemoteStorage
+      // commit bumps the leader epoch, re-entering this method via localChanges.leaders in phase 2.
       val isSwitchPending =
         info.partition.classicToDisklessStartOffset == PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING
       val isPendingSwitchOfExistingPartition = existingPartition.isDefined && isSwitchPending
@@ -4326,7 +4540,8 @@ class ReplicaManager(val config: KafkaConfig,
         // same atomic op so the partition shows up here in localChanges.leaders whenever
         // this broker is (or just became) the leader. A consolidating switch (diskless.enable
         // and remote.storage.enable flipped together) also lands here while the seal is pending
-        // (isSwitchPending), so the seal+register runs before consolidation can start.
+        // (isSwitchPending), so the seal+register runs before consolidation can start, and in
+        // phase 1, where it leads the classic prefix like a non-consolidating switched partition.
         if (initDisklessLogManager.isEmpty) {
           error(s"Cannot proceed with classic to diskless switch for partition $tp: InitDisklessLogManager is not enabled.")
           return
@@ -4384,6 +4599,7 @@ class ReplicaManager(val config: KafkaConfig,
     localLeaders.foreachEntry { (tp, info) =>
       maybeReconcileSwitchedLeader(tp, info.topicId, info.partition)
       maybeRollSwitchedLeaderForUpload(tp, info.partition)
+      maybeDropLocalClassicPrefix(tp, info.partition)
     }
 
     if (consolidatingDisklessPartitionsToStartFetching.nonEmpty) {
@@ -4416,7 +4632,7 @@ class ReplicaManager(val config: KafkaConfig,
     val partitionsToStopFetching = new mutable.HashMap[TopicPartition, Boolean]
     val followerTopicSet = new mutable.HashSet[String]
     localFollowers.foreachEntry { (tp, info) =>
-      val isConsolidatingDisklessTopic = consolidationActiveFor(tp.topic)
+      val isConsolidatingDisklessTopic = consolidationActiveFor(tp)
       if (_inklessMetadataView.isDisklessTopic(tp.topic())) {
         // Clean up classic-to-diskless switch tracking since only the leader drives classic-to-diskless switch.
         initDisklessLogManager.foreach(_.removePartition(tp))
@@ -4528,23 +4744,27 @@ class ReplicaManager(val config: KafkaConfig,
     // does not change which partitions need a catch-up fetcher.
     localFollowers.foreachEntry { (tp, info) =>
       maybeTruncateSwitchedFollower(tp, info.topicId, info.partition)
+      maybeDropLocalClassicPrefix(tp, info.partition)
     }
+    partitionsToStartFetching.filterInPlace { case (tp, _) => onlinePartition(tp).isDefined }
 
     if (partitionsToStartFetching.nonEmpty) {
       // Stopping the fetchers must be done first in order to initialize the fetch
       // position correctly.
-      // A consolidating diskless follower only joins the consolidation fetcher once its local log
-      // has replicated the entire classic prefix (LEO >= committed seal). While the switch is still
-      // pending or the log is below the seal, it must stay on the classic ReplicaFetcher so it can
-      // catch up from the leader; that fetcher self-evicts at the seal and hands the partition off
+      // A consolidating diskless follower only joins the consolidation fetcher in phase 2, once its
+      // local log has reached the committed seal. While the switch is pending, in phase 1, or while
+      // the log is below the seal, it must stay on the classic ReplicaFetcher so it can catch up
+      // from the leader; that fetcher self-evicts at the seal and, in phase 2, hands the partition off
       // to the consolidation reconciler (startConsolidationFetchersForCaughtUpClassicPartitions).
       // Routing a below-seal/pending partition straight to the reconciler would strand it: the
       // reconciler returns Retry and no classic fetcher would ever bring it up to the seal.
       val (consolidatingDisklessPartitionsToStartFetching, classicPartitionsToStartFetching) = partitionsToStartFetching.partition { case (tp, partition) =>
         isReadyForConsolidation(tp, partition)
       }
-      replicaFetcherManager.removeFetcherForPartitions(classicPartitionsToStartFetching.keySet)
-      consolidationFetcherManager.foreach(_.removeFetcherForPartitions(consolidatingDisklessPartitionsToStartFetching.keySet))
+      // A follower outside the ISR can still be on its phase 1 classic fetcher when phase 2 starts,
+      // so remove it from both fetchers.
+      replicaFetcherManager.removeFetcherForPartitions(partitionsToStartFetching.keySet)
+      consolidationFetcherManager.foreach(_.removeFetcherForPartitions(partitionsToStartFetching.keySet))
       stateChangeLogger.info(s"Stopped fetchers as part of become-follower for ${partitionsToStartFetching.size} partitions")
 
       val listenerName = config.interBrokerListenerName.value

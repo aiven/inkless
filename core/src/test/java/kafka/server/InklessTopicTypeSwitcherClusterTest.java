@@ -16,6 +16,8 @@
  */
 package kafka.server;
 
+import kafka.server.metadata.InklessMetadataView;
+
 import org.apache.kafka.clients.CommonClientConfigs;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AdminClient;
@@ -52,12 +54,16 @@ import org.apache.kafka.metadata.PartitionRegistration;
 import org.apache.kafka.server.IntegrationTestUtils;
 import org.apache.kafka.server.config.ReplicationConfigs;
 import org.apache.kafka.server.config.ServerConfigs;
+import org.apache.kafka.server.log.remote.metadata.storage.TopicBasedRemoteLogMetadataManager;
+import org.apache.kafka.server.log.remote.metadata.storage.TopicBasedRemoteLogMetadataManagerConfig;
 import org.apache.kafka.server.log.remote.storage.RemoteLogManagerConfig;
+import org.apache.kafka.storage.internals.log.UnifiedLog;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInfo;
+import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.slf4j.Logger;
@@ -66,6 +72,8 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Collection;
 import java.util.HashMap;
@@ -102,12 +110,16 @@ public class InklessTopicTypeSwitcherClusterTest {
     protected static MinioContainer s3Container = S3TestContainer.minio();
 
     private static final Logger log = LoggerFactory.getLogger(InklessTopicTypeSwitcherClusterTest.class);
+    private static final String RSM_CONFIG_PREFIX = RemoteLogManagerConfig.DEFAULT_REMOTE_STORAGE_MANAGER_CONFIG_PREFIX;
     private static final int NUM_PARTITIONS = 3;
     private static final int MAX_PRODUCE_RETRIES = 6;
     private static final int PRODUCE_RETRY_BACKOFF_MS = 250;
     private static final Duration PRODUCE_SEND_TIMEOUT = Duration.ofSeconds(5);
 
     private KafkaClusterTestKit cluster;
+
+    @TempDir
+    private Path tempCacheDir;
 
     private enum AlterConfigsMode {
         INCREMENTAL,
@@ -120,11 +132,18 @@ public class InklessTopicTypeSwitcherClusterTest {
         s3Container.createBucket(testInfo);
         pgContainer.createDatabase(testInfo);
 
-        final Map<Integer, Map<String, String>> perServerProps = Map.of(
-            0, Map.of(ServerConfigs.BROKER_RACK_CONFIG, "az1"),
-            1, Map.of(ServerConfigs.BROKER_RACK_CONFIG, "az2"),
-            2, Map.of(ServerConfigs.BROKER_RACK_CONFIG, "az3")
-        );
+        // Phase 2 deletes the local classic prefix and serves those offsets from remote storage.
+        // A no-op remote storage manager reports the copy as complete and doesn't keep the bytes.
+        // The prefix is then unreadable. Tiered storage serves the prefix after the switch.
+        // `DiskChunkCache` wipes its path on startup. Each broker gets its own cache directory.
+        final Map<Integer, Map<String, String>> perServerProps = new HashMap<>();
+        for (int brokerId = 0; brokerId < 3; brokerId++) {
+            perServerProps.put(brokerId, Map.of(
+                ServerConfigs.BROKER_RACK_CONFIG, "az" + (brokerId + 1),
+                RSM_CONFIG_PREFIX + "fetch.chunk.cache.path",
+                Files.createDirectories(tempCacheDir.resolve("ts-fetch-chunk-cache-" + brokerId)).toAbsolutePath().toString()
+            ));
+        }
 
         final TestKitNodes nodes = new TestKitNodes.Builder()
             .setCombined(true)
@@ -140,8 +159,27 @@ public class InklessTopicTypeSwitcherClusterTest {
             .setConfigProp(ServerConfigs.DISKLESS_REMOTE_STORAGE_CONSOLIDATION_ENABLE_CONFIG, "true")
             .setConfigProp(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, "true")
             .setConfigProp(RemoteLogManagerConfig.REMOTE_LOG_STORAGE_SYSTEM_ENABLE_PROP, "true")
-            .setConfigProp(RemoteLogManagerConfig.REMOTE_STORAGE_MANAGER_CLASS_NAME_PROP, "org.apache.kafka.server.log.remote.storage.NoOpRemoteStorageManager")
-            .setConfigProp(RemoteLogManagerConfig.REMOTE_LOG_METADATA_MANAGER_CLASS_NAME_PROP, "org.apache.kafka.server.log.remote.storage.NoOpRemoteLogMetadataManager")
+            .setConfigProp(RemoteLogManagerConfig.REMOTE_LOG_MANAGER_TASK_INTERVAL_MS_PROP, "5000")
+            .setConfigProp(RemoteLogManagerConfig.REMOTE_LOG_MANAGER_FOLLOWER_THREAD_POOL_SIZE_PROP, "4")
+            .setConfigProp(RemoteLogManagerConfig.REMOTE_LOG_METADATA_MANAGER_CLASS_NAME_PROP, TopicBasedRemoteLogMetadataManager.class.getName())
+            .setConfigProp(RemoteLogManagerConfig.REMOTE_LOG_METADATA_MANAGER_LISTENER_NAME_PROP, "EXTERNAL")
+            .setConfigProp(RemoteLogManagerConfig.DEFAULT_REMOTE_LOG_METADATA_MANAGER_CONFIG_PREFIX
+                + TopicBasedRemoteLogMetadataManagerConfig.REMOTE_LOG_METADATA_TOPIC_REPLICATION_FACTOR_PROP, "1")
+            .setConfigProp(RemoteLogManagerConfig.REMOTE_STORAGE_MANAGER_CLASS_NAME_PROP, "io.aiven.kafka.tieredstorage.RemoteStorageManager")
+            .setConfigProp(RSM_CONFIG_PREFIX + "chunk.size", 1048576)
+            .setConfigProp(RSM_CONFIG_PREFIX + "fetch.chunk.cache.class", "io.aiven.kafka.tieredstorage.fetch.cache.DiskChunkCache")
+            .setConfigProp(RSM_CONFIG_PREFIX + "fetch.chunk.cache.size", "10737418")
+            .setConfigProp(RSM_CONFIG_PREFIX + "fetch.chunk.cache.prefetch.max.size", "16777216")
+            .setConfigProp(RSM_CONFIG_PREFIX + "fetch.chunk.cache.retention.ms", "16777216")
+            .setConfigProp(RSM_CONFIG_PREFIX + "custom.metadata.fields.include", "REMOTE_SIZE")
+            .setConfigProp(RSM_CONFIG_PREFIX + "key.prefix", "switch-int-test/")
+            .setConfigProp(RSM_CONFIG_PREFIX + "storage.backend.class", "io.aiven.kafka.tieredstorage.storage.s3.S3Storage")
+            .setConfigProp(RSM_CONFIG_PREFIX + "storage.s3.bucket.name", s3Container.getBucketName())
+            .setConfigProp(RSM_CONFIG_PREFIX + "storage.s3.region", s3Container.getRegion())
+            .setConfigProp(RSM_CONFIG_PREFIX + "storage.s3.endpoint.url", s3Container.getEndpoint())
+            .setConfigProp(RSM_CONFIG_PREFIX + "storage.s3.path.style.access.enabled", "true")
+            .setConfigProp(RSM_CONFIG_PREFIX + "storage.aws.access.key.id", s3Container.getAccessKey())
+            .setConfigProp(RSM_CONFIG_PREFIX + "storage.aws.secret.access.key", s3Container.getSecretKey())
             .setConfigProp(ReplicationConfigs.DEFAULT_REPLICATION_FACTOR_CONFIG, "3")
             .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_CLASS_CONFIG, PostgresControlPlane.class.getName())
             .setConfigProp(InklessConfig.PREFIX + InklessConfig.CONTROL_PLANE_PREFIX + PostgresControlPlaneConfig.CONNECTION_STRING_CONFIG, pgContainer.getJdbcUrl())
@@ -250,6 +288,11 @@ public class InklessTopicTypeSwitcherClusterTest {
             TopicMetadataProbe.awaitValue(admin, classicToDisklessTopic, TopicConfig.DISKLESS_ENABLE_CONFIG, "true");
             log.warn("[stage=post-switch-validated] Topic configurations and placement checks passed");
         }
+
+        // `diskless.enable` commits before the prefix upload. Without this wait, the consumer can read
+        // the whole prefix from local logs in phase 1.
+        log.warn("[stage=await-prefix-deletion] Waiting for every broker to delete the local classic prefix of topic={}", classicToDisklessTopic);
+        waitForLocalClassicPrefixDeletion(classicToDisklessTopic);
 
         log.warn("[stage=consume-verify] Produced counts before consume verification={}", producedCounts);
         consumeAndAssertTopicCounts(baseConsumerConfigs(), topics, producedCounts);
@@ -554,6 +597,35 @@ public class InklessTopicTypeSwitcherClusterTest {
         }
         throw new AssertionError("Seal offset for " + topic + "-" + partition
             + " did not reach the expected state within timeout; last observed=" + last);
+    }
+
+    private void waitForLocalClassicPrefixDeletion(final String topic) throws Exception {
+        final long deadline = System.currentTimeMillis() + Duration.ofSeconds(90).toMillis();
+        while (System.currentTimeMillis() < deadline) {
+            if (localClassicPrefixDeletedOnAllBrokers(topic)) {
+                return;
+            }
+            Thread.sleep(500);
+        }
+        throw new AssertionError("Not every broker deleted the local classic prefix of " + topic + " within timeout");
+    }
+
+    private boolean localClassicPrefixDeletedOnAllBrokers(final String topic) {
+        for (BrokerServer broker : cluster.brokers().values()) {
+            final InklessMetadataView metadataView = broker.replicaManager().inklessMetadataView();
+            for (int partition = 0; partition < NUM_PARTITIONS; partition++) {
+                final TopicPartition tp = new TopicPartition(topic, partition);
+                final long seal = metadataView.getClassicToDisklessStartOffset(tp);
+                if (seal < 0 || !metadataView.isClassicPrefixInRemoteStorage(tp)) {
+                    return false;
+                }
+                final scala.Option<UnifiedLog> log = broker.replicaManager().getLog(tp);
+                if (log.isEmpty() || log.get().localLogStartOffset() < seal) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     private long readSealOffset(final Admin admin, final String topic, final int partition) throws Exception {

@@ -39,7 +39,8 @@ import org.apache.kafka.server.common.{KRaftVersion, MetadataVersion, OffsetAndE
 import org.apache.kafka.server.network.BrokerEndPoint
 import org.apache.kafka.server.ReplicaState
 import org.apache.kafka.server.PartitionFetchState
-import org.apache.kafka.server.config.ReplicationConfigs
+import org.apache.kafka.server.config.{ReplicationConfigs, ServerConfigs}
+import org.apache.kafka.server.log.remote.storage.RemoteLogManagerConfig
 import org.apache.kafka.storage.internals.log.{LogAppendInfo, LogConfig, RecordValidationStats, UnifiedLog}
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats
 import org.junit.jupiter.api.Assertions._
@@ -48,7 +49,7 @@ import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.{CsvSource, ValueSource}
 import org.mockito.ArgumentCaptor
 import org.mockito.ArgumentMatchers.{any, anyBoolean, anyLong}
-import org.mockito.Mockito.{mock, times, verify, when}
+import org.mockito.Mockito.{inOrder, mock, times, verify, when}
 
 import java.lang.{Long => JLong}
 import java.nio.charset.StandardCharsets
@@ -852,13 +853,46 @@ class ReplicaFetcherThreadTest {
       expectEviction = false)
   }
 
+  // In phase 1 nothing consolidates, so a consolidating topic waits for the ISR like one that doesn't.
+  @ParameterizedTest
+  @ValueSource(booleans = Array(true, false))
+  def shouldEvictConsolidatingPartitionAtSealInPhaseOneOnlyFromIsr(replicaInIsr: Boolean): Unit = {
+    verifyDisklessSwitchEviction(
+      classicToDisklessStartOffset = 100L,
+      logEndOffsetAfterAppend = 100L,
+      expectEviction = replicaInIsr,
+      replicaInIsr = replicaInIsr,
+      consolidatingTopic = true,
+      classicPrefixInRemoteStorage = false)
+  }
+
+  @Test
+  def shouldEvictConsolidatingPartitionAtSealInPhaseTwoWithoutWaitingForIsr(): Unit = {
+    verifyDisklessSwitchEviction(
+      classicToDisklessStartOffset = 100L,
+      logEndOffsetAfterAppend = 100L,
+      expectEviction = true,
+      replicaInIsr = false,
+      consolidatingTopic = true,
+      classicPrefixInRemoteStorage = true)
+  }
+
   private def verifyDisklessSwitchEviction(
     classicToDisklessStartOffset: Long,
     logEndOffsetAfterAppend: Long,
     expectEviction: Boolean,
-    replicaInIsr: Boolean = true
+    replicaInIsr: Boolean = true,
+    consolidatingTopic: Boolean = false,
+    classicPrefixInRemoteStorage: Boolean = false
   ): Unit = {
     val props = TestUtils.createBrokerConfig(1)
+    if (consolidatingTopic) {
+      props.put(ServerConfigs.DISKLESS_STORAGE_SYSTEM_ENABLE_CONFIG, "true")
+      props.put(ServerConfigs.DISKLESS_REMOTE_STORAGE_CONSOLIDATION_ENABLE_CONFIG, "true")
+      props.put(RemoteLogManagerConfig.REMOTE_LOG_STORAGE_SYSTEM_ENABLE_PROP, "true")
+      props.put(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, "true")
+      props.put(ServerConfigs.DISKLESS_MANAGED_REPLICAS_ENABLE_CONFIG, "true")
+    }
     val config = KafkaConfig.fromProps(props)
 
     val mockBlockingSend: BlockingSend = mock(classOf[BlockingSend])
@@ -879,6 +913,8 @@ class ReplicaFetcherThreadTest {
     val inklessMetadataView: InklessMetadataView = mock(classOf[InklessMetadataView])
     when(inklessMetadataView.getClassicToDisklessStartOffset(t1p0)).thenReturn(classicToDisklessStartOffset)
     when(inklessMetadataView.isReplicaInIsr(t1p0, config.brokerId)).thenReturn(replicaInIsr)
+    when(inklessMetadataView.isConsolidatingDisklessTopic(t1p0.topic)).thenReturn(consolidatingTopic)
+    when(inklessMetadataView.isClassicPrefixInRemoteStorage(t1p0)).thenReturn(classicPrefixInRemoteStorage)
 
     val replicaFetcherManager: ReplicaFetcherManager = mock(classOf[ReplicaFetcherManager])
 
@@ -915,9 +951,13 @@ class ReplicaFetcherThreadTest {
 
     if (expectEviction) {
       verify(replicaFetcherManager, times(1)).removeFetcherForPartitions(Set(t1p0))
-      verify(replicaManager, times(1)).startConsolidationFetchersForCaughtUpClassicPartitions(Set(t1p0))
+      // The prefix goes before consolidation can append next to it.
+      val handOff = inOrder(replicaManager)
+      handOff.verify(replicaManager).maybeDropLocalClassicPrefix(Set(t1p0))
+      handOff.verify(replicaManager).startConsolidationFetchersForCaughtUpClassicPartitions(Set(t1p0))
     } else {
       verify(replicaFetcherManager, times(0)).removeFetcherForPartitions(any())
+      verify(replicaManager, times(0)).maybeDropLocalClassicPrefix(any[collection.Set[TopicPartition]]())
       verify(replicaManager, times(0)).startConsolidationFetchersForCaughtUpClassicPartitions(any())
     }
     assertEquals(mutable.Buffer.empty, thread.partitionsToEvictAfterDisklessSwitch)

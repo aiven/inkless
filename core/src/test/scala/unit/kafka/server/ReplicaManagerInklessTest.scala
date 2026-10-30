@@ -36,7 +36,7 @@ import org.apache.kafka.common.config.TopicConfig
 import org.apache.kafka.common.{DirectoryId, IsolationLevel, Node, TopicIdPartition, TopicPartition, Uuid}
 import org.apache.kafka.common.network.ListenerName
 import org.apache.kafka.common.compress.Compression
-import org.apache.kafka.common.errors.{NotLeaderOrFollowerException, OffsetOutOfRangeException, UnknownTopicOrPartitionException}
+import org.apache.kafka.common.errors.{KafkaStorageException, NotLeaderOrFollowerException, OffsetOutOfRangeException, UnknownTopicOrPartitionException}
 import org.apache.kafka.common.message.ListOffsetsRequestData.{ListOffsetsPartition, ListOffsetsTopic}
 import org.apache.kafka.common.message.ListOffsetsResponseData.{ListOffsetsPartitionResponse, ListOffsetsTopicResponse}
 import org.apache.kafka.common.message.DeleteRecordsResponseData
@@ -57,7 +57,7 @@ import org.apache.kafka.metadata.{InitDisklessLogFields, KRaftMetadataCache, Lea
 import org.apache.kafka.server.HostedPartition
 import org.apache.kafka.server.common.{KRaftVersion, MetadataVersion}
 import org.apache.kafka.server.config.ServerConfigs
-import org.apache.kafka.server.log.remote.storage.RemoteLogManagerConfig
+import org.apache.kafka.server.log.remote.storage.{RemoteLogManager, RemoteLogManagerConfig}
 import org.apache.kafka.server.network.BrokerEndPoint
 import org.apache.kafka.server.PartitionFetchState
 import org.apache.kafka.server.purgatory.{DelayedDeleteRecords, DelayedOperationPurgatory, DelayedProduce, DelayedRemoteFetch, DelayedRemoteListOffsets, TopicPartitionOperationKey}
@@ -71,12 +71,12 @@ import org.apache.kafka.storage.internals.log.{AppendOrigin, AsyncOffsetReadFutu
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.{AfterEach, BeforeEach, Test}
 import org.junit.jupiter.params.ParameterizedTest
-import org.junit.jupiter.params.provider.ValueSource
+import org.junit.jupiter.params.provider.{CsvSource, ValueSource}
 import org.mockito.ArgumentMatchers._
 import org.mockito.Mockito._
 import org.mockito.{Answers, ArgumentCaptor, ArgumentMatchers, MockedConstruction, Mockito}
 
-import java.io.File
+import java.io.{File, IOException}
 import java.net.InetAddress
 import java.util
 import java.util.{Collections, Optional, OptionalInt, OptionalLong, Properties}
@@ -1788,19 +1788,24 @@ class ReplicaManagerInklessTest {
 
   private def stubConsolidatingPartitionWithLocalLeo(replicaManager: ReplicaManager,
                                                      localLeo: Long,
-                                                     localHighWatermark: Option[Long] = None): Unit = {
+                                                     localHighWatermark: Option[Long] = None,
+                                                     localLogStartOffset: Long = 0L): Unit = {
     stubConsolidatingPartitionWithLocalLeoFor(
-      replicaManager, disklessTopicPartition, localLeo, localHighWatermark)
+      replicaManager, disklessTopicPartition, localLeo, localHighWatermark, localLogStartOffset)
   }
 
+  // A switched partition in phase 2 has no local log below the seal, so callers that commit a seal
+  // and read below it pass the seal as localLogStartOffset.
   private def stubConsolidatingPartitionWithLocalLeoFor(replicaManager: ReplicaManager,
                                                         tp: TopicIdPartition,
                                                         localLeo: Long,
-                                                        localHighWatermark: Option[Long] = None): Unit = {
+                                                        localHighWatermark: Option[Long] = None,
+                                                        localLogStartOffset: Long): Unit = {
     val mockPartition = mock(classOf[Partition])
     val mockLog = mock(classOf[UnifiedLog])
     when(mockLog.logEndOffset).thenReturn(localLeo)
     when(mockLog.highWatermark).thenReturn(localHighWatermark.getOrElse(localLeo))
+    when(mockLog.localLogStartOffset).thenReturn(localLogStartOffset)
     when(mockPartition.log).thenReturn(Some(mockLog))
     doReturn(Right(mockPartition)).when(replicaManager).getPartitionOrError(
       ArgumentMatchers.eq(tp.topicPartition()))
@@ -1812,7 +1817,7 @@ class ReplicaManagerInklessTest {
                                                      tp: TopicIdPartition,
                                                      localLeo: Long,
                                                      isLeader: Boolean,
-                                                     localLogStartOffset: Long = 0L,
+                                                     localLogStartOffset: Long,
                                                      localHighWatermark: Option[Long] = None): Unit = {
     val mockPartition = mock(classOf[Partition])
     val mockLog = mock(classOf[UnifiedLog])
@@ -1861,7 +1866,7 @@ class ReplicaManagerInklessTest {
     try {
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
         .thenReturn(100L)
-      stubConsolidatingPartitionWithLocalLeo(replicaManager, localLeo = 200L)
+      stubConsolidatingPartitionWithLocalLeo(replicaManager, localLeo = 200L, localLogStartOffset = 100L)
 
       doReturn(Seq(disklessTopicPartition ->
         new LogReadResult(
@@ -1895,7 +1900,253 @@ class ReplicaManagerInklessTest {
     }
   }
 
+  // A leader whose local log still holds the classic prefix [0, 100) answers a read at offset 50 with
+  // the given local records through the real readFromLog. The high watermark sits on a newer segment,
+  // so a parked fetch completes on its first check.
+  private def stubLeaderReadingLocalClassicPrefix(replicaManager: ReplicaManager,
+                                                  records: Records = RECORDS): Unit = {
+    val mockLog = mock(classOf[UnifiedLog])
+    when(mockLog.logEndOffset).thenReturn(200L)
+    when(mockLog.highWatermark).thenReturn(200L)
+    when(mockLog.localLogStartOffset).thenReturn(0L)
+    when(mockLog.remoteLogEnabled()).thenReturn(true)
+    when(mockLog.config).thenReturn(LogTestUtils.createLogConfig(remoteLogStorageEnable = true))
+    val mockPartition = mock(classOf[Partition])
+    when(mockPartition.log).thenReturn(Some(mockLog))
+    when(mockPartition.isLeader).thenReturn(true)
+    when(mockPartition.topicId).thenReturn(Some(disklessTopicPartition.topicId()))
+    when(mockPartition.localLogWithEpochOrThrow(any(), anyBoolean())).thenReturn(mockLog)
+    when(mockPartition.fetchRecords(any(), any(), anyLong(), anyInt(), anyBoolean(), anyBoolean(), anyBoolean()))
+      .thenReturn(new LogReadInfo(
+        new FetchDataInfo(new LogOffsetMetadata(50L, 0L, 0), records),
+        Optional.empty(), 200L, 0L, 200L, 200L))
+    val endOffsetMetadata = new LogOffsetMetadata(200L, 100L, 0)
+    when(mockPartition.fetchOffsetSnapshot(any(), anyBoolean()))
+      .thenReturn(new LogOffsetSnapshot(0L, endOffsetMetadata, endOffsetMetadata, endOffsetMetadata))
+    doReturn(Right(mockPartition)).when(replicaManager)
+      .getPartitionOrError(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()))
+    doReturn(mockPartition).when(replicaManager)
+      .getPartitionOrException(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()))
+  }
 
+  // Phase 2 trusts only the remote copy of the classic prefix. The guard checks what the read returned,
+  // so it also refuses a fetch that parked in phase 1 when DelayedFetch completes it in phase 2.
+  @ParameterizedTest
+  @CsvSource(Array("true, false", "true, true", "false, false", "false, true"))
+  def testReadFromLogRejectsLocalClassicPrefixOnlyInPhaseTwo(classicPrefixInRemoteStorage: Boolean,
+                                                             readFromPurgatory: Boolean): Unit = {
+    val replicaManager = spy(createReplicaManager(List(disklessTopicPartition.topic())))
+    try {
+      val tp = disklessTopicPartition.topicPartition()
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(100L)
+      when(replicaManager.inklessMetadataView().isClassicPrefixInRemoteStorage(tp)).thenReturn(classicPrefixInRemoteStorage)
+      stubLeaderReadingLocalClassicPrefix(replicaManager)
+
+      val fetchParams = new FetchParams(
+        FetchRequest.ORDINARY_CONSUMER_ID, -1L,
+        0L, 1, 1024, FetchIsolation.HIGH_WATERMARK, Optional.empty()
+      )
+      val fetchInfos = Seq(
+        disklessTopicPartition -> new PartitionData(disklessTopicPartition.topicId(), 50L, 0L, 1024, Optional.empty())
+      )
+      val result = replicaManager.readFromLog(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, readFromPurgatory)
+        .head._2
+
+      if (classicPrefixInRemoteStorage) {
+        assertEquals(Errors.NOT_LEADER_OR_FOLLOWER, result.error)
+        assertEquals(MemoryRecords.EMPTY, result.info.records)
+        assertTrue(replicaManager.isClassicPrefixDeletionDeferred(tp),
+          "A refused read retries the deletion, for a log that a log directory move promoted")
+      } else {
+        assertEquals(Errors.NONE, result.error)
+        assertEquals(RECORDS, result.info.records)
+        assertFalse(replicaManager.isClassicPrefixDeletionDeferred(tp))
+      }
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  // A follower that started consolidating on a release that didn't wait for phase 2 has a segment that
+  // spans the seal, and forced deletion can't remove it. Consumers read that part of the prefix from
+  // remote storage once this broker's remote log metadata covers it.
+  @ParameterizedTest
+  @CsvSource(Array("true, true", "true, false", "false, true"))
+  def testReadFromLogServesCoveredLocalClassicPrefixToConsumersFromRemoteStorage(fromConsumer: Boolean,
+                                                                                 coveredByRemoteStorage: Boolean): Unit = {
+    val replicaManager = spy(createReplicaManager(List(disklessTopicPartition.topic()),
+      remoteLogManager = Some(mock(classOf[RemoteLogManager]))))
+    try {
+      val tp = disklessTopicPartition.topicPartition()
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(100L)
+      when(replicaManager.inklessMetadataView().isClassicPrefixInRemoteStorage(tp)).thenReturn(true)
+      stubLeaderReadingLocalClassicPrefix(replicaManager)
+      val log = replicaManager.getPartitionOrException(tp).log.get
+      when(log.highestOffsetInRemoteStorage).thenReturn(if (coveredByRemoteStorage) 99L else 49L)
+
+      val fetchParams =
+        if (fromConsumer) new FetchParams(FetchRequest.ORDINARY_CONSUMER_ID, -1L, 0L, 1, 1024,
+          FetchIsolation.HIGH_WATERMARK, Optional.empty())
+        else new FetchParams(2, 1L, 0L, 1, 1024, FetchIsolation.LOG_END, Optional.empty())
+      val fetchInfos = Seq(
+        disklessTopicPartition -> new PartitionData(disklessTopicPartition.topicId(), 50L, 0L, 1024, Optional.empty())
+      )
+      val result = replicaManager.readFromLog(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, readFromPurgatory = false)
+        .head._2
+
+      assertEquals(MemoryRecords.EMPTY, result.info.records)
+      if (fromConsumer && coveredByRemoteStorage) {
+        assertEquals(Errors.NONE, result.error)
+        assertTrue(result.info.delayedRemoteStorageFetch.isPresent)
+        assertEquals(50L, result.info.delayedRemoteStorageFetch.get.fetchInfo.fetchOffset)
+      } else {
+        assertEquals(Errors.NOT_LEADER_OR_FOLLOWER, result.error)
+        assertFalse(result.info.delayedRemoteStorageFetch.isPresent)
+      }
+      assertTrue(replicaManager.isClassicPrefixDeletionDeferred(tp))
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  // The local read would reach the high watermark below minBytes, so without the refusal the
+  // consolidating path would stitch a diskless supplement onto the local prefix. A read that returns
+  // nothing passes the refusal, and a supplement from the local log end offset would skip the rest
+  // of the prefix.
+  @ParameterizedTest
+  @ValueSource(booleans = Array(true, false))
+  def testFetchSwitchedPartitionInPhaseTwoRejectsReadOfLocalClassicPrefix(localReadReturnsRecords: Boolean): Unit = {
+    val fetchHandlerCtor = mockFetchHandler(Map.empty)
+    val timer = new MockTimer(time)
+    val fetchPurgatory = new DelayedOperationPurgatory[DelayedFetch]("Fetch", timer, 0, false)
+    val replicaManager = spy(createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      disklessManagedReplicasEnabled = true,
+      disklessRemoteStorageConsolidationEnabled = true,
+      consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+      delayedFetchPurgatory = Some(fetchPurgatory),
+    ))
+    try {
+      val tp = disklessTopicPartition.topicPartition()
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(100L)
+      when(replicaManager.inklessMetadataView().isClassicPrefixInRemoteStorage(tp)).thenReturn(true)
+      stubLeaderReadingLocalClassicPrefix(replicaManager,
+        if (localReadReturnsRecords) RECORDS else MemoryRecords.EMPTY)
+
+      val fetchParams = new FetchParams(
+        FetchRequest.ORDINARY_CONSUMER_ID, -1L,
+        1000L, 1024 * 1024, 1024 * 1024, FetchIsolation.HIGH_WATERMARK, Optional.empty()
+      )
+      val fetchInfos = Seq(
+        disklessTopicPartition -> new PartitionData(disklessTopicPartition.topicId(), 50L, 0L, 1024, Optional.empty())
+      )
+
+      @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+      val responseCallback = (response: Seq[(TopicIdPartition, FetchPartitionData)]) => responseData = response.toMap
+      replicaManager.fetchMessages(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, responseCallback)
+
+      waitForFetchResponse(responseData)
+      val expectedError = if (localReadReturnsRecords) Errors.NOT_LEADER_OR_FOLLOWER else Errors.NONE
+      assertEquals(expectedError, responseData(disklessTopicPartition).error)
+      assertEquals(MemoryRecords.EMPTY, responseData(disklessTopicPartition).records)
+      verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+      fetchHandlerCtor.close()
+    }
+  }
+
+  // The future log copies the prefix from the current log, so the flag commit's deletion misses it.
+  // The read path refuses the prefix on either log, so promotion waits only for the future log to catch
+  // up with the current log's deletion.
+  @Test
+  def testShouldDelayFutureReplicaPromotionWhileFutureLogHoldsLocalClassicPrefix(): Unit = {
+    val replicaManager = createReplicaManager(List(disklessTopicPartition.topic()))
+    try {
+      val tp = disklessTopicPartition.topicPartition()
+      val seal = 10L
+      when(replicaManager.inklessMetadataView().isDisklessTopic(tp.topic)).thenReturn(true)
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(seal)
+      when(replicaManager.inklessMetadataView().isClassicPrefixInRemoteStorage(tp)).thenReturn(true)
+
+      def partitionWithLogs(currentLocalLogStartOffset: Long,
+                            futureLocalLogStartOffset: Long,
+                            futureLogEndOffset: Long = seal): (Partition, UnifiedLog) = {
+        val currentLog = mock(classOf[UnifiedLog])
+        when(currentLog.logEndOffset).thenReturn(seal)
+        when(currentLog.localLogStartOffset).thenReturn(currentLocalLogStartOffset)
+        when(currentLog.highestOffsetInRemoteStorage).thenReturn(seal - 1)
+        val futureLog = mock(classOf[UnifiedLog])
+        when(futureLog.remoteLogEnabled()).thenReturn(true)
+        when(futureLog.config).thenReturn(LogTestUtils.createLogConfig(remoteLogStorageEnable = true))
+        when(futureLog.logEndOffset).thenReturn(futureLogEndOffset)
+        when(futureLog.localLogStartOffset).thenReturn(futureLocalLogStartOffset)
+        val partition = mock(classOf[Partition])
+        when(partition.topicPartition).thenReturn(tp)
+        when(partition.log).thenReturn(Some(currentLog))
+        when(partition.futureLog).thenReturn(Some(futureLog))
+        (partition, futureLog)
+      }
+
+      val (deleted, deletedFutureLog) = partitionWithLogs(currentLocalLogStartOffset = seal, futureLocalLogStartOffset = seal)
+      assertFalse(replicaManager.shouldDelayFutureReplicaPromotion(deleted))
+      verify(deletedFutureLog).updateHighestOffsetInRemoteStorage(seal - 1)
+      verify(deletedFutureLog).forceDeleteLocalSegmentsBelow(seal)
+
+      val (futureOnly, _) = partitionWithLogs(currentLocalLogStartOffset = seal, futureLocalLogStartOffset = 0L)
+      assertTrue(replicaManager.shouldDelayFutureReplicaPromotion(futureOnly),
+        "The future log holds prefix records that the current log serves from remote storage")
+
+      val (both, _) = partitionWithLogs(currentLocalLogStartOffset = 0L, futureLocalLogStartOffset = 0L)
+      assertFalse(replicaManager.shouldDelayFutureReplicaPromotion(both),
+        "Reads of the prefix already fail on the current log")
+
+      val (behind, behindFutureLog) = partitionWithLogs(currentLocalLogStartOffset = seal,
+        futureLocalLogStartOffset = 0L, futureLogEndOffset = seal - 5)
+      assertFalse(replicaManager.shouldDelayFutureReplicaPromotion(behind), "A future log that lags can't be promoted")
+      verify(behindFutureLog, never()).forceDeleteLocalSegmentsBelow(anyLong())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  // A log directory move that spans the flag commit copies the prefix first and the diskless suffix
+  // after it. Forced deletion can remove the future log's prefix only if the suffix starts a new segment.
+  @Test
+  def testLogDirectoryMoveAcrossFlagCommitRollsFutureLogAtSeal(): Unit = {
+    val replicaManager = createReplicaManager(List(disklessTopicPartition.topic()))
+    val futureLog = LogTestUtils.createLog(TestUtils.randomPartitionLogDir(TestUtils.tempDir()),
+      LogTestUtils.createLogConfig(remoteLogStorageEnable = true), new BrokerTopicStats(false), time.scheduler, time,
+      remoteStorageSystemEnable = true)
+    try {
+      val tp = disklessTopicPartition.topicPartition()
+      val seal = 10L
+      val logEndOffset = seal + 5
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(seal)
+      when(replicaManager.inklessMetadataView().isClassicPrefixInRemoteStorage(tp)).thenReturn(true)
+      val currentLog = mock(classOf[UnifiedLog])
+      when(currentLog.logEndOffset).thenReturn(logEndOffset)
+      when(currentLog.localLogStartOffset).thenReturn(seal)
+      when(currentLog.highestOffsetInRemoteStorage).thenReturn(seal - 1)
+      val partition = mock(classOf[Partition])
+      when(partition.topicPartition).thenReturn(tp)
+      when(partition.log).thenReturn(Some(currentLog))
+      when(partition.futureLog).thenReturn(Some(futureLog))
+
+      futureLog.appendAsFollower(TestUtils.records((0L until seal).map(i => new SimpleRecord(s"classic-$i".getBytes)),
+        baseOffset = 0L, partitionLeaderEpoch = 0), 0)
+      replicaManager.maybeRollFutureLogAtSeal(partition, seal)
+      futureLog.appendAsFollower(TestUtils.records((seal until logEndOffset).map(i => new SimpleRecord(s"diskless-$i".getBytes)),
+        baseOffset = seal, partitionLeaderEpoch = 1), 1)
+
+      assertFalse(replicaManager.shouldDelayFutureReplicaPromotion(partition))
+      assertEquals(seal, futureLog.localLogStartOffset)
+      assertEquals(0L, futureLog.logStartOffset)
+    } finally {
+      futureLog.close()
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
 
   // The metadata transformer can route an older consumer (no rackId -> empty clientMetadata) to a
   // follower whose local logStartOffset is frozen at the classic-to-diskless seal. DeleteRecords /
@@ -1920,7 +2171,8 @@ class ReplicaManagerInklessTest {
     try {
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
         .thenReturn(100L)
-      stubConsolidatingPartitionWithLogStart(replicaManager, disklessTopicPartition, localLeo = 200L, isLeader = false)
+      stubConsolidatingPartitionWithLogStart(replicaManager, disklessTopicPartition, localLeo = 200L, isLeader = false,
+        localLogStartOffset = 100L)
 
       // Older consumer: replicaId = -1 and empty clientMetadata.
       val fetchParams = new FetchParams(
@@ -1966,7 +2218,8 @@ class ReplicaManagerInklessTest {
     try {
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
         .thenReturn(100L)
-      stubConsolidatingPartitionWithLogStart(replicaManager, disklessTopicPartition, localLeo = 200L, isLeader = false)
+      stubConsolidatingPartitionWithLogStart(replicaManager, disklessTopicPartition, localLeo = 200L, isLeader = false,
+        localLogStartOffset = 100L)
 
       doReturn(Seq(disklessTopicPartition ->
         new LogReadResult(
@@ -2021,7 +2274,8 @@ class ReplicaManagerInklessTest {
     try {
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
         .thenReturn(100L)
-      stubConsolidatingPartitionWithLogStart(replicaManager, disklessTopicPartition, localLeo = 200L, isLeader = true)
+      stubConsolidatingPartitionWithLogStart(replicaManager, disklessTopicPartition, localLeo = 200L, isLeader = true,
+        localLogStartOffset = 100L)
 
       doReturn(Seq(disklessTopicPartition ->
         new LogReadResult(
@@ -2074,7 +2328,8 @@ class ReplicaManagerInklessTest {
     try {
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
         .thenReturn(100L)
-      stubConsolidatingPartitionWithLogStart(replicaManager, disklessTopicPartition, localLeo = 200L, isLeader = false)
+      stubConsolidatingPartitionWithLogStart(replicaManager, disklessTopicPartition, localLeo = 200L, isLeader = false,
+        localLogStartOffset = 100L)
 
       // Modern consumer: non-empty clientMetadata (rackId present).
       val clientMetadata = new DefaultClientMetadata(
@@ -2126,7 +2381,8 @@ class ReplicaManagerInklessTest {
     try {
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
         .thenReturn(100L)
-      stubConsolidatingPartitionWithLogStart(replicaManager, disklessTopicPartition, localLeo = 200L, isLeader = false)
+      stubConsolidatingPartitionWithLogStart(replicaManager, disklessTopicPartition, localLeo = 200L, isLeader = false,
+        localLogStartOffset = 100L)
 
       doReturn(Seq(disklessTopicPartition ->
         new LogReadResult(
@@ -2186,7 +2442,7 @@ class ReplicaManagerInklessTest {
     var localFileRecords: FileRecords = null
     try {
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
-        .thenReturn(100L)
+        .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
       // Stub fetchOffsetSnapshot so DelayedFetch.tryComplete doesn't NPE if the request parks
       // on a build without the supplement.
       val mockPartition = mock(classOf[Partition])
@@ -2202,7 +2458,7 @@ class ReplicaManagerInklessTest {
       doReturn(mockPartition).when(replicaManager)
         .getPartitionOrException(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()))
 
-      // Local read reaches the seal (batch ends at offset 100 == seal), so the supplement fires.
+      // Local read reaches the LEO (batch ends at offset 100), so the supplement fires.
       localFileRecords = memoryRecordsToFileRecords(RECORDS_AT_SEAL)
       doReturn(Seq(disklessTopicPartition ->
         new LogReadResult(
@@ -2277,7 +2533,7 @@ class ReplicaManagerInklessTest {
     var localFileRecords: FileRecords = null
     try {
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
-        .thenReturn(100L)
+        .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
       // Stub a partition whose local log ends at 100 and exposes a matching offset snapshot, so the
       // parked DelayedFetch.tryComplete can evaluate the partition's high watermark without NPE.
       val mockPartition = mock(classOf[Partition])
@@ -2293,7 +2549,7 @@ class ReplicaManagerInklessTest {
       doReturn(mockPartition).when(replicaManager)
         .getPartitionOrException(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()))
 
-      // Local read reaches the seal (batch ends at offset 100 == seal), so the supplement fires —
+      // Local read reaches the LEO (batch ends at offset 100), so the supplement fires —
       // but the supplement returns no data, so minBytes stays unmet and the fetch parks.
       localFileRecords = memoryRecordsToFileRecords(RECORDS_AT_SEAL)
       doReturn(Seq(disklessTopicPartition ->
@@ -2374,14 +2630,14 @@ class ReplicaManagerInklessTest {
     ))
     try {
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
-        .thenReturn(100L)
+        .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
       stubConsolidatingPartitionWithLocalLeo(replicaManager, localLeo = 100L)
 
       // Return small local records (below minBytes threshold) AS FileRecords, matching what a
       // real local-log read produces. Using FileRecords here (not MemoryRecords) exercises the
       // production FileRecords->MemoryRecords conversion in the supplement merge path; a
       // MemoryRecords stub would vacuously pass while the real path throws ClassCastException.
-      // The local batch ends at offset 100 == seal, so the local read reaches the LEO and the
+      // The local batch ends at offset 100, so the local read reaches the LEO and the
       // supplement fires (see the exhaustion guard in buildConsolidationSupplementFetchInfos).
       localFileRecords = memoryRecordsToFileRecords(RECORDS_AT_SEAL)
       doReturn(Seq(disklessTopicPartition ->
@@ -2528,7 +2784,7 @@ class ReplicaManagerInklessTest {
     ))
     try {
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
-        .thenReturn(100L)
+        .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
       val mockPartition = mock(classOf[Partition])
       val mockLog = mock(classOf[UnifiedLog])
       when(mockLog.logEndOffset).thenReturn(100L)
@@ -2602,7 +2858,7 @@ class ReplicaManagerInklessTest {
     var localFileRecords: FileRecords = null
     try {
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
-        .thenReturn(100L)
+        .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
       val mockPartition = mock(classOf[Partition])
       val mockLog = mock(classOf[UnifiedLog])
       when(mockLog.logEndOffset).thenReturn(100L)
@@ -2666,7 +2922,7 @@ class ReplicaManagerInklessTest {
     var localFileRecords: FileRecords = null
     try {
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
-        .thenReturn(100L)
+        .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
       stubConsolidatingPartitionWithLocalLeo(replicaManager, localLeo = 100L)
 
       localFileRecords = memoryRecordsToFileRecords(RECORDS_AT_SEAL)
@@ -2729,7 +2985,7 @@ class ReplicaManagerInklessTest {
     ))
     try {
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
-        .thenReturn(100L)
+        .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
       val mockPartition = mock(classOf[Partition])
       val mockLog = mock(classOf[UnifiedLog])
       when(mockLog.logEndOffset).thenReturn(100L)
@@ -2743,7 +2999,7 @@ class ReplicaManagerInklessTest {
       doReturn(mockPartition).when(replicaManager)
         .getPartitionOrException(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()))
 
-      // Local read reaches the seal (batch ends at offset 100 == seal), so the supplement fires
+      // Local read reaches the LEO (batch ends at offset 100), so the supplement fires
       // and the interrupt is raised inside the supplement fetch.
       doReturn(Seq(disklessTopicPartition ->
         new LogReadResult(
@@ -2851,28 +3107,28 @@ class ReplicaManagerInklessTest {
 
   // Guards against the "sub-seal gap" silent-data-loss bug.
   //
-  // Setup of a consolidating partition:
+  // Setup of a consolidating topic whose partition is in phase 1 (the classic prefix isn't in
+  // remote storage yet, so this replica doesn't consolidate it):
   //   - classic-to-diskless seal  = 1000  (offsets [1000, ...) live in object storage / diskless)
   //   - local classic prefix      = [0, 1000) and spans multiple local log segments
   //   - local logEndOffset (LEO)  = 1000
-  //   - localLogStartOffset       = 0     (nothing tiered, so the tiered-range guard is a no-op)
   //
   // A consumer fetches at offset 480, which lands in an *earlier* local segment. LocalLog.read
   // serves from a single segment, so the local read returns only [480, 500) (a segment boundary
-  // well below the seal). Because that is smaller than minBytes, the consolidating path would
-  // previously trigger a diskless supplement starting at lastBatch().nextOffset() == 500.
+  // well below the seal). That is smaller than minBytes, so a diskless supplement would start at
+  // lastBatch().nextOffset() == 500.
   //
   // But 500 is BELOW the seal (1000): the diskless control plane holds no batches for offsets
   // below the seal, so a FindBatch at 500 returns the first available batch — at the seal, 1000.
   // (The FetchHandler stub returns records starting at 1000 regardless of the requested offset,
   // faithfully modelling that "first batch at-or-after" control-plane behavior.)
   //
-  // Without the exhaustion guard the merge would stitch local [480, 500) directly onto diskless
-  // [1000, ...), silently dropping the committed range [500, 1000). With the guard the supplement
-  // is skipped (local read is below the seal), so the consumer gets the contiguous local prefix
-  // and re-fetches to walk the remaining local segments.
+  // A supplement would stitch local [480, 500) directly onto diskless [1000, ...), silently
+  // dropping the committed range [500, 1000). Phase 1 serves the classic prefix like a
+  // non-consolidating topic, which never supplements, so the consumer gets the contiguous local
+  // prefix and re-fetches to walk the remaining local segments.
   @Test
-  def testFetchConsolidatingSupplementBelowSealSilentlySkipsClassicPrefix(): Unit = {
+  def testFetchSwitchedPartitionInPhaseOneServesClassicPrefixWithoutSupplement(): Unit = {
     val seal = 1000L
     val localLeo = 1000L
 
@@ -2912,6 +3168,8 @@ class ReplicaManagerInklessTest {
     try {
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
         .thenReturn(seal)
+      when(replicaManager.inklessMetadataView().isSwitchedPhaseOne(disklessTopicPartition.topicPartition()))
+        .thenReturn(true)
       // The fetch offset (480) is on an older segment than the local LEO, so the local read returns
       // a single sub-seal segment and the supplement is skipped. minBytes stays unmet, so the fetch
       // parks; on tryComplete, DelayedFetch Case F (older segment) force-completes with the local
@@ -3033,7 +3291,7 @@ class ReplicaManagerInklessTest {
     var localFileRecords: FileRecords = null
     try {
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
-        .thenReturn(100L)
+        .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
       val consolidatingPartition = mock(classOf[Partition])
       val consolidatingLog = mock(classOf[UnifiedLog])
       when(consolidatingLog.logEndOffset).thenReturn(100L)
@@ -3047,7 +3305,7 @@ class ReplicaManagerInklessTest {
       doReturn(consolidatingPartition).when(replicaManager)
         .getPartitionOrException(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()))
 
-      // Consolidating local read reaches the seal (batch ends at offset 100 == seal), so the
+      // Consolidating local read reaches the LEO (batch ends at offset 100), so the
       // supplement fires.
       localFileRecords = memoryRecordsToFileRecords(RECORDS_AT_SEAL)
       doReturn(Seq(
@@ -3611,7 +3869,8 @@ class ReplicaManagerInklessTest {
 
       doReturn(Left(Errors.KAFKA_STORAGE_ERROR)).when(replicaManager).getPartitionOrError(
         ArgumentMatchers.eq(disklessTopicPartition.topicPartition()))
-      stubConsolidatingPartitionWithLocalLeoFor(replicaManager, disklessTopicPartition2, localLeo = 200L)
+      stubConsolidatingPartitionWithLocalLeoFor(replicaManager, disklessTopicPartition2, localLeo = 200L,
+        localLogStartOffset = 100L)
 
       doReturn(Seq(disklessTopicPartition2 ->
         new LogReadResult(
@@ -3922,9 +4181,10 @@ class ReplicaManagerInklessTest {
   }
 
   // Diskless never held [0, classicToDisklessStartOffset), so a consumer fetching the classic prefix
-  // of a switched partition must stay on the local read path even when this replica's high watermark
-  // has not caught up: routing it to diskless would answer OFFSET_OUT_OF_RANGE for records the log
-  // holds. The response is empty until the high watermark advances, and DelayedFetch returns it
+  // of a switched partition must stay on the unified log read path, which serves it from remote
+  // storage, even when this replica's high watermark has not caught up: routing it to diskless
+  // would answer OFFSET_OUT_OF_RANGE for records the log holds. The response is empty until the
+  // high watermark advances, and DelayedFetch returns it
   // immediately (case F, fetch offset beyond the isolation bound), so the consumer re-fetches rather
   // than waiting out fetch.max.wait.ms. The supplement must stay off: a read stopped at the high
   // watermark is no proof that the local log is exhausted.
@@ -3947,6 +4207,7 @@ class ReplicaManagerInklessTest {
       val mockLog = mock(classOf[UnifiedLog])
       when(mockLog.logEndOffset).thenReturn(100L)
       when(mockLog.highWatermark).thenReturn(50L)
+      when(mockLog.localLogStartOffset).thenReturn(100L)
       when(mockPartition.log).thenReturn(Some(mockLog))
       when(mockPartition.isLeader).thenReturn(true)
       val hwMetadata = new LogOffsetMetadata(50L, 0L, 0)
@@ -7437,6 +7698,7 @@ class ReplicaManagerInklessTest {
         consolidatingDisklessTopics = Set(topicName),
         mockReplicaFetcherManager = Some(mockFetcherManager),
         defaultLogConfig = Some(LogTestUtils.createLogConfig(remoteLogStorageEnable = true)),
+        initDisklessLogManager = Some(mock(classOf[InitDisklessLogManager])),
       ))
       try {
         val pendingImage = applyPendingSwitchDelta(replicaManager, topicName, topicId, tp, brokerId, otherReplica, localLeo)
@@ -7447,10 +7709,239 @@ class ReplicaManagerInklessTest {
         commitSealDelta(replicaManager, pendingImage, topicId, tp, brokerId, sealOffset)
 
         // The leader stays online to rebuild the prefix from remote storage. Its local log doesn't hold
-        // the tail, so a roll can't help the upload.
+        // the tail, so a roll can't help the upload. In phase 1 the leader takes the classic switch
+        // branch, so only seal() rolls the active segment. This test creates the partition while the
+        // switch is pending, so the seal commit is the first seal().
         assertTrue(replicaManager.getPartition(tp).isInstanceOf[HostedPartition.Online[Partition]])
         assertEquals(localLeo, log.logEndOffset)
-        assertEquals(segmentsBefore, log.numberOfSegments)
+        assertEquals(segmentsBefore + 1, log.numberOfSegments)
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
+    } finally {
+      consolidationCtor.close()
+    }
+  }
+
+  @Test
+  def testApplyDeltaDropsLeaderLocalClassicPrefixOnClassicPrefixFlagCommit(): Unit = {
+    val topicName = "switched-consolidating-topic"
+    val topicId = Uuid.randomUuid()
+    val tp = new TopicPartition(topicName, 0)
+    val brokerId = 1
+    val otherReplica = 2
+    val sealOffset = 10L
+
+    val mockFetcherManager = mock(classOf[ReplicaFetcherManager])
+    when(mockFetcherManager.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    val ctorInit: MockedConstruction.MockInitializer[ConsolidationFetcherManager] = {
+      case (mockCfm, _) =>
+        when(mockCfm.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    }
+    val consolidationCtor = mockConstruction(classOf[ConsolidationFetcherManager], ctorInit)
+    try {
+      val replicaManager = spy(createReplicaManager(
+        Seq(topicName),
+        disklessRemoteStorageConsolidationEnabled = true,
+        consolidatingDisklessTopics = Set(topicName),
+        mockReplicaFetcherManager = Some(mockFetcherManager),
+        defaultLogConfig = Some(LogTestUtils.createLogConfig(remoteLogStorageEnable = true)),
+        initDisklessLogManager = Some(mock(classOf[InitDisklessLogManager])),
+      ))
+      try {
+        val pendingImage = applyPendingSwitchDelta(replicaManager, topicName, topicId, tp, brokerId, otherReplica,
+          localLeo = sealOffset)
+        val sealImage = commitSealDelta(replicaManager, pendingImage, topicId, tp, brokerId, sealOffset)
+        val log = replicaManager.localLogOrException(tp)
+        assertEquals(0L, log.localLogStartOffset, "Phase 1 keeps the local classic prefix")
+        log.updateHighestOffsetInRemoteStorage(sealOffset - 1)
+
+        commitClassicPrefixFlagDelta(replicaManager, sealImage, topicId, tp, leaderId = brokerId)
+
+        // The remote tier keeps serving the prefix, so the log start offset and the leader epoch
+        // cache stay.
+        assertTrue(replicaManager.getPartition(tp).isInstanceOf[HostedPartition.Online[Partition]])
+        assertEquals(sealOffset, log.localLogStartOffset)
+        assertEquals(0L, log.logStartOffset)
+        assertEquals(sealOffset, log.logEndOffset)
+        assertEquals(0L, log.leaderEpochCache().epochEntries().get(0).startOffset)
+        assertFalse(replicaManager.isClassicPrefixDeletionDeferred(tp))
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
+    } finally {
+      consolidationCtor.close()
+    }
+  }
+
+  // A tiered read of a segment that this broker's remote log metadata doesn't list answers
+  // OFFSET_OUT_OF_RANGE, so the replica keeps the segment local until its metadata catches up.
+  @Test
+  def testApplyDeltaDefersClassicPrefixDeletionUntilRemoteLogMetadataCoversIt(): Unit = {
+    val topicName = "switched-consolidating-topic"
+    val topicId = Uuid.randomUuid()
+    val tp = new TopicPartition(topicName, 0)
+    val brokerId = 1
+    val otherReplica = 2
+    val sealOffset = 10L
+
+    val mockFetcherManager = mock(classOf[ReplicaFetcherManager])
+    when(mockFetcherManager.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    val ctorInit: MockedConstruction.MockInitializer[ConsolidationFetcherManager] = {
+      case (mockCfm, _) =>
+        when(mockCfm.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    }
+    val consolidationCtor = mockConstruction(classOf[ConsolidationFetcherManager], ctorInit)
+    try {
+      val replicaManager = spy(createReplicaManager(
+        Seq(topicName),
+        disklessRemoteStorageConsolidationEnabled = true,
+        consolidatingDisklessTopics = Set(topicName),
+        mockReplicaFetcherManager = Some(mockFetcherManager),
+        defaultLogConfig = Some(LogTestUtils.createLogConfig(remoteLogStorageEnable = true)),
+        initDisklessLogManager = Some(mock(classOf[InitDisklessLogManager])),
+      ))
+      try {
+        val pendingImage = applyPendingSwitchDelta(replicaManager, topicName, topicId, tp, brokerId, otherReplica,
+          localLeo = sealOffset)
+        val sealImage = commitSealDelta(replicaManager, pendingImage, topicId, tp, brokerId, sealOffset)
+        val log = replicaManager.localLogOrException(tp)
+        log.updateHighestOffsetInRemoteStorage(sealOffset - 2)
+
+        commitClassicPrefixFlagDelta(replicaManager, sealImage, topicId, tp, leaderId = brokerId)
+
+        assertTrue(replicaManager.getPartition(tp).isInstanceOf[HostedPartition.Online[Partition]])
+        assertTrue(log.localLogStartOffset < sealOffset, "The uncovered tail of the prefix stays local")
+        assertTrue(replicaManager.isClassicPrefixDeletionDeferred(tp))
+        assertEquals(sealOffset, log.activeSegment().baseOffset(),
+          "The roll keeps later appends out of the segments that hold the prefix")
+
+        replicaManager.retryDeferredClassicPrefixDeletions()
+        assertTrue(replicaManager.isClassicPrefixDeletionDeferred(tp))
+
+        log.updateHighestOffsetInRemoteStorage(sealOffset - 1)
+        replicaManager.retryDeferredClassicPrefixDeletions()
+
+        assertEquals(sealOffset, log.localLogStartOffset)
+        assertEquals(0L, log.logStartOffset)
+        assertFalse(replicaManager.isClassicPrefixDeletionDeferred(tp))
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
+    } finally {
+      consolidationCtor.close()
+    }
+  }
+
+  // The classic fetcher thread deletes the prefix when it evicts a partition. If it took
+  // replicaStateChangeLock through markPartitionOffline, it would deadlock with applyDelta, which
+  // holds that lock while it shuts down idle fetcher threads.
+  @ParameterizedTest
+  @ValueSource(booleans = Array(true, false))
+  def testDropLocalClassicPrefixReportsStorageErrorWithoutTakingPartitionOffline(rawIoError: Boolean): Unit = {
+    val logDirFailureChannel = new LogDirFailureChannel(2)
+    val replicaManager = spy(createReplicaManager(List(disklessTopicPartition.topic()),
+      logDirFailureChannel = Some(logDirFailureChannel)))
+    try {
+      val tp = disklessTopicPartition.topicPartition()
+      val seal = 100L
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(seal)
+      when(replicaManager.inklessMetadataView().isClassicPrefixInRemoteStorage(tp)).thenReturn(true)
+      val logDir = "/failed-log-dir"
+      val mockLog = mock(classOf[UnifiedLog])
+      when(mockLog.localLogStartOffset).thenReturn(0L)
+      when(mockLog.logEndOffset).thenReturn(200L)
+      when(mockLog.remoteLogEnabled()).thenReturn(true)
+      when(mockLog.config).thenReturn(LogTestUtils.createLogConfig(remoteLogStorageEnable = true))
+      when(mockLog.parentDir).thenReturn(logDir)
+      val error = if (rawIoError) new IOException("disk failure") else new KafkaStorageException("disk failure")
+      when(mockLog.forceDeleteLocalSegmentsBelow(seal)).thenThrow(error)
+      val mockPartition = mock(classOf[Partition])
+      when(mockPartition.topicPartition).thenReturn(tp)
+      when(mockPartition.log).thenReturn(Some(mockLog))
+      doReturn(Some(mockPartition)).when(replicaManager).onlinePartition(tp)
+
+      replicaManager.maybeDropLocalClassicPrefix(Set(tp))
+
+      verify(replicaManager, never()).markPartitionOffline(any())
+      // UnifiedLog reports the log directory itself before it throws KafkaStorageException.
+      assertEquals(rawIoError, logDirFailureChannel.hasOfflineLogDir(logDir))
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testSwitchedConsolidatingFollowerAtSealHandsOffToConsolidationOnClassicPrefixFlagCommit(): Unit = {
+    val topicName = "switched-consolidating-topic"
+    val topicId = Uuid.randomUuid()
+    val tp = new TopicPartition(topicName, 0)
+    val followerId = 1
+    val leaderId = 2
+    val sealOffset = 10L
+
+    val mockFetcherManager = mock(classOf[ReplicaFetcherManager])
+    when(mockFetcherManager.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    val ctorInit: MockedConstruction.MockInitializer[ConsolidationFetcherManager] = {
+      case (mockCfm, _) =>
+        when(mockCfm.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    }
+    val consolidationCtor = mockConstruction(classOf[ConsolidationFetcherManager], ctorInit)
+    try {
+      val replicaManager = createReplicaManager(
+        Seq(topicName),
+        disklessRemoteStorageConsolidationEnabled = true,
+        consolidatingDisklessTopics = Set(topicName),
+        mockReplicaFetcherManager = Some(mockFetcherManager),
+        defaultLogConfig = Some(LogTestUtils.createLogConfig(remoteLogStorageEnable = true)),
+      )
+      try {
+        val mockCfm = consolidationCtor.constructed().get(0)
+        val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+        populateLocalLogAtLeoAndCheckpointedHwm(replicaManager, tp, log, leo = sealOffset, hw = sealOffset)
+
+        // Phase 1: the follower is at the seal and in the ISR, but the classic prefix isn't in remote
+        // storage yet.
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(sealOffset)
+        when(replicaManager.inklessMetadataView().isSwitchedPhaseOne(tp)).thenReturn(true)
+        val sealDelta = new TopicsDelta(TopicsImage.EMPTY)
+        sealDelta.replay(new TopicRecord().setName(topicName).setTopicId(topicId))
+        val sealRecord = new PartitionRecord()
+          .setPartitionId(tp.partition)
+          .setTopicId(topicId)
+          .setReplicas(util.Arrays.asList(followerId, leaderId))
+          .setIsr(util.Arrays.asList(followerId, leaderId))
+          .setLeader(leaderId)
+          .setLeaderEpoch(0)
+          .setPartitionEpoch(0)
+        sealRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicToDisklessStartOffset(sealOffset))
+        sealDelta.replay(sealRecord)
+        val sealImage = imageFromTopics(sealDelta.apply())
+        replicaManager.applyDelta(sealDelta, sealImage)
+
+        // Nothing consolidates in phase 1, so the follower behaves like a switched partition that
+        // doesn't consolidate: it's at the seal and in the ISR, so it needs no fetcher at all.
+        verify(mockFetcherManager, never()).removeFetcherForPartitions(Set(tp))
+        verify(mockCfm, never()).addFetcherForPartitions(any())
+        assertEquals(0L, log.localLogStartOffset)
+
+        clearInvocations(mockFetcherManager)
+        log.updateHighestOffsetInRemoteStorage(sealOffset - 1)
+        commitClassicPrefixFlagDelta(replicaManager, sealImage, topicId, tp, leaderId)
+
+        // Phase 2: the follower drops its local prefix, leaves the classic fetcher, and consolidates
+        // from the seal.
+        assertEquals(sealOffset, log.localLogStartOffset)
+        assertEquals(0L, log.logStartOffset)
+        verify(mockFetcherManager).removeFetcherForPartitions(Set(tp))
+        verify(mockCfm).addFetcherForPartitions(
+          Map(tp -> InitialFetchState(
+            topicId = Some(topicId),
+            leader = new BrokerEndPoint(-1, "diskless", -1),
+            currentLeaderEpoch = 1,
+            initOffset = sealOffset
+          ))
+        )
       } finally {
         replicaManager.shutdown(checkpointHW = false)
       }
@@ -9033,7 +9524,9 @@ class ReplicaManagerInklessTest {
     initDisklessLogManager: Option[InitDisklessLogManager] = None,
     delayedFetchPurgatory: Option[DelayedOperationPurgatory[DelayedFetch]] = None,
     defaultLogConfig: Option[LogConfig] = None,
-    crossTierLogStartCache: Option[CrossTierLogStartCache] = None
+    crossTierLogStartCache: Option[CrossTierLogStartCache] = None,
+    logDirFailureChannel: Option[LogDirFailureChannel] = None,
+    remoteLogManager: Option[RemoteLogManager] = None
   ): ReplicaManager = {
     val props = TestUtils.createBrokerConfig(1, logDirCount = 2)
     if (disklessManagedReplicasEnabled || disklessRemoteStorageConsolidationEnabled) {
@@ -9083,8 +9576,6 @@ class ReplicaManagerInklessTest {
     }
     when(sharedState.metadata()).thenReturn(inklessMetadata)
 
-    val logDirFailureChannel = new LogDirFailureChannel(config.logDirs.size)
-
     new ReplicaManager(
       metrics = metrics,
       config = config,
@@ -9093,8 +9584,9 @@ class ReplicaManagerInklessTest {
       logManager = mockLogMgr,
       quotaManagers = quotaManager,
       metadataCache = new KRaftMetadataCache(config.brokerId, () => KRaftVersion.KRAFT_VERSION_0),
-      logDirFailureChannel = logDirFailureChannel,
+      logDirFailureChannel = logDirFailureChannel.getOrElse(new LogDirFailureChannel(config.logDirs.size)),
       alterPartitionManager = alterPartitionManager,
+      remoteLogManager = remoteLogManager,
       inklessSharedState = if (inklessSharedStateEnabled) Some(sharedState) else None,
       inklessMetadataView = Some(inklessMetadata),
       initDisklessLogManager = initDisklessLogManager,
@@ -9690,12 +10182,14 @@ class ReplicaManagerInklessTest {
         consolidatingDisklessTopics = Set(topicName),
         mockReplicaFetcherManager = Some(mockFetcherManager),
         defaultLogConfig = Some(LogTestUtils.createLogConfig(remoteLogStorageEnable = true)),
+        initDisklessLogManager = Some(mock(classOf[InitDisklessLogManager])),
       ))
       try {
         val pendingImage = applyPendingSwitchDelta(replicaManager, topicName, topicId, tp, brokerId, otherReplica, localLeo)
         assertTrue(replicaManager.localLogOrException(tp).remoteLogEnabled(),
           "Test log must have remote storage enabled for the recovery branch to fire")
-        commitSealDelta(replicaManager, pendingImage, topicId, tp, brokerId, sealOffset)
+        commitSealDelta(replicaManager, pendingImage, topicId, tp, brokerId, sealOffset,
+          classicPrefixInRemoteStorage = true)
 
         // The leader is below the committed seal, but the classic prefix is recoverable from the
         // remote tier, so the partition stays online for the ConsolidationReconciler to rebuild.
@@ -9757,6 +10251,7 @@ class ReplicaManagerInklessTest {
         consolidatingDisklessTopics = Set(topicName),
         mockReplicaFetcherManager = Some(mockFetcherManager),
         defaultLogConfig = Some(LogTestUtils.createLogConfig(remoteLogStorageEnable = false)),
+        initDisklessLogManager = Some(mock(classOf[InitDisklessLogManager])),
       ))
       try {
         val pendingImage = applyPendingSwitchDelta(replicaManager, topicName, topicId, tp, brokerId, otherReplica, localLeo)
@@ -9822,19 +10317,47 @@ class ReplicaManagerInklessTest {
    */
   private def commitSealDelta(
       replicaManager: ReplicaManager, pendingImage: MetadataImage,
-      topicId: Uuid, tp: TopicPartition, brokerId: Int, sealOffset: Long): Unit = {
+      topicId: Uuid, tp: TopicPartition, brokerId: Int, sealOffset: Long,
+      classicPrefixInRemoteStorage: Boolean = false): MetadataImage = {
     when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(sealOffset)
+    when(replicaManager.inklessMetadataView().isSwitchedPhaseOne(tp)).thenReturn(!classicPrefixInRemoteStorage)
+    when(replicaManager.inklessMetadataView().isClassicPrefixInRemoteStorage(tp)).thenReturn(classicPrefixInRemoteStorage)
     val sealDelta = new TopicsDelta(pendingImage.topics())
     val sealRecord = new PartitionChangeRecord()
       .setTopicId(topicId)
       .setPartitionId(tp.partition)
     sealRecord.unknownTaggedFields().add(
       InitDisklessLogFields.encodeClassicToDisklessStartOffset(sealOffset))
+    if (classicPrefixInRemoteStorage)
+      sealRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicPrefixInRemoteStorage())
     sealDelta.replay(sealRecord)
 
     val localChanges = sealDelta.localChanges(brokerId)
     assertTrue(localChanges.leaders.containsKey(tp))
-    replicaManager.applyDelta(sealDelta, imageFromTopics(sealDelta.apply()))
+    val sealImage = imageFromTopics(sealDelta.apply())
+    replicaManager.applyDelta(sealDelta, sealImage)
+    sealImage
+  }
+
+  /**
+   * Commits classicPrefixInRemoteStorage via a partition-change delta. Like the controller, it sets the
+   * leader field, so the commit bumps the leader epoch.
+   */
+  private def commitClassicPrefixFlagDelta(
+      replicaManager: ReplicaManager, sealImage: MetadataImage,
+      topicId: Uuid, tp: TopicPartition, leaderId: Int): MetadataImage = {
+    when(replicaManager.inklessMetadataView().isSwitchedPhaseOne(tp)).thenReturn(false)
+    when(replicaManager.inklessMetadataView().isClassicPrefixInRemoteStorage(tp)).thenReturn(true)
+    val flagDelta = new TopicsDelta(sealImage.topics())
+    val flagRecord = new PartitionChangeRecord()
+      .setTopicId(topicId)
+      .setPartitionId(tp.partition)
+      .setLeader(leaderId)
+    flagRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicPrefixInRemoteStorage())
+    flagDelta.replay(flagRecord)
+    val flagImage = imageFromTopics(flagDelta.apply())
+    replicaManager.applyDelta(flagDelta, flagImage)
+    flagImage
   }
 
   @Test
@@ -10037,15 +10560,17 @@ class ReplicaManagerInklessTest {
   }
 
   @Test
-  def testConsolidatingSwitchSealsRegistersThenStartsConsolidationOnSealCommit(): Unit = {
-    // Drives a consolidating classic-to-diskless switch on the *leader* across three deltas:
+  def testConsolidatingSwitchSealsRegistersThenStartsConsolidationOnClassicPrefixFlagCommit(): Unit = {
+    // Drives a consolidating classic-to-diskless switch on the *leader* across four deltas:
     //   delta 1: bring the partition online so delta 2 sees an existing online partition.
     //   delta 2: pending switch (epoch bumped) on an already-consolidating topic must seal+register,
     //     NOT take the consolidating become-leader branch (which would skip the seal and strand the
     //     switch in CLASSIC_TO_DISKLESS_SWITCH_PENDING). No consolidation fetcher starts yet.
     //   delta 3: seal commit (no leader field, so leader epoch unchanged but partition epoch bumped)
-    //     re-enters applyLocalLeadersDelta via localChanges.leaders and, no longer pending, takes
-    //     the consolidating become-leader branch to start the fetcher from the local LEO (== seal).
+    //     re-enters applyLocalLeadersDelta via localChanges.leaders. The classic prefix isn't in
+    //     remote storage yet (phase 1), so no consolidation fetcher starts.
+    //   delta 4: the classicPrefixInRemoteStorage commit takes the consolidating become-leader
+    //     branch to start the fetcher from the local LEO (== seal).
     val topicName = disklessTopicPartition.topic()
     val topicId = disklessTopicPartition.topicId
     val tp = disklessTopicPartition.topicPartition()
@@ -10127,6 +10652,7 @@ class ReplicaManagerInklessTest {
         // --- delta 3: seal commit (PENDING -> committed seal), no leader-epoch bump ---
         clearInvocations(mockCfm)
         when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(sealOffset)
+        when(replicaManager.inklessMetadataView().isSwitchedPhaseOne(tp)).thenReturn(true)
         val sealDelta = new TopicsDelta(pendingImage.topics())
         val sealRecord = new PartitionChangeRecord()
           .setTopicId(topicId)
@@ -10138,15 +10664,34 @@ class ReplicaManagerInklessTest {
         // led partition still re-enters applyLocalLeadersDelta through localChanges.leaders.
         assertTrue(sealDelta.localChanges(brokerId).leaders.containsKey(tp),
           "Seal commit should re-enter applyLocalLeadersDelta via the partition-epoch bump")
-        replicaManager.applyDelta(sealDelta, imageFromTopics(sealDelta.apply()))
+        val sealImage = imageFromTopics(sealDelta.apply())
+        replicaManager.applyDelta(sealDelta, sealImage)
+
+        // The classic prefix isn't in remote storage yet, so no consolidation fetcher starts.
+        verify(mockCfm, never()).addFetcherForPartitions(any())
+
+        // --- delta 4: the controller records that the classic prefix is in remote storage ---
+        when(replicaManager.inklessMetadataView().isSwitchedPhaseOne(tp)).thenReturn(false)
+        when(replicaManager.inklessMetadataView().isClassicPrefixInRemoteStorage(tp)).thenReturn(true)
+        val flagDelta = new TopicsDelta(sealImage.topics())
+        // Like the controller, set the leader field so the flag commit bumps the leader epoch.
+        val flagRecord = new PartitionChangeRecord()
+          .setTopicId(topicId)
+          .setPartitionId(0)
+          .setLeader(brokerId)
+        flagRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicPrefixInRemoteStorage())
+        flagDelta.replay(flagRecord)
+        assertTrue(flagDelta.localChanges(brokerId).leaders.containsKey(tp),
+          "Flag commit should re-enter applyLocalLeadersDelta via the leader-epoch bump")
+        replicaManager.applyDelta(flagDelta, imageFromTopics(flagDelta.apply()))
 
         // Consolidation now starts from the local LEO (== seal) via the consolidating become-leader
-        // branch, because the partition is no longer pending.
+        // branch.
         verify(mockCfm).addFetcherForPartitions(
           Map(tp -> InitialFetchState(
             topicId = Some(topicId),
             leader = new BrokerEndPoint(-1, "diskless", -1),
-            currentLeaderEpoch = leaderEpochAfterSeal,
+            currentLeaderEpoch = leaderEpochAfterSeal + 1,
             initOffset = sealOffset
           ))
         )
