@@ -39,6 +39,9 @@ public class ConsolidatedDisklessLogPrunerMetrics implements Closeable {
     static final String CONSOLIDATION_PRUNE_TOTAL_BYTES_DELETED = "ConsolidationPruneTotalBytesDeleted";
     private static final String CONSOLIDATION_PRUNE_TOTAL_BYTES_DELETED_DOC =
         "Total number of bytes deleted by consolidation prune";
+    static final String CONSOLIDATION_PRUNE_ERROR_RATE = "ConsolidationPruneErrorRate";
+    private static final String CONSOLIDATION_PRUNE_ERROR_RATE_DOC =
+        "Total number of consolidation prune errors";
 
     public static List<MetricNameTemplate> all() {
         return List.of(
@@ -56,6 +59,11 @@ public class ConsolidatedDisklessLogPrunerMetrics implements Closeable {
                 CONSOLIDATION_PRUNE_TOTAL_BYTES_DELETED,
                 GROUP,
                 CONSOLIDATION_PRUNE_TOTAL_BYTES_DELETED_DOC
+            ),
+            new MetricNameTemplate(
+                CONSOLIDATION_PRUNE_ERROR_RATE,
+                GROUP,
+                CONSOLIDATION_PRUNE_ERROR_RATE_DOC
             )
         );
     }
@@ -65,6 +73,7 @@ public class ConsolidatedDisklessLogPrunerMetrics implements Closeable {
     private final Histogram consolidationPruneTotalTime;
     private final LongAdder consolidationPruneTotalBatchesDeleted = new LongAdder();
     private final LongAdder consolidationPruneTotalBytesDeleted = new LongAdder();
+    private final LongAdder consolidationPruneErrorRate = new LongAdder();
 
     public ConsolidatedDisklessLogPrunerMetrics() {
         consolidationPruneTotalTime = metricsGroup.newHistogram(CONSOLIDATION_PRUNE_TOTAL_TIME, true, Map.of());
@@ -76,6 +85,10 @@ public class ConsolidatedDisklessLogPrunerMetrics implements Closeable {
             CONSOLIDATION_PRUNE_TOTAL_BYTES_DELETED,
             consolidationPruneTotalBytesDeleted::sum
         );
+        metricsGroup.newGauge(
+            CONSOLIDATION_PRUNE_ERROR_RATE,
+            consolidationPruneErrorRate::sum
+        );
     }
 
     public void recordConsolidationPruneFinishedSuccessfully(final long durationMs,
@@ -86,10 +99,15 @@ public class ConsolidatedDisklessLogPrunerMetrics implements Closeable {
         consolidationPruneTotalBytesDeleted.add(totalBytesDeleted);
     }
 
+    public void recordConsolidationPruneFinishedWithError() {
+        consolidationPruneErrorRate.increment();
+    }
+
     @Override
     public void close() {
         metricsGroup.removeMetric(CONSOLIDATION_PRUNE_TOTAL_TIME);
         metricsGroup.removeMetric(CONSOLIDATION_PRUNE_TOTAL_BATCHES_DELETED);
         metricsGroup.removeMetric(CONSOLIDATION_PRUNE_TOTAL_BYTES_DELETED);
+        metricsGroup.removeMetric(CONSOLIDATION_PRUNE_ERROR_RATE);
     }
 }

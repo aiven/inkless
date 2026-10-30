@@ -19,7 +19,7 @@
 package io.aiven.inkless.consolidation
 
 import io.aiven.inkless.TimeUtils
-import io.aiven.inkless.control_plane.{ControlPlane, PruneDisklessLogsError, PruneDisklessLogsRequest}
+import io.aiven.inkless.control_plane.{ControlPlane, ControlPlaneUnavailableException, PruneDisklessLogsError, PruneDisklessLogsRequest}
 import io.aiven.inkless.delete.ConsolidatedDisklessLogPrunerMetrics
 import kafka.cluster.Partition
 import kafka.server.ReplicaManager
@@ -39,6 +39,19 @@ class ConsolidatedDisklessLogPruner(replicaManager: ReplicaManager,
                                     metrics: ConsolidatedDisklessLogPrunerMetrics) extends Runnable with Logging {
 
   override def run(): Unit = {
+    try {
+      prune()
+    } catch {
+      case e: ControlPlaneUnavailableException =>
+        // `ReplicaManager.runIfControlPlaneAvailable` catches this exception and skips the tick.
+        throw e
+      case e: Exception =>
+        metrics.recordConsolidationPruneFinishedWithError()
+        throw e
+    }
+  }
+
+  private def prune(): Unit = {
     val start = TimeUtils.durationMeasurementNow(Time.SYSTEM)
     // Read the classic-to-diskless start offset once per partition and thread it through, so the
     // eligibility check and the per-partition prune decision always see the same value (no TOCTOU

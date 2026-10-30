@@ -307,6 +307,7 @@ io.aiven.inkless.delete:type=ConsolidatedDisklessLogPruner
 ======================================  =============================================================
 Attribute name                          Description                                                  
 ======================================  =============================================================
+ConsolidationPruneErrorRate             Total number of consolidation prune errors                   
 ConsolidationPruneTotalBatchesDeleted   Total number of batches deleted by consolidation prune       
 ConsolidationPruneTotalBytesDeleted     Total number of bytes deleted by consolidation prune         
 ConsolidationPruneTotalTime             Total time spent on a consolidation prune run in milliseconds

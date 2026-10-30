@@ -170,6 +170,7 @@ class ConsolidatedDisklessLogPrunerTest {
     pruner.run()
 
     verify(metrics, times(2)).recordConsolidationPruneFinishedSuccessfully(anyLong(), anyLong(), anyLong())
+    verify(metrics, never()).recordConsolidationPruneFinishedWithError()
     assertEquals(Seq((5L, 70L), (5L, 70L)), recordedTotals)
   }
 
@@ -196,6 +197,7 @@ class ConsolidatedDisklessLogPrunerTest {
     assertTrue(recordedMetrics.exists { case (duration, batches, bytes) =>
       duration >= 0 && batches == 0L && bytes == 0L
     })
+    verify(metrics, never()).recordConsolidationPruneFinishedWithError()
   }
 
   @Test
@@ -226,6 +228,7 @@ class ConsolidatedDisklessLogPrunerTest {
 
     verify(partition).maybeAdvanceConsolidationPruneFloor(88L)
     verify(metrics, never()).recordConsolidationPruneFinishedSuccessfully(anyLong(), anyLong(), anyLong())
+    verify(metrics).recordConsolidationPruneFinishedWithError()
   }
 
   @Test
@@ -249,6 +252,7 @@ class ConsolidatedDisklessLogPrunerTest {
     verify(partition, never()).maybeAdvanceConsolidationPruneFloor(anyLong())
     verify(secondPartition, never()).maybeAdvanceConsolidationPruneFloor(anyLong())
     verify(metrics, never()).recordConsolidationPruneFinishedSuccessfully(anyLong(), anyLong(), anyLong())
+    verify(metrics).recordConsolidationPruneFinishedWithError()
   }
 
   @Test
@@ -436,11 +440,15 @@ class ConsolidatedDisklessLogPrunerTest {
 
     when(view.getConsolidatingDisklessTopicPartitions).thenReturn(util.Set.of(tip))
     val partition = readyPartition(10L, Some(10L))
+    val metrics = mock(classOf[ConsolidatedDisklessLogPrunerMetrics])
     when(rm.getPartitionOrError(topicPartition)).thenReturn(Right(partition))
     when(cp.pruneDisklessLogs(any(), anyInt()))
       .thenThrow(new ControlPlaneUnavailableException("No diskless control plane is configured"))
 
-    // the caller (ReplicaManager.runIfControlPlaneAvailable) is the one place that turns this into a quiet skip.
-    assertThrows(classOf[ControlPlaneUnavailableException], () => newPruner(rm, view, cp).run())
+    // The caller (ReplicaManager.runIfControlPlaneAvailable) is the one place that turns this into a quiet skip.
+    assertThrows(classOf[ControlPlaneUnavailableException], () => newPruner(rm, view, cp, metrics = metrics).run())
+
+    verify(metrics, never()).recordConsolidationPruneFinishedWithError()
+    verify(metrics, never()).recordConsolidationPruneFinishedSuccessfully(anyLong(), anyLong(), anyLong())
   }
 }

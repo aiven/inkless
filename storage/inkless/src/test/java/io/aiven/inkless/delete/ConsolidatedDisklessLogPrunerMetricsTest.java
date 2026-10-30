@@ -28,6 +28,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.Map;
 
+import static io.aiven.inkless.delete.ConsolidatedDisklessLogPrunerMetrics.CONSOLIDATION_PRUNE_ERROR_RATE;
 import static io.aiven.inkless.delete.ConsolidatedDisklessLogPrunerMetrics.CONSOLIDATION_PRUNE_TOTAL_BATCHES_DELETED;
 import static io.aiven.inkless.delete.ConsolidatedDisklessLogPrunerMetrics.CONSOLIDATION_PRUNE_TOTAL_BYTES_DELETED;
 import static io.aiven.inkless.delete.ConsolidatedDisklessLogPrunerMetrics.CONSOLIDATION_PRUNE_TOTAL_TIME;
@@ -47,6 +48,23 @@ class ConsolidatedDisklessLogPrunerMetricsTest {
             final Histogram totalTime = (Histogram) registered(CONSOLIDATION_PRUNE_TOTAL_TIME);
             assertThat(totalTime.count()).isEqualTo(2L);
             assertThat(totalTime.max()).isEqualTo(30.0);
+            assertThat(gaugeValue(CONSOLIDATION_PRUNE_ERROR_RATE)).isEqualTo(0L);
+        } finally {
+            metrics.close();
+        }
+    }
+
+    @Test
+    void countsEachFailedRun() {
+        final ConsolidatedDisklessLogPrunerMetrics metrics = new ConsolidatedDisklessLogPrunerMetrics();
+        try {
+            metrics.recordConsolidationPruneFinishedWithError();
+            metrics.recordConsolidationPruneFinishedWithError();
+
+            assertThat(gaugeValue(CONSOLIDATION_PRUNE_ERROR_RATE)).isEqualTo(2L);
+            assertThat(gaugeValue(CONSOLIDATION_PRUNE_TOTAL_BATCHES_DELETED)).isEqualTo(0L);
+            assertThat(gaugeValue(CONSOLIDATION_PRUNE_TOTAL_BYTES_DELETED)).isEqualTo(0L);
+            assertThat(((Histogram) registered(CONSOLIDATION_PRUNE_TOTAL_TIME)).count()).isEqualTo(0L);
         } finally {
             metrics.close();
         }
@@ -62,6 +80,7 @@ class ConsolidatedDisklessLogPrunerMetricsTest {
         assertThat(registered(CONSOLIDATION_PRUNE_TOTAL_TIME)).isNull();
         assertThat(registered(CONSOLIDATION_PRUNE_TOTAL_BATCHES_DELETED)).isNull();
         assertThat(registered(CONSOLIDATION_PRUNE_TOTAL_BYTES_DELETED)).isNull();
+        assertThat(registered(CONSOLIDATION_PRUNE_ERROR_RATE)).isNull();
     }
 
     private static Metric registered(final String name) {
