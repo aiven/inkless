@@ -499,7 +499,7 @@ class ControllerApis(
         .filter(t =>
           t.configs().stream()
             .filter(c => c.name() == TopicConfig.DISKLESS_ENABLE_CONFIG)
-            .filter(c => c.value() == "true")
+            .filter(c => java.lang.Boolean.parseBoolean(c.value()))
             .findAny()
             .isPresent
         )
