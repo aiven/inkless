@@ -215,6 +215,12 @@ When you do write a comment or a Javadoc/Scaladoc sentence:
 - Keep the first sentence able to stand alone; some generators take only that
   sentence as the summary.
 
+### Imports
+
+Import a class instead of writing its fully qualified name in code. Use a
+qualified name only to resolve a name clash, or where the surrounding file
+already does.
+
 ### Prose linting
 
 Vale checks the Style section mechanically on added prose in Markdown files and
