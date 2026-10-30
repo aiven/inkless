@@ -21,11 +21,13 @@ import kafka.log.LogManager
 import kafka.server.QuotaFactory.UNBOUNDED_QUOTA
 import kafka.server.ReplicaAlterLogDirsThread.ReassignmentState
 import kafka.utils.TestUtils
+import org.apache.kafka.common.compress.Compression
 import org.apache.kafka.common.errors.KafkaStorageException
+import org.apache.kafka.common.message.FetchResponseData
 import org.apache.kafka.common.message.OffsetForLeaderEpochRequestData.OffsetForLeaderPartition
 import org.apache.kafka.common.message.OffsetForLeaderEpochResponseData.EpochEndOffset
 import org.apache.kafka.common.protocol.Errors
-import org.apache.kafka.common.record.internal.MemoryRecords
+import org.apache.kafka.common.record.internal.{MemoryRecords, SimpleRecord}
 import org.apache.kafka.common.requests.FetchRequest
 import org.apache.kafka.common.{TopicIdPartition, TopicPartition, Uuid}
 import org.apache.kafka.metadata.KRaftMetadataCache
@@ -37,6 +39,8 @@ import org.apache.kafka.storage.internals.log.UnifiedLog
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 import org.mockito.ArgumentMatchers.{any, anyBoolean}
 import org.mockito.Mockito.{doNothing, mock, never, times, verify, verifyNoInteractions, verifyNoMoreInteractions, when}
 import org.mockito.{ArgumentCaptor, ArgumentMatchers, Mockito}
@@ -187,8 +191,9 @@ class ReplicaAlterLogDirsThreadTest {
     assertEquals(0, thread.partitionCount)
   }
 
-  @Test
-  def shouldReplaceCurrentLogDirWhenCaughtUp(): Unit = {
+  @ParameterizedTest
+  @ValueSource(booleans = Array(false, true))
+  def shouldReplaceCurrentLogDirWhenCaughtUp(delayPromotion: Boolean): Unit = {
     val brokerId = 1
     val partitionId = 0
     val config = KafkaConfig.fromProps(TestUtils.createBrokerConfig(brokerId))
@@ -220,6 +225,7 @@ class ReplicaAlterLogDirsThreadTest {
     doNothing().when(partition).truncateTo(offset = 0, isFuture = true)
     when(partition.maybeReplaceCurrentWithFutureReplica()).thenReturn(true)
     when(partition.logDirectoryId()).thenReturn(Some(Uuid.fromString("PGLOjDjKQaCOXFOtxymIig")))
+    when(replicaManager.shouldDelayFutureReplicaPromotion(partition)).thenReturn(delayPromotion)
 
     when(futureLog.logStartOffset).thenReturn(0L)
     when(futureLog.logEndOffset).thenReturn(0L)
@@ -256,8 +262,42 @@ class ReplicaAlterLogDirsThreadTest {
 
     thread.doWork()
 
-    assertEquals(None, thread.fetchState(t1p0))
-    assertEquals(0, thread.partitionCount)
+    if (delayPromotion) {
+      // A switched partition's future log still holds local classic prefix records.
+      verify(partition, never()).maybeReplaceCurrentWithFutureReplica()
+      assertTrue(thread.fetchState(t1p0).isDefined)
+      assertEquals(1, thread.partitionCount)
+    } else {
+      assertEquals(None, thread.fetchState(t1p0))
+      assertEquals(0, thread.partitionCount)
+    }
+  }
+
+  // Promotion can delete the whole classic prefix of the future log only if the first record at the
+  // seal starts a new segment.
+  @Test
+  def shouldRollFutureLogAtSealBeforeAppending(): Unit = {
+    val config = KafkaConfig.fromProps(TestUtils.createBrokerConfig(1))
+    val partition = mock(classOf[Partition])
+    val replicaManager = mock(classOf[ReplicaManager])
+    val quotaManager = mock(classOf[ReplicationQuotaManager])
+    val futureLog = mock(classOf[UnifiedLog])
+    val seal = 10L
+    val leaderEpoch = 5
+    when(replicaManager.getPartitionOrException(t1p0)).thenReturn(partition)
+    when(partition.futureLocalLogOrException).thenReturn(futureLog)
+    when(futureLog.logEndOffset).thenReturn(seal)
+    val records = MemoryRecords.withRecords(seal, Compression.NONE, new SimpleRecord("diskless".getBytes))
+
+    val leader = new LocalLeaderEndPoint(new BrokerEndPoint(0, "localhost", 1000), config, replicaManager, quotaManager)
+    val thread = new ReplicaAlterLogDirsThread("alter-logs-dirs-thread", leader, failedPartitions, replicaManager,
+      quotaManager, new BrokerTopicStats, config.replicaFetchBackoffMs)
+    thread.processPartitionData(t1p0, seal, leaderEpoch,
+      new FetchResponseData.PartitionData().setHighWatermark(seal + 1).setRecords(records))
+
+    val inOrder = Mockito.inOrder(replicaManager, partition)
+    inOrder.verify(replicaManager).maybeRollFutureLogAtSeal(partition, seal)
+    inOrder.verify(partition).appendRecordsToFollowerOrFutureReplica(records, isFuture = true, leaderEpoch)
   }
 
   private def updateReassignmentState(thread: ReplicaAlterLogDirsThread, partitionId:Int, newState: ReassignmentState) = {

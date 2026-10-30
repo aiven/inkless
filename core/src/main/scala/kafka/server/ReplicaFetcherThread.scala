@@ -233,6 +233,7 @@ class ReplicaFetcherThread(name: String,
       info(s"Evicting partitions from this replica fetcher because they have completed the " +
         s"classic-to-diskless switch and the local log has caught up to the seal offset: $toEvict")
       replicaMgr.replicaFetcherManager.removeFetcherForPartitions(toEvict)
+      replicaMgr.maybeDropLocalClassicPrefix(toEvict)
       replicaMgr.startConsolidationFetchersForCaughtUpClassicPartitions(toEvict)
     }
   }

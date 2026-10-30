@@ -49,7 +49,7 @@ import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.{CsvSource, ValueSource}
 import org.mockito.ArgumentCaptor
 import org.mockito.ArgumentMatchers.{any, anyBoolean, anyLong}
-import org.mockito.Mockito.{mock, times, verify, when}
+import org.mockito.Mockito.{inOrder, mock, times, verify, when}
 
 import java.lang.{Long => JLong}
 import java.nio.charset.StandardCharsets
@@ -951,9 +951,13 @@ class ReplicaFetcherThreadTest {
 
     if (expectEviction) {
       verify(replicaFetcherManager, times(1)).removeFetcherForPartitions(Set(t1p0))
-      verify(replicaManager, times(1)).startConsolidationFetchersForCaughtUpClassicPartitions(Set(t1p0))
+      // The prefix goes before consolidation can append next to it.
+      val handOff = inOrder(replicaManager)
+      handOff.verify(replicaManager).maybeDropLocalClassicPrefix(Set(t1p0))
+      handOff.verify(replicaManager).startConsolidationFetchersForCaughtUpClassicPartitions(Set(t1p0))
     } else {
       verify(replicaFetcherManager, times(0)).removeFetcherForPartitions(any())
+      verify(replicaManager, times(0)).maybeDropLocalClassicPrefix(any[collection.Set[TopicPartition]]())
       verify(replicaManager, times(0)).startConsolidationFetchersForCaughtUpClassicPartitions(any())
     }
     assertEquals(mutable.Buffer.empty, thread.partitionsToEvictAfterDisklessSwitch)
