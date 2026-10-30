@@ -530,11 +530,16 @@ class ControllerApis(
       // existing topic is read from the metadata image instead.
       val existingTopicRequests = response.topics.asScala
         .filter(t => t.errorCode() == Errors.TOPIC_ALREADY_EXISTS.code())
-        .filter(t => inklessMetadataView.isDisklessTopic(t.name()))
         .flatMap { t =>
-          Option(metadataCache.currentImage().topics().getTopic(t.name())).toSeq.flatMap { topicImage =>
-            disklessPartitionCreateRequests(topicImage.id(), t.name(), topicImage.partitions().size(),
-              t.errorCode(), Map.empty)
+          Option(metadataCache.currentImage().topics().getTopic(t.name())) match {
+            case None =>
+              warn(s"Topic ${t.name()} exists in KRaft but not in the published image; " +
+                "skipping the diskless repair for this request")
+              Seq.empty
+            case Some(topicImage) if inklessMetadataView.isDisklessTopic(t.name()) =>
+              disklessPartitionCreateRequests(topicImage.id(), t.name(), topicImage.partitions().size(),
+                t.errorCode(), Map.empty)
+            case _ => Seq.empty
           }
         }
       // A topic whose KRaft deletion failed after its control-plane deletion comes back empty here,

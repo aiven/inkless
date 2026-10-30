@@ -1497,6 +1497,27 @@ class ControllerApisTest {
   }
 
   @Test
+  def testCreateExistingTopicMissingFromImageDoesNotCallControlPlane(): Unit = {
+    val topicName = "foo"
+    val controller = mock(classOf[Controller])
+    val controlPlane = mock(classOf[ControlPlane])
+    // KRaft reports the topic, but the published image hasn't caught up with it yet.
+    when(controller.createTopics(any(), any(), any())).thenReturn(CompletableFuture.completedFuture(
+      new CreateTopicsResponseData().setTopics(new CreateTopicsResponseData.CreatableTopicResultCollection(
+        singletonList(new CreatableTopicResult().setName(topicName)
+          .setErrorCode(TOPIC_ALREADY_EXISTS.code()).setErrorMessage(s"Topic '$topicName' already exists.")).iterator()))))
+    controllerApis = createControllerApis(None, controller, inklessControlPlane = Some(controlPlane))
+    val request = new CreateTopicsRequestData().setTopics(new CreatableTopicCollection(
+      singletonList(new CreatableTopic().setName(topicName).setNumPartitions(2).setReplicationFactor(1)).iterator()))
+
+    val response = controllerApis.createTopics(ANONYMOUS_CONTEXT, request,
+      hasClusterAuth = true, _ => Set(topicName), _ => Set(topicName)).get()
+
+    assertEquals(TOPIC_ALREADY_EXISTS.code(), response.topics().find(topicName).errorCode())
+    verifyNoInteractions(controlPlane)
+  }
+
+  @Test
   def testCreateExistingClassicTopicDoesNotCallControlPlane(): Unit = {
     val controller = new MockController.Builder().newInitialTopic("foo", Uuid.randomUuid()).build()
     val controlPlane = mock(classOf[ControlPlane])
