@@ -1060,6 +1060,34 @@ class ControllerApisTest {
     verifyNoInteractions(controlPlane)
   }
 
+  @ParameterizedTest
+  @ValueSource(strings = Array("true", "True", "TRUE"))
+  def testCreateDisklessTopicsCallsControlPlaneForAnyCaseOfDisklessEnable(disklessEnable: String): Unit = {
+    val topicName = "foo"
+    val topicId = Uuid.randomUuid()
+    val controller = mock(classOf[Controller])
+    val controlPlane = mock(classOf[ControlPlane])
+    setDisklessTopicImage(topicName, topicId, 2)
+    val response = new CreateTopicsResponseData()
+    val result = new CreatableTopicResult().setName(topicName).setTopicId(topicId)
+      .setErrorCode(NONE.code()).setNumPartitions(2)
+    // The controller echoes the raw request value in the response, so the case is the client's.
+    result.setConfigs(singletonList(new CreateTopicsResponseData.CreatableTopicConfigs()
+      .setName(TopicConfig.DISKLESS_ENABLE_CONFIG).setValue(disklessEnable)))
+    response.topics().add(result)
+    when(controller.createTopics(any(), any(), any()))
+      .thenReturn(CompletableFuture.completedFuture(response))
+    controllerApis = createControllerApis(None, controller, inklessControlPlane = Some(controlPlane))
+    val request = new CreateTopicsRequestData().setTopics(new CreatableTopicCollection(
+      singletonList(new CreatableTopic().setName(topicName).setNumPartitions(2).setReplicationFactor(1)).iterator()))
+
+    controllerApis.createTopics(ANONYMOUS_CONTEXT, request,
+      hasClusterAuth = true, _ => Set(topicName), _ => Set(topicName)).get()
+
+    verify(controlPlane).createTopicAndPartitions(ArgumentMatchers.eq(singleton(
+      new CreateTopicAndPartitionsRequest(topicId, topicName, 2))))
+  }
+
   @Test
   def testDeleteClassicTopicsDoesNotCallControlPlane(): Unit = {
     val fooId = Uuid.randomUuid()
