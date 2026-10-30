@@ -17,7 +17,7 @@
 
 package kafka.server
 
-import io.aiven.inkless.control_plane.{ControlPlane, CreateTopicAndPartitionsRequest}
+import io.aiven.inkless.control_plane.{ControlPlane, ControlPlaneUnavailableException, CreateTopicAndPartitionsRequest}
 
 import java.{lang, util}
 import java.nio.ByteBuffer
@@ -370,7 +370,20 @@ class ControllerApis(
             "Topic will only be removed from KRaft metadata as no control plane is available.")
 
         if (!topicIdsToDeleteFromControlPlane.isEmpty)
-          inklessControlPlane.foreach { cp => cp.deleteTopics(topicIdsToDeleteFromControlPlane) }
+          inklessControlPlane.foreach { cp =>
+            val topics = topicIdsToDeleteFromControlPlane.asScala.map(id => s"${idToName.get(id)} ($id)")
+            info(s"Deleting diskless topics from the control plane: ${topics.mkString(", ")}")
+            try {
+              cp.deleteTopics(topicIdsToDeleteFromControlPlane)
+            } catch {
+              // Keeping these topics in KRaft metadata lets the client's retry run the diskless deletion again.
+              case e: ControlPlaneUnavailableException =>
+                val error = controlPlaneUnavailableError(e, "The topic was not deleted.")
+                topicIdsToDeleteFromControlPlane.forEach { id =>
+                  appendResponse(idToName.remove(id), id, error)
+                }
+            }
+          }
 
         // Finally, the idToName map contains all the topics that we are authorized to delete.
         // Perform the deletion and create responses for each one.
@@ -471,7 +484,8 @@ class ControllerApis(
         }
       }
 
-      createTopicsDiskless(response)
+      if (!request.validateOnly)
+        createTopicsDiskless(response)
 
       response
     }
@@ -480,6 +494,7 @@ class ControllerApis(
   private def createTopicsDiskless(response: CreateTopicsResponseData): Unit = {
     inklessControlPlane.foreach { cp =>
       val successfullyCreatedTopics = response.topics.asScala
+        .filter(t => t.errorCode() == Errors.NONE.code())
         // Include only diskless topics
         .filter(t =>
           t.configs().stream()
@@ -488,9 +503,6 @@ class ControllerApis(
             .findAny()
             .isPresent
         )
-        // It's OK if we retry creating for already existing topics,
-        // this may save some trouble when diskless creation failed for some reason and the user retries.
-        .filter(t => t.errorCode() == Errors.NONE.code() || t.errorCode() == Errors.TOPIC_ALREADY_EXISTS.code())
 
       // We need to be sure the newly created topic exist in the metadata.
       // As this is the same process, this should happen very quickly.
@@ -508,14 +520,59 @@ class ControllerApis(
         throw new UnknownServerException("Could not find newly created topic metadata")
       }
 
-      val createTopicRequests = successfullyCreatedTopics
+      val newTopicRequests = successfullyCreatedTopics
         .filter(t => inklessMetadataView.isDisklessTopic(t.name()))
         .map(t => new CreateTopicAndPartitionsRequest(t.topicId(), t.name(), t.numPartitions()))
-        .toSet.asJava
 
-      if (!createTopicRequests.isEmpty)
-        cp.createTopicAndPartitions(createTopicRequests)
+      // It's OK if we retry creating for already existing topics,
+      // this may save some trouble when diskless creation failed for some reason and the user retries.
+      // A TOPIC_ALREADY_EXISTS result carries no topic ID, partition count, or configs, so the
+      // existing topic is read from the metadata image instead.
+      val existingTopicRequests = response.topics.asScala
+        .filter(t => t.errorCode() == Errors.TOPIC_ALREADY_EXISTS.code())
+        .flatMap { t =>
+          Option(metadataCache.currentImage().topics().getTopic(t.name())) match {
+            case None =>
+              warn(s"Topic ${t.name()} exists in KRaft but not in the published image; " +
+                "skipping the diskless repair for this request")
+              Seq.empty
+            case Some(topicImage) if inklessMetadataView.isDisklessTopic(t.name()) =>
+              disklessPartitionCreateRequests(topicImage.id(), t.name(), topicImage.partitions().size(),
+                t.errorCode(), Map.empty)
+            case _ => Seq.empty
+          }
+        }
+      // A topic whose KRaft deletion failed after its control-plane deletion comes back empty here,
+      // so the topic IDs in this line are what an operator matches against the deletion log.
+      if (existingTopicRequests.nonEmpty)
+        info(s"Inserting control-plane rows for existing diskless topics: ${existingTopicRequests.mkString(", ")}")
+
+      val createTopicRequests = (newTopicRequests ++ existingTopicRequests).toSet.asJava
+
+      if (!createTopicRequests.isEmpty) {
+        try {
+          cp.createTopicAndPartitions(createTopicRequests)
+        } catch {
+          // KRaft already created these topics, so the client's retry gets TOPIC_ALREADY_EXISTS,
+          // which fills in the diskless creation.
+          case e: ControlPlaneUnavailableException =>
+            val error = controlPlaneUnavailableError(e,
+              "The topic exists in KRaft metadata; retry to finish creating it in the diskless control plane.")
+            val failedTopicNames = createTopicRequests.asScala.map(_.topicName())
+            response.topics.forEach { t =>
+              if (failedTopicNames.contains(t.name()))
+                t.setErrorCode(error.error.code).setErrorMessage(error.message)
+            }
+        }
+      }
     }
+  }
+
+  private def controlPlaneUnavailableError(e: ControlPlaneUnavailableException, outcome: String): ApiError = {
+    warn(s"Failing diskless topic operation: ${e.getMessage}")
+    // KAFKA_STORAGE_ERROR matches what brokers return for the same condition and, unlike the
+    // UNKNOWN_SERVER_ERROR the exception maps to by default, is retriable.
+    new ApiError(KAFKA_STORAGE_ERROR, s"${e.getMessage}. $outcome")
   }
 
   def handleApiVersionsRequest(request: RequestChannel.Request): CompletableFuture[Unit] = {
@@ -1033,7 +1090,20 @@ class ControllerApis(
             }
           }.toSet
           if (createPartitionRequests.nonEmpty) {
-            cp.createTopicAndPartitions(createPartitionRequests.asJava)
+            try {
+              cp.createTopicAndPartitions(createPartitionRequests.asJava)
+            } catch {
+              // KRaft already added these partitions, so the client's retry gets INVALID_PARTITIONS,
+              // which fills in the diskless rows.
+              case e: ControlPlaneUnavailableException =>
+                val error = controlPlaneUnavailableError(e,
+                  "The partitions exist in KRaft metadata; retry to finish creating them in the diskless control plane.")
+                val failedTopicNames = createPartitionRequests.map(_.topicName())
+                results.forEach { res =>
+                  if (failedTopicNames.contains(res.name()))
+                    res.setErrorCode(error.error.code).setErrorMessage(error.message)
+                }
+            }
           }
         }
     }
