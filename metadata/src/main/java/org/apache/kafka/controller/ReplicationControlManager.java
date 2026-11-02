@@ -1108,13 +1108,9 @@ public class ReplicationControlManager {
     }
 
     /**
-     * Adds {@code remote.storage.enable=true} to the config ops of a new diskless topic when consolidation
-     * is on, so that LogConfig validation checks the topic as a tiered topic. Without the flag in the
-     * validated request, a create could store a local retention larger than the topic retention, and every
-     * later AlterConfigs on the topic would fail.
-     *
-     * <p>Runs after the create-topic interceptors, which can set {@code diskless.enable}. An explicit
-     * {@code remote.storage.enable} is kept, so the later checks reject a {@code false} value.
+     * Adds {@code remote.storage.enable=true} after the create-topic interceptors and before
+     * {@code incrementalAlterConfig}. {@code putIfAbsent} keeps an explicit {@code false}, so
+     * {@code createTopic} rejects that value.
      */
     private void maybeAddRemoteStorageEnableForConsolidation(
         String topicName,
