@@ -43,13 +43,15 @@ import io.aiven.inkless.control_plane.MetadataView;
 /**
  * Transforms metadata responses for diskless topics.
  *
- * <p>For managed replicas (RF > 1), routing priority depends on remote storage config:
+ * <p>For managed replicas (RF > 1) and for tiered partitions at any RF, routing priority depends on remote storage config:
  * <ul>
  *   <li>Diskless and Tiered topic: same-AZ replica > cross-AZ replica > unavailable</li>
  *   <li>Only Diskless (remote storage disabled): same-AZ replica > same-AZ any broker > cross-AZ replica > cross-AZ any broker</li>
  * </ul>
  *
- * <p>For unmanaged replicas (RF = 1), uses legacy behavior: hash-based selection from all alive brokers.
+ * <p>A tiered partition with one replica stays on that replica, because only a replica stores the local log
+ * that serves reads. For untiered partitions with unmanaged replicas (RF = 1), uses legacy behavior:
+ * hash-based selection from all alive brokers.
  */
 public class InklessTopicMetadataTransformer implements Closeable {
     private final MetadataView metadataView;
@@ -98,16 +100,16 @@ public class InklessTopicMetadataTransformer implements Closeable {
 
             for (final var partition : topic.partitions()) {
                 final List<Integer> assignedReplicas = partition.replicaNodes();
-                final boolean isManagedReplicas = assignedReplicas.size() > 1;
+                final boolean routeToReplicas = assignedReplicas.size() > 1 || isRemoteStorageEnabled;
 
-                if (isManagedReplicas) {
+                if (routeToReplicas) {
                     transformManagedReplicasPartitionMetadata(
                         clientAZ, topic.topicId(), partition,
                         assignedReplicas, isRemoteStorageEnabled,
                         snapshot.ids(), snapshot.racks()
                     );
                 } else {
-                    // RF=1 (unmanaged): use legacy behavior
+                    // Untiered RF=1 (unmanaged): use legacy behavior
                     transformUnmanagedPartitionMetadata(clientAZ, topic.topicId(), partition, snapshot.nodes());
                 }
             }
@@ -146,16 +148,16 @@ public class InklessTopicMetadataTransformer implements Closeable {
 
             for (final var partition : topic.partitions()) {
                 final List<Integer> assignedReplicas = partition.replicaNodes();
-                final boolean isManagedReplicas = assignedReplicas.size() > 1;
+                final boolean routeToReplicas = assignedReplicas.size() > 1 || isRemoteStorageEnabled;
 
-                if (isManagedReplicas) {
+                if (routeToReplicas) {
                     transformManagedReplicasPartitionDescribe(
                         clientAZ, topic.topicId(), partition,
                         assignedReplicas, isRemoteStorageEnabled,
                         snapshot.ids(), snapshot.racks()
                     );
                 } else {
-                    // RF=1 (unmanaged): use legacy behavior
+                    // Untiered RF=1 (unmanaged): use legacy behavior
                     transformUnmanagedPartitionDescribe(clientAZ, topic.topicId(), partition, snapshot.nodes());
                 }
             }
@@ -163,7 +165,7 @@ public class InklessTopicMetadataTransformer implements Closeable {
     }
 
     /**
-     * Transform partition with managed replicas (RF > 1) for Metadata response.
+     * Transform partition with managed replicas (RF > 1), or a tiered partition at any RF, for Metadata response.
      */
     private void transformManagedReplicasPartitionMetadata(
         final String clientAZ,
@@ -194,7 +196,7 @@ public class InklessTopicMetadataTransformer implements Closeable {
     }
 
     /**
-     * Transform partition with managed replicas (RF > 1) for DescribeTopicPartitions response.
+     * Transform partition with managed replicas (RF > 1), or a tiered partition at any RF, for DescribeTopicPartitions response.
      */
     private void transformManagedReplicasPartitionDescribe(
         final String clientAZ,
@@ -225,7 +227,7 @@ public class InklessTopicMetadataTransformer implements Closeable {
     }
 
     /**
-     * Transform partition with unmanaged replicas (RF=1) for Metadata response.
+     * Transform untiered partition with unmanaged replicas (RF=1) for Metadata response.
      * Uses legacy behavior: hash-based selection from all alive brokers.
      */
     private void transformUnmanagedPartitionMetadata(
@@ -245,7 +247,7 @@ public class InklessTopicMetadataTransformer implements Closeable {
     }
 
     /**
-     * Transform partition with unmanaged replicas (RF=1) for DescribeTopicPartitions response.
+     * Transform untiered partition with unmanaged replicas (RF=1) for DescribeTopicPartitions response.
      */
     private void transformUnmanagedPartitionDescribe(
         final String clientAZ,
@@ -377,7 +379,7 @@ public class InklessTopicMetadataTransformer implements Closeable {
     }
 
     /**
-     * Legacy leader selection for unmanaged (RF=1) diskless partitions.
+     * Legacy leader selection for untiered unmanaged (RF=1) diskless partitions.
      * Selects from all alive brokers, preferring those in the client's AZ.
      */
     private int selectLeaderLegacy(
