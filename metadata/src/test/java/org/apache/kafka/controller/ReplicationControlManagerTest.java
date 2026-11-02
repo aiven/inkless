@@ -188,6 +188,7 @@ public class ReplicationControlManagerTest {
             private List<String> classicRemoteStorageForceExcludeTopicRegexes = List.of();
             private boolean disklessForceEnabled = false;
             private List<String> disklessForceIncludeTopicRegexes = List.of();
+            private ConfigurationValidator configurationValidator = ConfigurationValidator.NO_OP;
 
             Builder setCreateTopicPolicy(CreateTopicPolicy createTopicPolicy) {
                 this.createTopicPolicy = Optional.of(createTopicPolicy);
@@ -259,6 +260,11 @@ public class ReplicationControlManagerTest {
                 return this;
             }
 
+            Builder setConfigurationValidator(ConfigurationValidator configurationValidator) {
+                this.configurationValidator = configurationValidator;
+                return this;
+            }
+
             ReplicationControlTestContext build() {
                 return new ReplicationControlTestContext(metadataVersion,
                     createTopicPolicy,
@@ -273,7 +279,8 @@ public class ReplicationControlManagerTest {
                     classicRemoteStorageForceEnabled,
                     classicRemoteStorageForceExcludeTopicRegexes,
                     disklessForceEnabled,
-                    disklessForceIncludeTopicRegexes);
+                    disklessForceIncludeTopicRegexes,
+                    configurationValidator);
             }
         }
 
@@ -307,7 +314,8 @@ public class ReplicationControlManagerTest {
             final boolean classicRemoteStorageForceEnabled,
             final List<String> classicRemoteStorageForceExcludeTopicRegexes,
             final boolean disklessForceEnabled,
-            final List<String> disklessForceIncludeTopicRegexes
+            final List<String> disklessForceIncludeTopicRegexes,
+            final ConfigurationValidator configurationValidator
         ) {
             this.time = time;
             this.featureControl = new FeatureControlManager.Builder().
@@ -339,6 +347,7 @@ public class ReplicationControlManagerTest {
                 setFeatureControl(featureControl).
                 setStaticConfig(staticConfig).
                 setKafkaConfigSchema(FakeKafkaConfigSchema.INSTANCE).
+                setValidator(configurationValidator).
                 build();
             this.offsetControlManager = new OffsetControlManager.Builder().
                 setSnapshotRegistry(snapshotRegistry).
