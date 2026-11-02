@@ -116,7 +116,7 @@ class AvailabilityGatedControlPlaneTest {
         controlPlane.isSafeToDeleteFile("key");
         controlPlane.getLogInfo(List.of());
         controlPlane.getProducerState(List.of());
-        controlPlane.pruneDisklessLogs(List.of());
+        controlPlane.pruneDisklessLogs(List.of(), 1);
 
         verify(delegate).commitFile("key", null, 1, 2L, List.of());
         verify(delegate).findBatches(List.of(), 1, 1);
@@ -135,7 +135,7 @@ class AvailabilityGatedControlPlaneTest {
         verify(delegate).isSafeToDeleteFile("key");
         verify(delegate).getLogInfo(List.of());
         verify(delegate).getProducerState(List.of());
-        verify(delegate).pruneDisklessLogs(List.of());
+        verify(delegate).pruneDisklessLogs(List.of(), 1);
     }
 
     @Test
@@ -163,7 +163,7 @@ class AvailabilityGatedControlPlaneTest {
         assertThrows(ControlPlaneUnavailableException.class, () -> controlPlane.isSafeToDeleteFile("key"));
         assertThrows(ControlPlaneUnavailableException.class, () -> controlPlane.getLogInfo(List.of()));
         assertThrows(ControlPlaneUnavailableException.class, () -> controlPlane.getProducerState(List.of()));
-        assertThrows(ControlPlaneUnavailableException.class, () -> controlPlane.pruneDisklessLogs(List.of()));
+        assertThrows(ControlPlaneUnavailableException.class, () -> controlPlane.pruneDisklessLogs(List.of(), 1));
 
         verifyNoInteractions(delegate);
     }

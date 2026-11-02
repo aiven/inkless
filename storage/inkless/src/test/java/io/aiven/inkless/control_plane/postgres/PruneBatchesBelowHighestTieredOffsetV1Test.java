@@ -22,8 +22,12 @@ import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.utils.Time;
 
+import org.jooq.generated.enums.PruneBatchesBelowHighestTieredOffsetErrorV1;
 import org.jooq.generated.tables.records.BatchesRecord;
 import org.jooq.generated.tables.records.LogsRecord;
+import org.jooq.generated.udt.PruneBatchesBelowHighestTieredOffsetResponseV1;
+import org.jooq.generated.udt.records.PruneBatchesBelowHighestTieredOffsetRequestV1Record;
+import org.jooq.generated.udt.records.PruneBatchesBelowHighestTieredOffsetResponseV1Record;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -36,6 +40,7 @@ import org.mockito.quality.Strictness;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Set;
 import java.util.function.Consumer;
@@ -45,13 +50,11 @@ import io.aiven.inkless.common.ObjectFormat;
 import io.aiven.inkless.control_plane.CommitBatchRequest;
 import io.aiven.inkless.control_plane.CreateTopicAndPartitionsRequest;
 import io.aiven.inkless.control_plane.DeleteRecordsRequest;
-import io.aiven.inkless.control_plane.PruneDisklessLogsError;
-import io.aiven.inkless.control_plane.PruneDisklessLogsRequest;
-import io.aiven.inkless.control_plane.PruneDisklessLogsResponse;
 import io.aiven.inkless.test_utils.InklessPostgreSQLContainer;
 import io.aiven.inkless.test_utils.PostgreSQLTestContainer;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.jooq.generated.Tables.PRUNE_BATCHES_BELOW_HIGHEST_TIERED_OFFSET_V1;
 
 @Testcontainers
 @ExtendWith(MockitoExtension.class)
@@ -110,18 +113,10 @@ class PruneBatchesBelowHighestTieredOffsetV1Test {
 
         assertThat(DBUtils.getAllBatches(pgContainer.getDataSource())).hasSize(1);
 
-        final List<PruneDisklessLogsResponse> responses = new PruneDisklessLogsJob(
-            time,
-            pgContainer.getJooqCtx(),
-            List.of(new PruneDisklessLogsRequest(T0P0, 99L)),
-            durationCallback
-        ).call();
+        final PruneBatchesBelowHighestTieredOffsetResponseV1Record response = pruneV1(T0P0, 99L);
 
-        assertThat(responses).singleElement()
-            .satisfies(r -> {
-                assertThat(r.error()).isEqualTo(PruneDisklessLogsError.NONE);
-                assertThat(r.disklessLogStartOffset()).isEqualTo(0L);
-            });
+        assertThat(response.getError()).isEqualTo(PruneBatchesBelowHighestTieredOffsetErrorV1.none);
+        assertThat(response.getLogStartOffset()).isEqualTo(0L);
 
         assertThat(DBUtils.getAllBatches(pgContainer.getDataSource())).hasSize(1);
         assertThat(DBUtils.getAllBatches(pgContainer.getDataSource()).iterator().next().getLastOffset()).isEqualTo(100L);
@@ -144,20 +139,12 @@ class PruneBatchesBelowHighestTieredOffsetV1Test {
 
         assertThat(singleLog().getLogStartOffset()).isEqualTo(0L);
 
-        final List<PruneDisklessLogsResponse> responses = new PruneDisklessLogsJob(
-            time,
-            pgContainer.getJooqCtx(),
-            List.of(new PruneDisklessLogsRequest(T0P0, 10L)),
-            durationCallback
-        ).call();
+        final PruneBatchesBelowHighestTieredOffsetResponseV1Record response = pruneV1(T0P0, 10L);
 
         assertThat(DBUtils.getAllBatches(pgContainer.getDataSource())).isEmpty();
 
-        assertThat(responses).singleElement()
-            .satisfies(r -> {
-                assertThat(r.error()).isEqualTo(PruneDisklessLogsError.NONE);
-                assertThat(r.disklessLogStartOffset()).isEqualTo(11L);
-            });
+        assertThat(response.getError()).isEqualTo(PruneBatchesBelowHighestTieredOffsetErrorV1.none);
+        assertThat(response.getLogStartOffset()).isEqualTo(11L);
 
         final LogsRecord after = singleLog();
         assertThat(after.getLogStartOffset()).isEqualTo(11L);
@@ -187,12 +174,7 @@ class PruneBatchesBelowHighestTieredOffsetV1Test {
 
         assertThat(DBUtils.getAllBatches(pgContainer.getDataSource())).hasSize(2);
 
-        new PruneDisklessLogsJob(
-            time,
-            pgContainer.getJooqCtx(),
-            List.of(new PruneDisklessLogsRequest(T0P0, 10L)),
-            durationCallback
-        ).call();
+        pruneV1(T0P0, 10L);
 
         final Set<BatchesRecord> remaining = DBUtils.getAllBatches(pgContainer.getDataSource());
         assertThat(remaining).hasSize(1);
@@ -225,12 +207,7 @@ class PruneBatchesBelowHighestTieredOffsetV1Test {
         ).call();
         assertThat(singleLog().getByteSize()).isEqualTo(b1 + b2);
 
-        new PruneDisklessLogsJob(
-            time,
-            pgContainer.getJooqCtx(),
-            List.of(new PruneDisklessLogsRequest(T0P0, 10L)),
-            durationCallback
-        ).call();
+        pruneV1(T0P0, 10L);
 
         final LogsRecord after = singleLog();
         assertThat(after.getLogStartOffset()).isEqualTo(11L);
@@ -265,18 +242,10 @@ class PruneBatchesBelowHighestTieredOffsetV1Test {
             durationCallback
         ).call();
 
-        final List<PruneDisklessLogsResponse> responses = new PruneDisklessLogsJob(
-            time,
-            pgContainer.getJooqCtx(),
-            List.of(new PruneDisklessLogsRequest(T0P0, 9L)),
-            durationCallback
-        ).call();
+        final PruneBatchesBelowHighestTieredOffsetResponseV1Record response = pruneV1(T0P0, 9L);
 
-        assertThat(responses).singleElement()
-            .satisfies(r -> {
-                assertThat(r.error()).isEqualTo(PruneDisklessLogsError.NONE);
-                assertThat(r.disklessLogStartOffset()).isEqualTo(5L);
-            });
+        assertThat(response.getError()).isEqualTo(PruneBatchesBelowHighestTieredOffsetErrorV1.none);
+        assertThat(response.getLogStartOffset()).isEqualTo(5L);
         assertThat(singleLog().getLogStartOffset()).isEqualTo(5L);
     }
 
@@ -299,20 +268,12 @@ class PruneBatchesBelowHighestTieredOffsetV1Test {
         final long highWatermark = beforePrune.getHighWatermark();
         assertThat(highWatermark).isEqualTo(11L);
 
-        final List<PruneDisklessLogsResponse> responses = new PruneDisklessLogsJob(
-            time,
-            pgContainer.getJooqCtx(),
-            List.of(new PruneDisklessLogsRequest(T0P0, 100L)),
-            durationCallback
-        ).call();
+        final PruneBatchesBelowHighestTieredOffsetResponseV1Record response = pruneV1(T0P0, 100L);
 
         assertThat(DBUtils.getAllBatches(pgContainer.getDataSource())).isEmpty();
 
-        assertThat(responses).singleElement()
-            .satisfies(r -> {
-                assertThat(r.error()).isEqualTo(PruneDisklessLogsError.NONE);
-                assertThat(r.disklessLogStartOffset()).isEqualTo(highWatermark);
-            });
+        assertThat(response.getError()).isEqualTo(PruneBatchesBelowHighestTieredOffsetErrorV1.none);
+        assertThat(response.getLogStartOffset()).isEqualTo(highWatermark);
 
         final LogsRecord after = singleLog();
         assertThat(after.getLogStartOffset()).isEqualTo(highWatermark);
@@ -324,22 +285,33 @@ class PruneBatchesBelowHighestTieredOffsetV1Test {
         assertThat(DBUtils.getAllLogs(pgContainer.getDataSource()).stream()
             .noneMatch(r -> r.getTopicId().equals(UNKNOWN_TOPIC_ID))).isTrue();
 
-        final List<PruneDisklessLogsResponse> responses = new PruneDisklessLogsJob(
-            time,
-            pgContainer.getJooqCtx(),
-            List.of(new PruneDisklessLogsRequest(UNKNOWN_T0P0, 0L)),
-            durationCallback
-        ).call();
+        final PruneBatchesBelowHighestTieredOffsetResponseV1Record response = pruneV1(UNKNOWN_T0P0, 0L);
 
-        assertThat(responses).singleElement()
-            .satisfies(r -> {
-                assertThat(r.topicIdPartition().topicId()).isEqualTo(UNKNOWN_TOPIC_ID);
-                assertThat(r.error()).isEqualTo(PruneDisklessLogsError.UNKNOWN_TOPIC_OR_PARTITION);
-                assertThat(r.disklessLogStartOffset()).isEqualTo(-1L);
-            });
+        assertThat(response.getTopicId()).isEqualTo(UNKNOWN_TOPIC_ID);
+        assertThat(response.getError())
+            .isEqualTo(PruneBatchesBelowHighestTieredOffsetErrorV1.unknown_topic_or_partition);
+        assertThat(response.getLogStartOffset()).isNull();
 
         assertThat(DBUtils.getAllLogs(pgContainer.getDataSource()).stream()
             .noneMatch(r -> r.getTopicId().equals(UNKNOWN_TOPIC_ID))).isTrue();
+    }
+
+    private PruneBatchesBelowHighestTieredOffsetResponseV1Record pruneV1(final TopicIdPartition partition,
+                                                                       final long highestTieredOffset) {
+        final PruneBatchesBelowHighestTieredOffsetRequestV1Record[] requests = {
+            new PruneBatchesBelowHighestTieredOffsetRequestV1Record(
+                partition.topicId(), partition.partition(), highestTieredOffset)
+        };
+        final List<PruneBatchesBelowHighestTieredOffsetResponseV1Record> responses =
+            pgContainer.getJooqCtx().transactionResult(conf -> conf.dsl().select(
+                    PruneBatchesBelowHighestTieredOffsetResponseV1.TOPIC_ID,
+                    PruneBatchesBelowHighestTieredOffsetResponseV1.PARTITION,
+                    PruneBatchesBelowHighestTieredOffsetResponseV1.LOG_START_OFFSET,
+                    PruneBatchesBelowHighestTieredOffsetResponseV1.ERROR
+                ).from(PRUNE_BATCHES_BELOW_HIGHEST_TIERED_OFFSET_V1.call(Instant.EPOCH, requests))
+                .fetchInto(PruneBatchesBelowHighestTieredOffsetResponseV1Record.class));
+        assertThat(responses).hasSize(1);
+        return responses.get(0);
     }
 
     private LogsRecord singleLog() {

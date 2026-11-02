@@ -63,6 +63,7 @@ class InklessConfigTest {
         configs.put("inkless.fetch.offset.thread.pool.size", "6");
         configs.put("inkless.retention.enforcement.max.batches.per.request", "50");
         configs.put("inkless.consolidation.cleanup.interval.ms", "60000");
+        configs.put("inkless.consolidation.cleanup.max.batches.per.request", "75");
         final InklessConfig config = new InklessConfig(new AbstractConfig(new ConfigDef(), configs));
         assertThat(config.controlPlaneClass()).isEqualTo(InMemoryControlPlane.class);
         assertThat(config.controlPlaneConfig()).isEqualTo(Map.of("class", controlPlaneClass));
@@ -87,6 +88,7 @@ class InklessConfigTest {
         assertThat(config.fetchOffsetThreadPoolSize()).isEqualTo(6);
         assertThat(config.maxBatchesPerEnforcementRequest()).isEqualTo(50);
         assertThat(config.consolidationCleanupInterval()).isEqualTo(Duration.ofMillis(60000));
+        assertThat(config.maxBatchesPerConsolidationCleanupRequest()).isEqualTo(75);
     }
 
     @Test
@@ -121,7 +123,8 @@ class InklessConfigTest {
         assertThat(config.fetchOffsetThreadPoolSize()).isEqualTo(8);
         assertThat(config.maxBatchesPerEnforcementRequest()).isEqualTo(2000);
         assertThat(config.retentionEnforcementInterval()).isEqualTo(Duration.ofMinutes(1));
-        assertThat(config.consolidationCleanupInterval()).isEqualTo(Duration.ofMinutes(5));
+        assertThat(config.consolidationCleanupInterval()).isEqualTo(Duration.ofMinutes(1));
+        assertThat(config.maxBatchesPerConsolidationCleanupRequest()).isEqualTo(2000);
     }
 
     @Test
@@ -151,6 +154,7 @@ class InklessConfigTest {
         configs.put("fetch.lagging.consumer.request.rate.limit", "250");
         configs.put("retention.enforcement.max.batches.per.request", "10");
         configs.put("consolidation.cleanup.interval.ms", "75000");
+        configs.put("consolidation.cleanup.max.batches.per.request", "125");
         final var config = new InklessConfig(
             configs
         );
@@ -178,6 +182,7 @@ class InklessConfigTest {
         assertThat(config.fetchLaggingConsumerRequestRateLimit()).isEqualTo(250);
         assertThat(config.maxBatchesPerEnforcementRequest()).isEqualTo(10);
         assertThat(config.consolidationCleanupInterval()).isEqualTo(Duration.ofMillis(75000));
+        assertThat(config.maxBatchesPerConsolidationCleanupRequest()).isEqualTo(125);
     }
 
     @Test
