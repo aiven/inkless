@@ -169,5 +169,8 @@ public interface ControlPlane extends Closeable, Configurable {
 
     List<GetProducerStateResponse> getProducerState(List<GetProducerStateRequest> requests);
 
-    List<PruneDisklessLogsResponse> pruneDisklessLogs(List<PruneDisklessLogsRequest> pruneDisklessLogsRequests);
+    List<PruneDisklessLogsResponse> pruneDisklessLogs(
+        List<PruneDisklessLogsRequest> pruneDisklessLogsRequests,
+        int maxBatchesPerRequest
+    );
 }
