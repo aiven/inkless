@@ -45,7 +45,7 @@ public final class PostgresControlPlaneMetrics {
         "DeleteRecords", "EnforceRetention", "GetFilesToDelete",
         "SafeDeleteFileCheck",
         "GetLogInfo", "InitDisklessLog", "GetProducerState",
-        "AdvanceCrossTierLogStart", "RepairDisklessLog", "GetCrossTierLogStart"
+        "PruneDisklessLogs", "AdvanceCrossTierLogStart", "RepairDisklessLog", "GetCrossTierLogStart"
     );
 
     /**

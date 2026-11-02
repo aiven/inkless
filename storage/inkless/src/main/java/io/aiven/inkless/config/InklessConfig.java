@@ -130,10 +130,18 @@ public class InklessConfig extends AbstractConfig {
     private static final int RETENTION_ENFORCEMENT_INTERVAL_MS_DEFAULT = 60 * 1000;  // 1 minute
 
     public static final String CONSOLIDATION_CLEANUP_INTERVAL_MS_CONFIG = "consolidation.cleanup.interval.ms";
-    private static final String CONSOLIDATION_CLEANUP_INTERVAL_MS_DOC = "The interval with which to run consolidated diskless WAL pruning on each broker.";
-    // Not derived from RETENTION_ENFORCEMENT_INTERVAL_MS_DEFAULT: WAL pruning's cost is whole-file scans,
-    // not per-partition boundary scans, so it needs its own cadence.
-    private static final int CONSOLIDATION_CLEANUP_INTERVAL_MS_DEFAULT = 5 * 60 * 1000;  // 5 minutes
+    private static final String CONSOLIDATION_CLEANUP_INTERVAL_MS_DOC = "The interval with which to run consolidated diskless WAL pruning on each broker. "
+        + "The default is 1 minute, which matches retention.enforcement.interval.ms and sustains the default consolidation cleanup rate with a 2000-batch cap.";
+    private static final int CONSOLIDATION_CLEANUP_INTERVAL_MS_DEFAULT = 60 * 1000;
+
+    public static final String CONSOLIDATION_CLEANUP_MAX_BATCHES_PER_REQUEST_CONFIG = "consolidation.cleanup.max.batches.per.request";
+    private static final String CONSOLIDATION_CLEANUP_MAX_BATCHES_PER_REQUEST_DOC = "The maximum number of batches to delete per partition during one consolidation cleanup request. "
+        + "A value of 0 means no cap and deletes all eligible batches in one request. A positive value bounds the delete to that many batches per pass, "
+        + "so a deep backlog drains over successive cleanup cycles instead of one unbounded request. It should exceed the per-interval batch creation rate: "
+        + "capacity is this value per consolidation.cleanup.interval.ms. With the defaults, this sustains up to 33 batches/s per partition, "
+        + "and a 1,000,000-batch backlog drains in about 8 hours. A higher batch-row rate needs a proportionally higher value here "
+        + "or a shorter consolidation.cleanup.interval.ms.";
+    private static final int CONSOLIDATION_CLEANUP_MAX_BATCHES_PER_REQUEST_DEFAULT = 2000;
 
     public static final String FILE_CLEANER_INTERVAL_MS_CONFIG = "file.cleaner.interval.ms";
     private static final String FILE_CLEANER_INTERVAL_MS_DOC = "The interval with which to clean up files marked for deletion. "
@@ -393,6 +401,15 @@ public class InklessConfig extends AbstractConfig {
             ConfigDef.Range.atLeast(1),
             ConfigDef.Importance.LOW,
             CONSOLIDATION_CLEANUP_INTERVAL_MS_DOC
+        );
+
+        configDef.define(
+            CONSOLIDATION_CLEANUP_MAX_BATCHES_PER_REQUEST_CONFIG,
+            ConfigDef.Type.INT,
+            CONSOLIDATION_CLEANUP_MAX_BATCHES_PER_REQUEST_DEFAULT,
+            ConfigDef.Range.atLeast(0),
+            ConfigDef.Importance.LOW,
+            CONSOLIDATION_CLEANUP_MAX_BATCHES_PER_REQUEST_DOC
         );
 
         configDef.define(
@@ -794,6 +811,10 @@ public class InklessConfig extends AbstractConfig {
 
     public Duration consolidationCleanupInterval() {
         return Duration.ofMillis(getInt(CONSOLIDATION_CLEANUP_INTERVAL_MS_CONFIG));
+    }
+
+    public int maxBatchesPerConsolidationCleanupRequest() {
+        return getInt(CONSOLIDATION_CLEANUP_MAX_BATCHES_PER_REQUEST_CONFIG);
     }
 
     public Duration fileCleanerInterval() {

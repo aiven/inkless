@@ -18,7 +18,7 @@
 package io.aiven.inkless.control_plane;
 
 /**
- * Result of {@link ControlPlane#pruneDisklessLogs(java.util.List)}: mirrors
+ * Result of {@link ControlPlane#pruneDisklessLogs(java.util.List, int)}: mirrors
  * {@code prune_batches_below_highest_tiered_offset_error_v1} in Postgres.
  */
 public enum PruneDisklessLogsError {

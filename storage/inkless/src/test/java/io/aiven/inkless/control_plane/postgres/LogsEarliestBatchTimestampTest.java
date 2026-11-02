@@ -190,7 +190,7 @@ class LogsEarliestBatchTimestampTest {
 
     private void prune(final TopicIdPartition partition, final long highestTieredOffset) throws Exception {
         new PruneDisklessLogsJob(time, pgContainer.getJooqCtx(),
-            List.of(new PruneDisklessLogsRequest(partition, highestTieredOffset)), duration -> {}).call();
+            List.of(new PruneDisklessLogsRequest(partition, highestTieredOffset)), 0, duration -> {}).call();
     }
 
     private Long earliestTs(final TopicIdPartition partition) {

@@ -62,7 +62,7 @@ class InMemoryControlPlanePruneDisklessLogsTest {
 
     @Test
     void emptyRequestListReturnsEmptyResponses() {
-        assertThat(cp.pruneDisklessLogs(List.of())).isEmpty();
+        assertThat(cp.pruneDisklessLogs(List.of(), 0)).isEmpty();
     }
 
     @Test
@@ -72,13 +72,15 @@ class InMemoryControlPlanePruneDisklessLogsTest {
 
         final TopicIdPartition requestTip = new TopicIdPartition(UNKNOWN_TOPIC_ID, new TopicPartition("x", 0));
         final List<PruneDisklessLogsResponse> responses = cp.pruneDisklessLogs(
-            List.of(new PruneDisklessLogsRequest(requestTip, 0L)));
+            List.of(new PruneDisklessLogsRequest(requestTip, 0L)), 0);
 
         assertThat(responses).singleElement()
             .satisfies(r -> {
                 assertThat(r.topicIdPartition()).isSameAs(requestTip);
                 assertThat(r.error()).isEqualTo(PruneDisklessLogsError.UNKNOWN_TOPIC_OR_PARTITION);
                 assertThat(r.disklessLogStartOffset()).isEqualTo(-1L);
+                assertThat(r.batchesDeleted()).isEqualTo(-1);
+                assertThat(r.bytesDeleted()).isEqualTo(-1L);
             });
 
         final GetLogInfoResponse after = cp.getLogInfo(List.of(new GetLogInfoRequest(TOPIC_ID, 0))).get(0);
@@ -95,12 +97,15 @@ class InMemoryControlPlanePruneDisklessLogsTest {
             batchBytes,
             List.of(CommitBatchRequest.of(0, T0P0, 0, batchBytes, 0L, 100L, 1000L, TimestampType.CREATE_TIME)));
 
-        final List<PruneDisklessLogsResponse> responses = cp.pruneDisklessLogs(List.of(new PruneDisklessLogsRequest(T0P0, 99L)));
+        final List<PruneDisklessLogsResponse> responses =
+            cp.pruneDisklessLogs(List.of(new PruneDisklessLogsRequest(T0P0, 99L)), 0);
 
         assertThat(responses).singleElement()
             .satisfies(r -> {
                 assertThat(r.error()).isEqualTo(PruneDisklessLogsError.NONE);
                 assertThat(r.disklessLogStartOffset()).isEqualTo(0L);
+                assertThat(r.batchesDeleted()).isZero();
+                assertThat(r.bytesDeleted()).isZero();
             });
         assertThat(cp.getLogInfo(List.of(new GetLogInfoRequest(TOPIC_ID, 0))).get(0).highWatermark()).isEqualTo(101L);
     }
@@ -115,12 +120,15 @@ class InMemoryControlPlanePruneDisklessLogsTest {
             batchBytes,
             List.of(CommitBatchRequest.of(0, T0P0, 0, batchBytes, 0L, 10L, 1000L, TimestampType.CREATE_TIME)));
 
-        final List<PruneDisklessLogsResponse> responses = cp.pruneDisklessLogs(List.of(new PruneDisklessLogsRequest(T0P0, 10L)));
+        final List<PruneDisklessLogsResponse> responses =
+            cp.pruneDisklessLogs(List.of(new PruneDisklessLogsRequest(T0P0, 10L)), 0);
 
         assertThat(responses).singleElement()
             .satisfies(r -> {
                 assertThat(r.error()).isEqualTo(PruneDisklessLogsError.NONE);
                 assertThat(r.disklessLogStartOffset()).isEqualTo(11L);
+                assertThat(r.batchesDeleted()).isEqualTo(1);
+                assertThat(r.bytesDeleted()).isEqualTo(batchBytes);
             });
         // The bound is exclusive, so it must be strictly after every markedForDeletionAt.
         final List<FileToDelete> allFilesToDelete =
@@ -142,7 +150,7 @@ class InMemoryControlPlanePruneDisklessLogsTest {
                 CommitBatchRequest.of(0, T0P0, b1, b2, 11L, 25L, 1000L, TimestampType.CREATE_TIME)
             ));
 
-        cp.pruneDisklessLogs(List.of(new PruneDisklessLogsRequest(T0P0, 10L)));
+        cp.pruneDisklessLogs(List.of(new PruneDisklessLogsRequest(T0P0, 10L)), 0);
 
         assertThat(cp.getLogInfo(List.of(new GetLogInfoRequest(TOPIC_ID, 0))).get(0).logStartOffset()).isEqualTo(11L);
     }
@@ -162,12 +170,15 @@ class InMemoryControlPlanePruneDisklessLogsTest {
             ));
         cp.deleteRecords(List.of(new DeleteRecordsRequest(T0P0, 5L)));
 
-        final List<PruneDisklessLogsResponse> responses = cp.pruneDisklessLogs(List.of(new PruneDisklessLogsRequest(T0P0, 9L)));
+        final List<PruneDisklessLogsResponse> responses =
+            cp.pruneDisklessLogs(List.of(new PruneDisklessLogsRequest(T0P0, 9L)), 0);
 
         assertThat(responses).singleElement()
             .satisfies(r -> {
                 assertThat(r.error()).isEqualTo(PruneDisklessLogsError.NONE);
                 assertThat(r.disklessLogStartOffset()).isEqualTo(5L);
+                assertThat(r.batchesDeleted()).isZero();
+                assertThat(r.bytesDeleted()).isZero();
             });
         assertThat(cp.getLogInfo(List.of(new GetLogInfoRequest(TOPIC_ID, 0))).get(0).logStartOffset()).isEqualTo(5L);
     }
@@ -185,12 +196,15 @@ class InMemoryControlPlanePruneDisklessLogsTest {
         final long highWatermark = cp.getLogInfo(List.of(new GetLogInfoRequest(TOPIC_ID, 0))).get(0).highWatermark();
         assertThat(highWatermark).isEqualTo(11L);
 
-        final List<PruneDisklessLogsResponse> responses = cp.pruneDisklessLogs(List.of(new PruneDisklessLogsRequest(T0P0, 100L)));
+        final List<PruneDisklessLogsResponse> responses =
+            cp.pruneDisklessLogs(List.of(new PruneDisklessLogsRequest(T0P0, 100L)), 0);
 
         assertThat(responses).singleElement()
             .satisfies(r -> {
                 assertThat(r.error()).isEqualTo(PruneDisklessLogsError.NONE);
                 assertThat(r.disklessLogStartOffset()).isEqualTo(highWatermark);
+                assertThat(r.batchesDeleted()).isEqualTo(1);
+                assertThat(r.bytesDeleted()).isEqualTo(batchBytes);
             });
         assertThat(cp.getLogInfo(List.of(new GetLogInfoRequest(TOPIC_ID, 0))).get(0).logStartOffset()).isEqualTo(highWatermark);
     }
@@ -206,7 +220,8 @@ class InMemoryControlPlanePruneDisklessLogsTest {
             batchBytes,
             List.of(CommitBatchRequest.of(0, T0P0, 0, batchBytes, 0L, 10L, 1000L, TimestampType.CREATE_TIME)));
 
-        final List<PruneDisklessLogsResponse> responses = cp.pruneDisklessLogs(List.of(new PruneDisklessLogsRequest(requestTip, 10L)));
+        final List<PruneDisklessLogsResponse> responses =
+            cp.pruneDisklessLogs(List.of(new PruneDisklessLogsRequest(requestTip, 10L)), 0);
 
         assertThat(responses).singleElement()
             .satisfies(r -> {
@@ -214,6 +229,8 @@ class InMemoryControlPlanePruneDisklessLogsTest {
                 assertThat(r.topicIdPartition().topic()).isEqualTo("not-the-stored-name");
                 assertThat(r.error()).isEqualTo(PruneDisklessLogsError.NONE);
                 assertThat(r.disklessLogStartOffset()).isEqualTo(11L);
+                assertThat(r.batchesDeleted()).isEqualTo(1);
+                assertThat(r.bytesDeleted()).isEqualTo(batchBytes);
             });
     }
 
@@ -234,11 +251,19 @@ class InMemoryControlPlanePruneDisklessLogsTest {
         final List<PruneDisklessLogsResponse> responses = cp.pruneDisklessLogs(List.of(
             new PruneDisklessLogsRequest(T0P0, 5L),
             new PruneDisklessLogsRequest(T0P0, 10L)
-        ));
+        ), 0);
 
         assertThat(responses).hasSize(2);
-        assertThat(responses.get(0).disklessLogStartOffset()).isEqualTo(6L);
-        assertThat(responses.get(1).disklessLogStartOffset()).isEqualTo(11L);
+        assertThat(responses.get(0)).satisfies(r -> {
+            assertThat(r.disklessLogStartOffset()).isEqualTo(6L);
+            assertThat(r.batchesDeleted()).isEqualTo(1);
+            assertThat(r.bytesDeleted()).isEqualTo(b1);
+        });
+        assertThat(responses.get(1)).satisfies(r -> {
+            assertThat(r.disklessLogStartOffset()).isEqualTo(11L);
+            assertThat(r.batchesDeleted()).isEqualTo(1);
+            assertThat(r.bytesDeleted()).isEqualTo(b2);
+        });
     }
 
     @Test
@@ -267,12 +292,16 @@ class InMemoryControlPlanePruneDisklessLogsTest {
         final List<PruneDisklessLogsResponse> responses = cp.pruneDisklessLogs(List.of(
             new PruneDisklessLogsRequest(req1, 7L),
             new PruneDisklessLogsRequest(req0, 5L)
-        ));
+        ), 0);
 
         assertThat(responses).hasSize(2);
         assertThat(responses.get(0).topicIdPartition()).isSameAs(req1);
         assertThat(responses.get(0).disklessLogStartOffset()).isEqualTo(8L);
+        assertThat(responses.get(0).batchesDeleted()).isEqualTo(1);
+        assertThat(responses.get(0).bytesDeleted()).isEqualTo(200L);
         assertThat(responses.get(1).topicIdPartition()).isSameAs(req0);
         assertThat(responses.get(1).disklessLogStartOffset()).isEqualTo(6L);
+        assertThat(responses.get(1).batchesDeleted()).isEqualTo(1);
+        assertThat(responses.get(1).bytesDeleted()).isEqualTo(200L);
     }
 }

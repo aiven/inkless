@@ -298,6 +298,22 @@ RetentionEnforcementTotalTime             Total time spent on a retention enforc
 ========================================  ==================================================================================================================================================================
 
 
+ConsolidatedDisklessLogPruner metrics
+==================================
+
+io.aiven.inkless.delete:type=ConsolidatedDisklessLogPruner
+----------------------------------------------------------
+
+======================================  =============================================================
+Attribute name                          Description                                                  
+======================================  =============================================================
+ConsolidationPruneErrorRate             Total number of consolidation prune errors                   
+ConsolidationPruneTotalBatchesDeleted   Total number of batches deleted by consolidation prune       
+ConsolidationPruneTotalBytesDeleted     Total number of bytes deleted by consolidation prune         
+ConsolidationPruneTotalTime             Total time spent on a consolidation prune run in milliseconds
+======================================  =============================================================
+
+
 CrossTierLogStartReporter metrics
 ==================================
 
@@ -401,6 +417,9 @@ InitDisklessLogQueryTime                           Time spent executing the Init
 ListOffsetsLastSuccessfulQueryAgeMs                Milliseconds since the last successful ListOffsets query completed; -1 if no query has succeeded since startup             
 ListOffsetsQueryRate                               Total number of ListOffsets queries executed                                                                               
 ListOffsetsQueryTime                               Time spent executing the ListOffsets query in milliseconds                                                                 
+PruneDisklessLogsLastSuccessfulQueryAgeMs          Milliseconds since the last successful PruneDisklessLogs query completed; -1 if no query has succeeded since startup       
+PruneDisklessLogsQueryRate                         Total number of PruneDisklessLogs queries executed                                                                         
+PruneDisklessLogsQueryTime                         Time spent executing the PruneDisklessLogs query in milliseconds                                                           
 PurgeDeletedLogsLastSuccessfulQueryAgeMs           Milliseconds since the last successful PurgeDeletedLogs query completed; -1 if no query has succeeded since startup        
 PurgeDeletedLogsQueryRate                          Total number of PurgeDeletedLogs queries executed                                                                          
 PurgeDeletedLogsQueryTime                          Time spent executing the PurgeDeletedLogs query in milliseconds                                                            

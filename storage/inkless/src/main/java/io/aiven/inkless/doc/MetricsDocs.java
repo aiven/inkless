@@ -37,6 +37,7 @@ import io.aiven.inkless.consume.InklessFetchOffsetMetrics;
 import io.aiven.inkless.control_plane.ControlPlaneAvailabilityMetrics;
 import io.aiven.inkless.control_plane.postgres.PostgresConnectionPoolMetrics;
 import io.aiven.inkless.control_plane.postgres.PostgresControlPlaneMetrics;
+import io.aiven.inkless.delete.ConsolidatedDisklessLogPrunerMetrics;
 import io.aiven.inkless.delete.CrossTierLogStartReporterMetrics;
 import io.aiven.inkless.delete.FileCleanerMetrics;
 import io.aiven.inkless.delete.RetentionEnforcerMetrics;
@@ -99,6 +100,10 @@ public class MetricsDocs {
         printHeading("RetentionEnforcer metrics");
         out.println();
         out.println(toRstTable("io.aiven.inkless.delete", RetentionEnforcerMetrics.all()));
+
+        printHeading("ConsolidatedDisklessLogPruner metrics");
+        out.println();
+        out.println(toRstTable("io.aiven.inkless.delete", ConsolidatedDisklessLogPrunerMetrics.all()));
 
         printHeading("CrossTierLogStartReporter metrics");
         out.println();

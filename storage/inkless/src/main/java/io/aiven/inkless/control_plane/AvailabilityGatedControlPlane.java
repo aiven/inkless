@@ -214,7 +214,8 @@ public class AvailabilityGatedControlPlane implements ControlPlane {
 
     @Override
     public List<PruneDisklessLogsResponse> pruneDisklessLogs(
-        final List<PruneDisklessLogsRequest> pruneDisklessLogsRequests) {
-        return delegate().pruneDisklessLogs(pruneDisklessLogsRequests);
+        final List<PruneDisklessLogsRequest> pruneDisklessLogsRequests,
+        final int maxBatchesPerRequest) {
+        return delegate().pruneDisklessLogs(pruneDisklessLogsRequests, maxBatchesPerRequest);
     }
 }
