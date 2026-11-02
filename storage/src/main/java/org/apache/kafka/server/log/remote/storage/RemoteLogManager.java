@@ -855,6 +855,29 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
      * window; a list failure is a real fault and is logged at warn. Empty means the caller retries.
      */
     public Optional<Boolean> hasReadableRemoteLogCoverage(TopicPartition topicPartition, long offset) {
+        return hasReadableRemoteSegment(topicPartition,
+                segment -> segment.startOffset() <= offset && segment.endOffset() >= offset,
+                "coverage of offset " + offset);
+    }
+
+    /**
+     * Returns whether RLMM has a readable remote segment whose maximum timestamp is at or after
+     * {@code timestamp}. The first such segment holds the first record with that timestamp, which is how
+     * {@link #findOffsetByTimestamp} picks a segment, and it needs no leader epoch cache.
+     * Present-true is a {@link RemoteLogSegmentState#COPY_SEGMENT_FINISHED} segment.
+     * Empty if the partition is not registered with this manager, RLMM is not ready, the query fails,
+     * or a matching segment is still transitional ({@code COPY_SEGMENT_STARTED} or
+     * {@code DELETE_SEGMENT_STARTED}). Empty means the caller retries.
+     */
+    public Optional<Boolean> hasReadableRemoteSegmentWithMaxTimestampAtLeast(TopicPartition topicPartition, long timestamp) {
+        return hasReadableRemoteSegment(topicPartition,
+                segment -> segment.maxTimestampMs() >= timestamp,
+                "max timestamp at least " + timestamp);
+    }
+
+    private Optional<Boolean> hasReadableRemoteSegment(TopicPartition topicPartition,
+                                                       Predicate<RemoteLogSegmentMetadata> matches,
+                                                       String description) {
         Uuid uuid = topicIdByPartitionMap.get(topicPartition);
         if (uuid == null) {
             return Optional.empty();
@@ -866,10 +889,10 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
             }
             Iterator<RemoteLogSegmentMetadata> segments =
                     remoteLogMetadataManagerPlugin.get().listRemoteLogSegments(topicIdPartition);
-            boolean coveringUnreadable = false;
+            boolean matchingUnreadable = false;
             while (segments.hasNext()) {
                 RemoteLogSegmentMetadata segment = segments.next();
-                if (segment.startOffset() > offset || segment.endOffset() < offset) {
+                if (!matches.test(segment)) {
                     continue;
                 }
                 if (segment.state() == RemoteLogSegmentState.COPY_SEGMENT_FINISHED) {
@@ -877,16 +900,16 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
                 }
                 if (segment.state() == RemoteLogSegmentState.COPY_SEGMENT_STARTED
                         || segment.state() == RemoteLogSegmentState.DELETE_SEGMENT_STARTED) {
-                    coveringUnreadable = true;
+                    matchingUnreadable = true;
                 }
             }
-            if (coveringUnreadable) {
+            if (matchingUnreadable) {
                 return Optional.empty();
             }
             return Optional.of(false);
         } catch (RemoteStorageException | RuntimeException e) {
-            LOGGER.warn("Failed to list remote log segments for {} while checking readable coverage of offset {}",
-                    topicPartition, offset, e);
+            LOGGER.warn("Failed to list remote log segments for {} while checking for a readable segment with {}",
+                    topicPartition, description, e);
             return Optional.empty();
         }
     }

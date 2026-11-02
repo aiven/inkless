@@ -102,6 +102,10 @@ class DisklessFetchOffsetRouterTest {
                     classicLogStartOffset: Option[Long] = None,
                     hasCompleteClassicPrefix: Boolean = true,
                     classicResult: ListOffsetsPartitionStatus = defaultClassicResult,
+                    hasRebuiltTierState: Boolean = true,
+                    hasRebuiltTierStateCheck: Option[TopicPartition => Boolean] = None,
+                    remoteSegmentReachesTimestamp: Optional[java.lang.Boolean] = Optional.empty(),
+                    onListOffsetsDeferred: () => Unit = () => (),
                     newJob: () => FetchOffsetHandler.Job = () =>
                       throw new AssertionError("newJob() should not be called by this routing path")): ListOffsetsPartitionStatus = {
     router.route(
@@ -116,7 +120,10 @@ class DisklessFetchOffsetRouterTest {
       classicFetchOffset = (tpArg, partition, allow) => {
         classicCalls += ((tpArg, partition, allow))
         classicResult
-      }
+      },
+      hasRebuiltTierState = hasRebuiltTierStateCheck.getOrElse((_: TopicPartition) => hasRebuiltTierState),
+      hasReadableRemoteSegmentWithMaxTimestampAtLeast = (_, _) => remoteSegmentReachesTimestamp,
+      onListOffsetsDeferred = onListOffsetsDeferred
     )
   }
 
@@ -545,7 +552,10 @@ class DisklessFetchOffsetRouterTest {
         classicFetchOffset = (tpArg, partition, allow) => {
           classicCalls += ((tpArg, partition, allow))
           defaultClassicResult
-        }
+        },
+        hasRebuiltTierState = _ => true,
+        hasReadableRemoteSegmentWithMaxTimestampAtLeast = (_, _) => Optional.empty(),
+        onListOffsetsDeferred = () => fail("EARLIEST must not defer")
       )
       assertTrue(classicCalls.isEmpty,
         s"classic path must not be invoked (localClassicLogStart=$localClassicLogStart)")
@@ -610,6 +620,124 @@ class DisklessFetchOffsetRouterTest {
     // Should go through hybrid Case 2 LATEST_TIMESTAMP path (diskless first, classic fallback)
     verify(job).add(eqTo(tp), any())
     assertTrue(status.futureHolderOpt.isPresent)
+  }
+
+  // A consolidating replica that can't search the tier, classic "no match", diskless answer `disklessResult`.
+  // `remoteSegmentReachesTimestamp` is the RLMM answer for the target timestamp: true when a readable remote
+  // segment has a maximum timestamp at or after it, false when RLMM is ready and none does, empty when
+  // RLMM can't tell yet.
+  private def rebuildingTimestampLookup(disklessResult: FileRecordsOrError,
+                                       hasRebuiltTierState: Boolean = false,
+                                       remoteSegmentReachesTimestamp: Optional[java.lang.Boolean] = Optional.of(true),
+                                       version: Short = 7,
+                                       onListOffsetsDeferred: () => Unit = () => ()): FileRecordsOrError = {
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+    when(inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)).thenReturn(true)
+    disklessTaskFuture.complete(disklessResult)
+    val noMatch = resolvedStatus(makeResponse(offset = -1L))
+
+    val status = route(
+      newRouter(disklessManagedReplicasEnabled = true, disklessConsolidationEnabled = true),
+      timestamp = 123L, version = version, classicResult = noMatch,
+      hasRebuiltTierState = hasRebuiltTierState, remoteSegmentReachesTimestamp = remoteSegmentReachesTimestamp,
+      onListOffsetsDeferred = onListOffsetsDeferred)
+
+    status.futureHolderOpt.get.taskFuture.get(1, TimeUnit.SECONDS)
+  }
+
+  @Test
+  def consolidatingTimestampOnRebuildingReplicaDefersMatchWhenRemoteSegmentReachesTimestamp(): Unit = {
+    var deferrals = 0
+    val result = rebuildingTimestampLookup(offsetResult(50L), onListOffsetsDeferred = () => deferrals += 1)
+
+    assertEquals(1, deferrals)
+    assertTrue(result.hasException)
+    assertEquals(Errors.OFFSET_NOT_AVAILABLE, Errors.forException(result.exception.get))
+  }
+
+  @Test
+  def consolidatingTimestampOnRebuildingReplicaDefersWhenRlmmCannotTellYet(): Unit = {
+    val result = rebuildingTimestampLookup(offsetResult(50L), remoteSegmentReachesTimestamp = Optional.empty())
+
+    assertEquals(Errors.OFFSET_NOT_AVAILABLE, Errors.forException(result.exception.get))
+  }
+
+  // Nothing is consolidated yet, or every remote segment ends before the target timestamp.
+  @Test
+  def consolidatingTimestampOnRebuildingReplicaKeepsMatchWhenNoRemoteSegmentReachesTimestamp(): Unit = {
+    val result = rebuildingTimestampLookup(offsetResult(50L), remoteSegmentReachesTimestamp = Optional.of(false),
+      onListOffsetsDeferred = () => fail("a match no remote segment can beat must not defer"))
+
+    assertEquals(50L, result.timestampAndOffset.get.offset)
+  }
+
+  // The control plane answers a timestamp without a match with offset -1, not with an empty result.
+  @Test
+  def consolidatingTimestampOnRebuildingReplicaKeepsNoMatchWhenNoRemoteSegmentReachesTimestamp(): Unit = {
+    val controlPlaneNoMatch = rebuildingTimestampLookup(offsetResult(-1L), remoteSegmentReachesTimestamp = Optional.of(false))
+    assertFalse(controlPlaneNoMatch.hasException)
+    assertEquals(-1L, controlPlaneNoMatch.timestampAndOffset.get.offset)
+  }
+
+  // With out-of-order timestamps the first record at or after the target can sit in the remote prefix
+  // while the WAL answers a later offset, or answers nothing.
+  @Test
+  def consolidatingTimestampOnRebuildingReplicaDefersNoMatchWhenRemoteSegmentReachesTimestamp(): Unit = {
+    val controlPlaneNoMatch = rebuildingTimestampLookup(offsetResult(-1L))
+    assertEquals(Errors.OFFSET_NOT_AVAILABLE, Errors.forException(controlPlaneNoMatch.exception.get))
+  }
+
+  @Test
+  def consolidatingTimestampOnRebuildingReplicaDefersEmptyDisklessResultWhenRemoteSegmentReachesTimestamp(): Unit = {
+    val result = rebuildingTimestampLookup(new FileRecordsOrError(Optional.empty(), Optional.empty()))
+
+    assertEquals(Errors.OFFSET_NOT_AVAILABLE, Errors.forException(result.exception.get))
+  }
+
+  @Test
+  def consolidatingTimestampOnRebuildingReplicaKeepsDisklessError(): Unit = {
+    val failure = new FileRecordsOrError(Optional.of(new RuntimeException("control plane down")), Optional.empty())
+    val result = rebuildingTimestampLookup(failure)
+
+    assertTrue(result.hasException)
+    assertEquals("control plane down", result.exception.get.getMessage)
+  }
+
+  // A rebuild that starts while the async classic search runs leaves the replica unable to search: the
+  // search reports "no match" and the fallback must not trust the WAL answer.
+  @Test
+  def consolidatingTimestampDefersWhenRebuildStartsDuringAsyncClassicSearch(): Unit = {
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+    when(inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)).thenReturn(true)
+    disklessTaskFuture.complete(offsetResult(50L))
+    val classicFuture = new CompletableFuture[FileRecordsOrError]()
+    val classicStatus = ListOffsetsPartitionStatus.builder().futureHolderOpt(Optional.of(
+      new AsyncOffsetReadFutureHolder[FileRecordsOrError](new CompletableFuture[Void](), classicFuture))).build()
+    var rebuilt = true
+
+    val status = route(
+      newRouter(disklessManagedReplicasEnabled = true, disklessConsolidationEnabled = true),
+      timestamp = 123L, classicResult = classicStatus, hasRebuiltTierStateCheck = Some(_ => rebuilt),
+      remoteSegmentReachesTimestamp = Optional.of(true), newJob = () => job)
+    rebuilt = false
+    classicFuture.complete(new FileRecordsOrError(Optional.empty(), Optional.empty()))
+
+    val result = status.futureHolderOpt.get.taskFuture.get(1, TimeUnit.SECONDS)
+    assertEquals(Errors.OFFSET_NOT_AVAILABLE, Errors.forException(result.exception.get))
+  }
+
+  @Test
+  def consolidatingTimestampOnRebuiltReplicaKeepsDisklessMatch(): Unit = {
+    val result = rebuildingTimestampLookup(offsetResult(50L), hasRebuiltTierState = true)
+
+    assertEquals(50L, result.timestampAndOffset.get.offset)
+  }
+
+  @Test
+  def consolidatingTimestampDeferralUsesLeaderNotAvailableBeforeVersion5(): Unit = {
+    val result = rebuildingTimestampLookup(offsetResult(50L), version = 4)
+
+    assertEquals(Errors.LEADER_NOT_AVAILABLE, Errors.forException(result.exception.get))
   }
 
 }

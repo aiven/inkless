@@ -27,7 +27,7 @@ import io.aiven.inkless.consolidation.{ConsolidatedDisklessLogPruner, Consolidat
 import kafka.cluster.Partition
 import kafka.log.LogManager
 import kafka.server.QuotaFactory.QuotaManagers
-import kafka.server.ReplicaManager.{AtMinIsrPartitionCountMetricName, ConsolidationFetchBytesInPerSecMetricName, ConsolidationHighWatermarkLagFetchRateMetricName, ConsolidationHighWatermarkLagPartitionCountMetricName, ConsolidationLocalBytesPerSecMetricName, ConsolidationSupplementBytesPerSecMetricName, ConsolidationSupplementRateMetricName, FailedIsrUpdatesPerSecMetricName, IsrExpandsPerSecMetricName, IsrShrinksPerSecMetricName, LeaderCountMetricName, OfflineReplicaCountMetricName, PartitionCountMetricName, PartitionsWithLateTransactionsCountMetricName, ProducerIdCountMetricName, ReassigningPartitionsMetricName, SealedPartitionsCountMetricName, DisklessSwitchedReplicasOutsideIsrCountMetricName, UnderMinIsrPartitionCountMetricName, UnderReplicatedPartitionsMetricName, DisklessSwitchedPrefixLagMetricName, DisklessSwitchedPrefixMissingFetchRateMetricName, ConsolidationDeferredPrefixFetchRateMetricName, PrefixDeferralLogGapMs, createLogReadResult, isListOffsetsTimestampUnsupported}
+import kafka.server.ReplicaManager.{AtMinIsrPartitionCountMetricName, ConsolidationFetchBytesInPerSecMetricName, ConsolidationHighWatermarkLagFetchRateMetricName, ConsolidationHighWatermarkLagPartitionCountMetricName, ConsolidationLocalBytesPerSecMetricName, ConsolidationSupplementBytesPerSecMetricName, ConsolidationSupplementRateMetricName, FailedIsrUpdatesPerSecMetricName, IsrExpandsPerSecMetricName, IsrShrinksPerSecMetricName, LeaderCountMetricName, OfflineReplicaCountMetricName, PartitionCountMetricName, PartitionsWithLateTransactionsCountMetricName, ProducerIdCountMetricName, ReassigningPartitionsMetricName, SealedPartitionsCountMetricName, DisklessSwitchedReplicasOutsideIsrCountMetricName, UnderMinIsrPartitionCountMetricName, UnderReplicatedPartitionsMetricName, DisklessSwitchedPrefixLagMetricName, DisklessSwitchedPrefixMissingFetchRateMetricName, ConsolidationDeferredPrefixFetchRateMetricName, ConsolidationDeferredListOffsetsRateMetricName, PrefixDeferralLogGapMs, createLogReadResult, isListOffsetsTimestampUnsupported}
 import kafka.server.metadata.InklessMetadataView
 import kafka.server.share.DelayedShareFetch
 import kafka.utils._
@@ -132,6 +132,7 @@ object ReplicaManager {
   private val DisklessSwitchedPrefixMissingFetchRateMetricName =
     "DisklessSwitchedPrefixMissingFetchRate"
   private val ConsolidationDeferredPrefixFetchRateMetricName = "ConsolidationDeferredPrefixFetchRate"
+  private val ConsolidationDeferredListOffsetsRateMetricName = "ConsolidationDeferredListOffsetsRate"
 
   // Far above the consumer retry backoff, so a quiet period has no consumer waiting.
   private val PrefixDeferralLogGapMs = 60000L
@@ -162,6 +163,7 @@ object ReplicaManager {
     ConsolidationLocalBytesPerSecMetricName,
     ConsolidationHighWatermarkLagFetchRateMetricName,
     ConsolidationDeferredPrefixFetchRateMetricName,
+    ConsolidationDeferredListOffsetsRateMetricName,
     DisklessSwitchedPrefixMissingFetchRateMetricName
   )
 
@@ -472,6 +474,8 @@ class ReplicaManager(val config: KafkaConfig,
   metricsGroup.newGauge(DisklessSwitchedPrefixLagMetricName, () => disklessSwitchedPrefixLag)
   private val consolidationDeferredPrefixFetchRate: Meter =
     metricsGroup.newMeter(ConsolidationDeferredPrefixFetchRateMetricName, "fetches", TimeUnit.SECONDS)
+  private val consolidationDeferredListOffsetsRate: Meter =
+    metricsGroup.newMeter(ConsolidationDeferredListOffsetsRateMetricName, "requests", TimeUnit.SECONDS)
   private val lastPrefixDeferralLogMs = new AtomicLong(0L)
   metricsGroup.newGauge(PartitionsWithLateTransactionsCountMetricName, () => lateTransactionsCount)
   metricsGroup.newGauge(ProducerIdCountMetricName, () => producerIdCount)
@@ -2022,6 +2026,17 @@ class ReplicaManager(val config: KafkaConfig,
   }
 
   /**
+   * Returns whether RLMM has a readable remote segment whose maximum timestamp is at or after `timestamp`.
+   * Empty if `RemoteLogManager` is unset, the partition is not registered, RLMM is not ready, the query
+   * fails, or a matching segment is still transitional. Empty means the caller retries.
+   */
+  def hasReadableRemoteSegmentWithMaxTimestampAtLeast(topicPartition: TopicPartition, timestamp: Long): Optional[java.lang.Boolean] =
+    remoteLogManager match {
+      case Some(rlm) => rlm.hasReadableRemoteSegmentWithMaxTimestampAtLeast(topicPartition, timestamp)
+      case None => Optional.empty()
+    }
+
+  /**
    * Returns the remote-prefix unknown generation for `topicPartition`.
    * DisklessLeaderEndPoint captures this before the RLMM query so a later register or fetcher
    * removal can ignore the in-flight mark.
@@ -2191,6 +2206,14 @@ class ReplicaManager(val config: KafkaConfig,
     }
   }
 
+  /**
+   * Checks whether this replica has rebuilt its tier state, which a remote search for a timestamp needs.
+   * True if the local log has records and a leader epoch. False for a rebuilt replica that has no records
+   * yet too, because `UnifiedLog.fetchOffsetByTimestamp` skips the remote search for an empty log.
+   */
+  private[server] def hasRebuiltTierState(topicPartition: TopicPartition): Boolean =
+    logManager.getLog(topicPartition).exists(log => !log.isEmpty && log.leaderEpochCache().earliestEntry().isPresent)
+
   def fetchOffset(topics: Seq[ListOffsetsTopic],
                   duplicatePartitions: Set[TopicPartition],
                   isolationLevel: IsolationLevel,
@@ -2226,7 +2249,8 @@ class ReplicaManager(val config: KafkaConfig,
         } else if (maybeFetchOffsetJob.exists(_.mustHandle(topic.name))) {
           statusByPartition += topicPartition ->
             disklessFetchOffsetRouter.route(maybeFetchOffsetJob.get, () => inklessFetchOffsetHandler.get.createJob(),
-              topicPartition, partition, replicaId, version, classicLogStart, hasCompleteClassicPrefix, classicFetch)
+              topicPartition, partition, replicaId, version, classicLogStart, hasCompleteClassicPrefix, classicFetch,
+                hasRebuiltTierState, hasReadableRemoteSegmentWithMaxTimestampAtLeast, () => consolidationDeferredListOffsetsRate.mark())
         } else {
           statusByPartition += topicPartition -> classicFetch(topicPartition, partition, false)
         }

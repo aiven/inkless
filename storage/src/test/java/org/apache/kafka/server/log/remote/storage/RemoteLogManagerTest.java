@@ -1586,6 +1586,93 @@ public class RemoteLogManagerTest {
     }
 
     @Test
+    void testHasReadableRemoteSegmentWithMaxTimestampAtLeastWhenUnregistered() throws RemoteStorageException {
+        assertEquals(Optional.empty(),
+                remoteLogManager.hasReadableRemoteSegmentWithMaxTimestampAtLeast(leaderTopicIdPartition.topicPartition(), 1000L));
+        verify(remoteLogMetadataManager, never()).listRemoteLogSegments(any(TopicIdPartition.class));
+    }
+
+    @Test
+    void testHasReadableRemoteSegmentWithMaxTimestampAtLeastWhenNotReady() {
+        remoteLogManager.onLeadershipChange(Set.of(mockPartition(leaderTopicIdPartition)), Set.of(), topicIds);
+        when(remoteLogMetadataManager.isReady(leaderTopicIdPartition)).thenReturn(false);
+
+        assertEquals(Optional.empty(),
+                remoteLogManager.hasReadableRemoteSegmentWithMaxTimestampAtLeast(leaderTopicIdPartition.topicPartition(), 1000L));
+    }
+
+    @Test
+    void testHasReadableRemoteSegmentWithMaxTimestampAtLeastWhenReadyAndEmpty() throws RemoteStorageException {
+        doReturn(true).when(remoteLogMetadataManager).isReady(any(TopicIdPartition.class));
+        doAnswer(invocation -> Collections.emptyIterator())
+                .when(remoteLogMetadataManager).listRemoteLogSegments(any(TopicIdPartition.class));
+        remoteLogManager.onLeadershipChange(Set.of(mockPartition(leaderTopicIdPartition)), Set.of(), topicIds);
+
+        assertEquals(Optional.of(false),
+                remoteLogManager.hasReadableRemoteSegmentWithMaxTimestampAtLeast(leaderTopicIdPartition.topicPartition(), 1000L));
+    }
+
+    @Test
+    void testHasReadableRemoteSegmentWithMaxTimestampAtLeastForFinishedSegments() throws RemoteStorageException {
+        doReturn(true).when(remoteLogMetadataManager).isReady(any(TopicIdPartition.class));
+        remoteLogManager.onLeadershipChange(Set.of(mockPartition(leaderTopicIdPartition)), Set.of(), topicIds);
+        RemoteLogSegmentMetadata metadata = createRemoteLogSegmentMetadata(
+                new RemoteLogSegmentId(leaderTopicIdPartition, Uuid.randomUuid()),
+                0L, 99L, 2000L, RemoteLogSegmentState.COPY_SEGMENT_FINISHED);
+        when(remoteLogMetadataManager.listRemoteLogSegments(leaderTopicIdPartition))
+                .thenAnswer(invocation -> List.of(metadata).iterator());
+
+        assertEquals(Optional.of(true),
+                remoteLogManager.hasReadableRemoteSegmentWithMaxTimestampAtLeast(leaderTopicIdPartition.topicPartition(), 2000L));
+        assertEquals(Optional.of(false),
+                remoteLogManager.hasReadableRemoteSegmentWithMaxTimestampAtLeast(leaderTopicIdPartition.topicPartition(), 2001L));
+    }
+
+    @Test
+    void testHasReadableRemoteSegmentWithMaxTimestampAtLeastForTransitionalSegment() throws RemoteStorageException {
+        doReturn(true).when(remoteLogMetadataManager).isReady(any(TopicIdPartition.class));
+        remoteLogManager.onLeadershipChange(Set.of(mockPartition(leaderTopicIdPartition)), Set.of(), topicIds);
+        RemoteLogSegmentMetadata metadata = createRemoteLogSegmentMetadata(
+                new RemoteLogSegmentId(leaderTopicIdPartition, Uuid.randomUuid()),
+                0L, 99L, 2000L, RemoteLogSegmentState.COPY_SEGMENT_STARTED);
+        when(remoteLogMetadataManager.listRemoteLogSegments(leaderTopicIdPartition))
+                .thenAnswer(invocation -> List.of(metadata).iterator());
+
+        assertEquals(Optional.empty(),
+                remoteLogManager.hasReadableRemoteSegmentWithMaxTimestampAtLeast(leaderTopicIdPartition.topicPartition(), 2000L));
+        assertEquals(Optional.of(false),
+                remoteLogManager.hasReadableRemoteSegmentWithMaxTimestampAtLeast(leaderTopicIdPartition.topicPartition(), 2001L));
+    }
+
+    @Test
+    void testHasReadableRemoteSegmentWithMaxTimestampAtLeastPrefersFinishedOverTransitional() throws RemoteStorageException {
+        doReturn(true).when(remoteLogMetadataManager).isReady(any(TopicIdPartition.class));
+        remoteLogManager.onLeadershipChange(Set.of(mockPartition(leaderTopicIdPartition)), Set.of(), topicIds);
+        RemoteLogSegmentMetadata transitional = createRemoteLogSegmentMetadata(
+                new RemoteLogSegmentId(leaderTopicIdPartition, Uuid.randomUuid()),
+                0L, 99L, 3000L, RemoteLogSegmentState.DELETE_SEGMENT_STARTED);
+        RemoteLogSegmentMetadata finished = createRemoteLogSegmentMetadata(
+                new RemoteLogSegmentId(leaderTopicIdPartition, Uuid.randomUuid()),
+                100L, 199L, 4000L, RemoteLogSegmentState.COPY_SEGMENT_FINISHED);
+        when(remoteLogMetadataManager.listRemoteLogSegments(leaderTopicIdPartition))
+                .thenAnswer(invocation -> List.of(transitional, finished).iterator());
+
+        assertEquals(Optional.of(true),
+                remoteLogManager.hasReadableRemoteSegmentWithMaxTimestampAtLeast(leaderTopicIdPartition.topicPartition(), 3500L));
+    }
+
+    @Test
+    void testHasReadableRemoteSegmentWithMaxTimestampAtLeastWhenListFails() throws RemoteStorageException {
+        remoteLogManager.onLeadershipChange(Set.of(mockPartition(leaderTopicIdPartition)), Set.of(), topicIds);
+        doAnswer(invocation -> {
+            throw new RemoteStorageException("rlmm unavailable");
+        }).when(remoteLogMetadataManager).listRemoteLogSegments(leaderTopicIdPartition);
+
+        assertEquals(Optional.empty(),
+                remoteLogManager.hasReadableRemoteSegmentWithMaxTimestampAtLeast(leaderTopicIdPartition.topicPartition(), 1000L));
+    }
+
+    @Test
     void testFetchRemoteLogSegmentMetadata() throws RemoteStorageException {
         remoteLogManager.onLeadershipChange(
             Set.of(mockPartition(leaderTopicIdPartition)), Set.of(mockPartition(followerTopicIdPartition)), topicIds);
@@ -4190,6 +4277,24 @@ public class RemoteLogManagerTest {
             segmentMetadataList.add(metadata);
         }
         return segmentMetadataList;
+    }
+
+    private RemoteLogSegmentMetadata createRemoteLogSegmentMetadata(RemoteLogSegmentId segmentID,
+                                                                    long startOffset,
+                                                                    long endOffset,
+                                                                    long maxTimestampMs,
+                                                                    RemoteLogSegmentState state) {
+        return new RemoteLogSegmentMetadata(
+                segmentID,
+                startOffset,
+                endOffset,
+                maxTimestampMs,
+                brokerId,
+                time.milliseconds(),
+                1000,
+                Optional.empty(),
+                state,
+                truncateAndGetLeaderEpochs(totalEpochEntries, startOffset, endOffset));
     }
 
     private RemoteLogSegmentMetadata createRemoteLogSegmentMetadata(RemoteLogSegmentId segmentID,

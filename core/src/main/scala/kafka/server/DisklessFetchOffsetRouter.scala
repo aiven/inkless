@@ -83,6 +83,14 @@ class DisklessFetchOffsetRouter(
    *                                      reached the classic-to-diskless switch offset.
    * @param classicFetchOffset            runs the standard Kafka classic-path lookup for the
    *                                      given `(topicPartition, partition, allowFromFollower)`.
+   * @param hasRebuiltTierState           returns whether the replica has rebuilt its tier state, so its
+   *                                      local UnifiedLog can search the remote tier for a timestamp.
+   * @param hasReadableRemoteSegmentWithMaxTimestampAtLeast
+   *                                      returns whether RLMM has a readable remote segment whose
+   *                                      maximum timestamp is at or after the timestamp.
+   *                                      Empty if RLMM can't tell yet.
+   * @param onListOffsetsDeferred         runs once for each timestamp lookup answered with the retriable
+   *                                      error because the replica hasn't rebuilt its tier state.
    */
   def route(
     job: FetchOffsetHandler.Job,
@@ -93,7 +101,10 @@ class DisklessFetchOffsetRouter(
     version: Short,
     classicLogStartOffsetProvider: TopicPartition => Option[Long],
     hasCompleteClassicPrefix: (TopicPartition, Long) => Boolean,
-    classicFetchOffset: (TopicPartition, ListOffsetsPartition, Boolean) => ListOffsetsPartitionStatus
+    classicFetchOffset: (TopicPartition, ListOffsetsPartition, Boolean) => ListOffsetsPartitionStatus,
+    hasRebuiltTierState: TopicPartition => Boolean,
+    hasReadableRemoteSegmentWithMaxTimestampAtLeast: (TopicPartition, Long) => Optional[java.lang.Boolean],
+    onListOffsetsDeferred: () => Unit
   ): ListOffsetsPartitionStatus = {
     val classicToDisklessStartOffset = inklessMetadataView.getClassicToDisklessStartOffset(topicPartition)
     val switchPending = classicToDisklessStartOffset == PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING
@@ -152,7 +163,16 @@ class DisklessFetchOffsetRouter(
 
         case t if t >= 0 =>
           // Specific timestamp: classic first, fall back to diskless on a "no match".
-          classicWithDisklessFallbackLookup(topicPartition, version, classicLookup _, disklessLookup _, disklessLookupOnNewJob _)
+          // A replica that can't search the tier answers "no match" for a timestamp in the prefix, and
+          // the control plane only knows the WAL: see deferPrefixMatch.
+          // A rebuild that starts during an async classic search clears the leader epoch cache, and the
+          // search then finds nothing. The fallback checks the rebuild state again for that reason.
+          val tierRebuildPendingAtRouting = isConsolidatingPartition && !hasRebuiltTierState(topicPartition)
+          def guarded(lookup: () => Lookup): () => Lookup = () =>
+            if (tierRebuildPendingAtRouting || (isConsolidatingPartition && !hasRebuiltTierState(topicPartition)))
+              deferPrefixMatch(lookup(), topicPartition, t, hasReadableRemoteSegmentWithMaxTimestampAtLeast, onListOffsetsDeferred, version)
+            else lookup()
+          classicWithDisklessFallbackLookup(topicPartition, version, classicLookup _, guarded(disklessLookup _), guarded(disklessLookupOnNewJob _))
 
         case _ =>
           // LATEST_TIMESTAMP / MAX_TIMESTAMP: diskless first, classic fallback on empty.
@@ -184,6 +204,37 @@ class DisklessFetchOffsetRouter(
         else () => disklessLookupOnNewJob()
       withFallback(topicPartition, classicLookupOf(classic, version), fallback)
     } else classic
+  }
+
+  /**
+   * Turns a diskless answer into a retriable error when the remote tier can hold a better one.
+   * The replica couldn't search the remote tier, so the control plane answer covers only the WAL.
+   * Classic picks the first remote segment whose maximum timestamp is at or after the target. This does
+   * the same without the leader epoch cache. The answer stays when RLMM is ready
+   * and no readable remote segment reaches the timestamp, which holds for a no-match answer too.
+   * Otherwise the lookup defers, also when RLMM can't tell yet.
+   */
+  private def deferPrefixMatch(lookup: Lookup,
+                               topicPartition: TopicPartition,
+                               timestamp: Long,
+                               hasReadableRemoteSegmentWithMaxTimestampAtLeast: (TopicPartition, Long) => Optional[java.lang.Boolean],
+                               onListOffsetsDeferred: () => Unit,
+                               version: Short): Lookup = {
+    val checked = lookup.taskFuture.thenApply[FileRecordsOrError] { result =>
+      if (result.hasException || isNoRemoteSegmentReaching(hasReadableRemoteSegmentWithMaxTimestampAtLeast, topicPartition, timestamp)) result
+      else {
+        onListOffsetsDeferred()
+        pendingError(Errors.OFFSET_NOT_AVAILABLE.exception("The replica has not rebuilt its tier state yet."), version)
+      }
+    }
+    new AsyncOffsetReadFutureHolder(lookup.jobFuture, checked)
+  }
+
+  private def isNoRemoteSegmentReaching(hasReadableRemoteSegmentWithMaxTimestampAtLeast: (TopicPartition, Long) => Optional[java.lang.Boolean],
+                                        topicPartition: TopicPartition,
+                                        timestamp: Long): Boolean = {
+    val reaching = hasReadableRemoteSegmentWithMaxTimestampAtLeast(topicPartition, timestamp)
+    reaching.isPresent && !reaching.get
   }
 
   /**
@@ -341,6 +392,12 @@ private[server] object DisklessFetchOffsetRouter {
     }
   }
 
+  /** Wraps a retriable error, which `ListOffsets` before v5 can only express as `LEADER_NOT_AVAILABLE`. */
+  private def pendingError(e: => ApiException, version: Short): FileRecordsOrError = {
+    val mapped: Exception = if (version >= 5) e else Errors.LEADER_NOT_AVAILABLE.exception()
+    new FileRecordsOrError(Optional.of(mapped), Optional.empty())
+  }
+
   /**
    * Apply the same `lastFetchableOffset` / `maybeOffsetsError` evaluation that
    * [[org.apache.kafka.server.purgatory.DelayedRemoteListOffsets]] performs when it inspects a
@@ -361,20 +418,15 @@ private[server] object DisklessFetchOffsetRouter {
   private def translateClassicRemoteResult(remoteResult: FileRecordsOrError,
                                            classic: ListOffsetsPartitionStatus,
                                            version: Short): FileRecordsOrError = {
-    def mapPendingError(e: ApiException): FileRecordsOrError = {
-      val mapped: Exception = if (version >= 5) e else Errors.LEADER_NOT_AVAILABLE.exception()
-      new FileRecordsOrError(Optional.of(mapped), Optional.empty())
-    }
-
     if (remoteResult.hasException) remoteResult
     else if (!remoteResult.hasTimestampAndOffset) {
-      classic.maybeOffsetsError.toScala.map(mapPendingError).getOrElse(remoteResult)
+      classic.maybeOffsetsError.toScala.map(pendingError(_, version)).getOrElse(remoteResult)
     } else {
       val found = remoteResult.timestampAndOffset.get
       // Clamped == true: found offset is at/past the visibility boundary (LSO/HW/LEO per isolation level), so it isn't readable yet.
       val clamped = classic.lastFetchableOffset.toScala.exists(found.offset >= _)
       if (!clamped) remoteResult
-      else classic.maybeOffsetsError.toScala.map(mapPendingError).getOrElse(EmptyResult)
+      else classic.maybeOffsetsError.toScala.map(pendingError(_, version)).getOrElse(EmptyResult)
     }
   }
 }
