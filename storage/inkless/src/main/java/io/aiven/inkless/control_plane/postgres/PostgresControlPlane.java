@@ -362,9 +362,12 @@ public class PostgresControlPlane extends AbstractControlPlane {
     }
 
     @Override
-    public List<PruneDisklessLogsResponse> pruneDisklessLogs(List<PruneDisklessLogsRequest> pruneDisklessLogsRequests) {
+    public List<PruneDisklessLogsResponse> pruneDisklessLogs(
+            final List<PruneDisklessLogsRequest> pruneDisklessLogsRequests,
+            final int maxBatchesPerRequest) {
         try {
-            final PruneDisklessLogsJob job = new PruneDisklessLogsJob(time, jobsJooqCtx, pruneDisklessLogsRequests, pgMetrics::onPruneDisklessLogsCompleted);
+            final PruneDisklessLogsJob job = new PruneDisklessLogsJob(
+                time, jobsJooqCtx, pruneDisklessLogsRequests, maxBatchesPerRequest, pgMetrics::onPruneDisklessLogsCompleted);
             return job.call();
         } catch (Exception e) {
             if (e instanceof ControlPlaneException) {

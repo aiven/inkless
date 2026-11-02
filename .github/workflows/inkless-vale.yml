@@ -74,6 +74,11 @@ jobs:
         if: github.event_name == 'pull_request'
         run: echo "::add-matcher::.vale/problem-matcher.json"
 
+      # Vale's reStructuredText parser shells out to rst2html before it applies any style rule.
+      - name: Install rst2html
+        if: github.event_name == 'pull_request'
+        run: sudo apt-get update && sudo apt-get install -y python3-docutils
+
       - name: Lint added prose from AI-attributed commits
         if: github.event_name == 'pull_request'
         env:
