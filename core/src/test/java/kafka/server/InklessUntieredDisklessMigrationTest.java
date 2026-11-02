@@ -361,10 +361,11 @@ public class InklessUntieredDisklessMigrationTest {
 
     /**
      * Metadata routing and reads for clients in each availability zone and for a client without one.
-     * Both topics start untiered with replication factor 1 on a cluster with managed replicas off.
-     * After the restart, one topic stays untiered and routes to a broker in the client zone. The other
-     * gets replication factor 2 and then remote storage, as the migration procedure says, and routes
-     * to a replica, in the client zone when one exists there.
+     * All topics start untiered with replication factor 1 on a cluster with managed replicas off.
+     * After the restart, one topic stays untiered and routes to a broker in the client zone. Another
+     * gets replication factor 2 and then remote storage, and routes to a replica, in the client zone
+     * when one exists there. The last one gets remote storage at replication factor 1, and every
+     * client routes to its single replica, also from another zone.
      */
     @Test
     public void testClientRoutingOfUntieredAndConsolidatedTopics(final TestInfo testInfo) throws Exception {
@@ -373,6 +374,7 @@ public class InklessUntieredDisklessMigrationTest {
         final String clusterId = UUID.randomUUID().toString();
         final String untiered = "routing-untiered";
         final String consolidated = "routing-consolidated";
+        final String consolidatedSingleReplica = "routing-consolidated-rf1";
         final int records = 20;
 
         try (KafkaClusterTestKit first = createCluster(clusterId, false, false)) {
@@ -382,26 +384,35 @@ public class InklessUntieredDisklessMigrationTest {
             try (Admin admin = Admin.create(Map.of(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, first.bootstrapServers()))) {
                 admin.createTopics(List.of(
                     new NewTopic(untiered, 1, (short) 1).configs(Map.of(DISKLESS_ENABLE_CONFIG, "true")),
-                    new NewTopic(consolidated, 1, (short) 1).configs(Map.of(DISKLESS_ENABLE_CONFIG, "true"))
+                    new NewTopic(consolidated, 1, (short) 1).configs(Map.of(DISKLESS_ENABLE_CONFIG, "true")),
+                    new NewTopic(consolidatedSingleReplica, 1, (short) 1).configs(Map.of(DISKLESS_ENABLE_CONFIG, "true"))
                 )).all().get(30, TimeUnit.SECONDS);
             }
             produce(first, untiered, 1, records);
             produce(first, consolidated, 1, records);
+            produce(first, consolidatedSingleReplica, 1, records);
         }
 
         try (KafkaClusterTestKit second = createCluster(clusterId, true, true)) {
             second.startup();
             second.waitForReadyBrokers();
             final TopicPartition consolidatedPartition = new TopicPartition(consolidated, 0);
+            final TopicPartition singleReplicaPartition = new TopicPartition(consolidatedSingleReplica, 0);
             try (Admin admin = Admin.create(Map.of(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, second.bootstrapServers()))) {
                 increaseReplicationFactor(second, admin, consolidatedPartition, 2);
                 alterTopic(admin, consolidated, Map.of(REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true"));
+                alterTopic(admin, consolidatedSingleReplica, Map.of(REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true"));
             }
-            final Set<Integer> replicas = replicasOf(second, consolidated);
-            awaitLocalLogEndOffsets(second, consolidatedPartition, replicas, records);
+            final Map<String, Set<Integer>> consolidatedReplicas = Map.of(
+                consolidated, replicasOf(second, consolidated),
+                consolidatedSingleReplica, replicasOf(second, consolidatedSingleReplica));
+            assertEquals(2, consolidatedReplicas.get(consolidated).size());
+            assertEquals(1, consolidatedReplicas.get(consolidatedSingleReplica).size());
+            awaitLocalLogEndOffsets(second, consolidatedPartition, consolidatedReplicas.get(consolidated), records);
+            awaitLocalLogEndOffsets(second, singleReplicaPartition, consolidatedReplicas.get(consolidatedSingleReplica), records);
 
             final List<String> violations = new ArrayList<>();
-            for (final String topic : List.of(untiered, consolidated)) {
+            for (final String topic : List.of(untiered, consolidated, consolidatedSingleReplica)) {
                 for (final String az : Arrays.asList("az1", "az2", "az3", null)) {
                     final RoutingResult result = routingOf(second, topic, az, records);
                     final String leaderAz = "az" + (result.leader() + 1);
@@ -416,7 +427,8 @@ public class InklessUntieredDisklessMigrationTest {
                     if (az != null && topic.equals(untiered) && !az.equals(leaderAz)) {
                         violations.add(cell + ": untiered topic should route to the client zone");
                     }
-                    if (topic.equals(consolidated)) {
+                    final Set<Integer> replicas = consolidatedReplicas.get(topic);
+                    if (replicas != null) {
                         if (!replicas.contains(result.leader())) {
                             violations.add(cell + ": leader is not an assigned replica " + replicas);
                         } else if (az != null && replicas.stream().anyMatch(id -> az.equals("az" + (id + 1))) && !az.equals(leaderAz)) {
