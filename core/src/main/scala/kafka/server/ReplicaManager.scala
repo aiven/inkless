@@ -21,7 +21,7 @@ import io.aiven.inkless.common.SharedState
 import io.aiven.inkless.consume.{ConcatenatedRecords, FetchHandler, FetchOffsetHandler, Reader}
 import io.aiven.inkless.storage_backend.common.ObjectFetcher
 import io.aiven.inkless.control_plane.{AdvanceCrossTierLogStartOffsetRequest, AdvanceCrossTierLogStartOffsetResponse, AvailabilityGatedControlPlane, BatchInfo, ControlPlaneAvailability, ControlPlaneUnavailableException, FindBatchRequest, FindBatchResponse, InitDisklessLogProducerState, RepairDisklessLogRequest, ListOffsetsRequest => CpListOffsetsRequest}
-import io.aiven.inkless.delete.{DeleteRecordsInterceptor, FileCleaner, RetentionEnforcer, TopicPurger}
+import io.aiven.inkless.delete.{ConsolidatedDisklessLogPrunerMetrics, DeleteRecordsInterceptor, FileCleaner, RetentionEnforcer, TopicPurger}
 import io.aiven.inkless.produce.AppendHandler
 import io.aiven.inkless.consolidation.{ConsolidatedDisklessLogPruner, ConsolidationFetcherManager, ConsolidationMetrics, ConsolidationReconciler, DelayedConsolidationFetch}
 import kafka.cluster.Partition
@@ -312,9 +312,23 @@ class ReplicaManager(val config: KafkaConfig,
     inklessSharedState.map(_.controlPlane()).collect { case gate: AvailabilityGatedControlPlane => gate }
 
   // --- Diskless Partition Consolidation Fields ---
+  private val inklessConsolidationPruneMetrics: Option[ConsolidatedDisklessLogPrunerMetrics] =
+    if (config.disklessRemoteStorageConsolidationEnabled)
+      inklessSharedState.map(_ => new ConsolidatedDisklessLogPrunerMetrics())
+    else
+      None
   private val inklessConsolidatedDisklessLogPruner: Option[ConsolidatedDisklessLogPruner] =
     if (config.disklessRemoteStorageConsolidationEnabled)
-      inklessSharedState.map(st => new ConsolidatedDisklessLogPruner(this, _inklessMetadataView, st.controlPlane))
+      for {
+        st <- inklessSharedState
+        pruneMetrics <- inklessConsolidationPruneMetrics
+      } yield new ConsolidatedDisklessLogPruner(
+        this,
+        _inklessMetadataView,
+        st.controlPlane,
+        st.config().maxBatchesPerConsolidationCleanupRequest(),
+        pruneMetrics
+      )
     else
       None
   private val consolidationMetrics: Option[ConsolidationMetrics] =
@@ -3634,6 +3648,7 @@ class ReplicaManager(val config: KafkaConfig,
     inklessFetchHandler.foreach(_.close())
     inklessFetchOffsetHandler.foreach(_.close())
     inklessRetentionEnforcer.foreach(_.close())
+    inklessConsolidationPruneMetrics.foreach(_.close())
     inklessFileCleaner.foreach(_.close())
     inklessTopicPurger.foreach(_.close())
     inklessDeleteRecordsInterceptor.foreach(_.close())
