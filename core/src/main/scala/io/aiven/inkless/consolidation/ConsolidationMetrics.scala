@@ -28,11 +28,17 @@ import scala.jdk.CollectionConverters._
 
 /**
  * Tracks consolidation pipeline lag per partition and aggregated at broker level.
- * All lag values are in offsets (messages).
+ * Offset lag values are in messages. Time lag values are in milliseconds.
  *
  * Pipeline: Diskless WAL → Local Log → Remote/Tiered Storage
  *
  * - ConsolidationLocalLag: disklessLEO - localLogEndOffset (first hop: diskless → local)
+ * - `ConsolidationLocalTimeLag`: timestamp span in milliseconds from the first pending coordinate after this
+ *   fetch to the last coordinate below `disklessLEO`. The span uses each coordinate's aggregate timestamp.
+ *   A coalesced coordinate contributes one timestamp, the greatest physical timestamp stored on that row.
+ *   This is the intended precision. The broker aggregate reports the maximum partition value. The partition
+ *   gauge reads 0 after registration, when caught up, and when one batch remains. It retains its published
+ *   value when a later sample lacks either boundary.
  * - ConsolidationTotalLag: disklessLEO - remoteLogEndOffset (full pipeline: diskless → remote).
  *   Only updated when remote storage is active (highestOffsetInRemoteStorage ≥ 0); stays at 0 otherwise.
  * - ConsolidationDeletableMessages: messages already in remote storage eligible for WAL pruning
@@ -40,7 +46,7 @@ import scala.jdk.CollectionConverters._
  *   batch larger than the partition's `segment.bytes` (RecordBatchTooLargeException). The partition is parked
  *   and retried with backoff, so this increments once per retry while the condition persists. Non-zero
  *   indicates a partition holding a batch larger than the current `segment.bytes`; raise `segment.bytes` above the
- *   batch size to resume. See DisklessLeaderEndPoint.clampRecordsToSegment.
+ *   batch size to resume. See `DisklessLeaderEndPoint.selectRecordsWithinSegmentBudget`.
  * - ConsolidationRemotePrefixUnknown: 1 while a WAL-gap fetch is waiting on RLMM to decide OFFSET_MOVED
  *   vs never-tiered OFFSET_OUT_OF_RANGE (unregistered, not ready, list failed, or a covering segment
  *   still transitional); 0 once decided.
@@ -50,6 +56,7 @@ import scala.jdk.CollectionConverters._
 class ConsolidationMetrics extends Closeable {
   private val TotalLag = "ConsolidationTotalLag"
   private val LocalLag = "ConsolidationLocalLag"
+  private val LocalTimeLag = "ConsolidationLocalTimeLag"
   private val DeletableMessages = "ConsolidationDeletableMessages"
   private val OversizedBatch = "ConsolidationOversizedBatch"
   private val RemotePrefixUnknown = "ConsolidationRemotePrefixUnknown"
@@ -58,14 +65,15 @@ class ConsolidationMetrics extends Closeable {
 
   private val totalLagByPartition = new ConcurrentHashMap[TopicPartition, AtomicLong]()
   private val localLagByPartition = new ConcurrentHashMap[TopicPartition, AtomicLong]()
+  private val localTimeLagByPartition = new ConcurrentHashMap[TopicPartition, AtomicLong]()
   private val deletableByPartition = new ConcurrentHashMap[TopicPartition, AtomicLong]()
   private val oversizedBatchByPartition = new ConcurrentHashMap[TopicPartition, AtomicLong]()
   private val remotePrefixUnknownByPartition = new ConcurrentHashMap[TopicPartition, AtomicLong]()
   private val remotePrefixGenerationByPartition = new ConcurrentHashMap[TopicPartition, AtomicLong]()
 
-  // Broker-level aggregate gauges (sum across all partitions)
   metricsGroup.newGauge(TotalLag, () => sumValues(totalLagByPartition))
   metricsGroup.newGauge(LocalLag, () => sumValues(localLagByPartition))
+  metricsGroup.newGauge(LocalTimeLag, () => maxValues(localTimeLagByPartition))
   metricsGroup.newGauge(DeletableMessages, () => sumValues(deletableByPartition))
   metricsGroup.newGauge(OversizedBatch, () => sumValues(oversizedBatchByPartition))
   metricsGroup.newGauge(RemotePrefixUnknown, () => sumValues(remotePrefixUnknownByPartition))
@@ -81,6 +89,11 @@ class ConsolidationMetrics extends Closeable {
     localLagByPartition.computeIfAbsent(tp, _ => {
       val value = new AtomicLong(0)
       metricsGroup.newGauge(LocalLag, () => value.get, tags)
+      value
+    }).set(0)
+    localTimeLagByPartition.computeIfAbsent(tp, _ => {
+      val value = new AtomicLong(0)
+      metricsGroup.newGauge(LocalTimeLag, () => value.get, tags)
       value
     }).set(0)
     deletableByPartition.computeIfAbsent(tp, _ => {
@@ -109,6 +122,48 @@ class ConsolidationMetrics extends Closeable {
 
   def updateLocalLag(tp: TopicPartition, lag: Long): Unit =
     Option(localLagByPartition.get(tp)).foreach(_.set(lag))
+
+  def reportLocalTimeLag(
+    tp: TopicPartition,
+    startingOffsetTimestamp: Option[Long],
+    highWatermarkTimestamp: Option[Long],
+    localLeo: Long,
+    disklessLeo: Long,
+    backlogConsumed: Boolean = false
+  ): Unit = {
+    Option(localTimeLagByPartition.get(tp)).foreach { value =>
+      value.updateAndGet(current =>
+        nextPublishedTimeLag(
+          current,
+          startingOffsetTimestamp,
+          highWatermarkTimestamp,
+          localLeo,
+          disklessLeo,
+          backlogConsumed))
+    }
+  }
+
+  private def nextPublishedTimeLag(
+    current: Long,
+    startingOffsetTimestamp: Option[Long],
+    highWatermarkTimestamp: Option[Long],
+    localLeo: Long,
+    disklessLeo: Long,
+    backlogConsumed: Boolean
+  ): Long = {
+    if (localLeo < 0 || disklessLeo < 0) {
+      current
+    } else if (localLeo >= disklessLeo) {
+      0L
+    } else if (backlogConsumed && startingOffsetTimestamp.isEmpty && highWatermarkTimestamp.exists(_ >= 0)) {
+      0L
+    } else {
+      (for {
+        startTimestamp <- startingOffsetTimestamp.filter(_ >= 0)
+        headTimestamp <- highWatermarkTimestamp.filter(_ >= 0)
+      } yield Math.max(0L, headTimestamp - startTimestamp)).getOrElse(current)
+    }
+  }
 
   def updateDeletableMessages(tp: TopicPartition, count: Long): Unit =
     Option(deletableByPartition.get(tp)).foreach(_.set(count))
@@ -161,11 +216,13 @@ class ConsolidationMetrics extends Closeable {
     val tags = Map("topic" -> tp.topic, "partition" -> tp.partition.toString).asJava
     totalLagByPartition.remove(tp)
     localLagByPartition.remove(tp)
+    localTimeLagByPartition.remove(tp)
     deletableByPartition.remove(tp)
     oversizedBatchByPartition.remove(tp)
     remotePrefixUnknownByPartition.remove(tp)
     metricsGroup.removeMetric(TotalLag, tags)
     metricsGroup.removeMetric(LocalLag, tags)
+    metricsGroup.removeMetric(LocalTimeLag, tags)
     metricsGroup.removeMetric(DeletableMessages, tags)
     metricsGroup.removeMetric(OversizedBatch, tags)
     metricsGroup.removeMetric(RemotePrefixUnknown, tags)
@@ -173,13 +230,15 @@ class ConsolidationMetrics extends Closeable {
 
   override def close(): Unit = {
     // Using same keys to unregister all partition-level metrics
-    val partitions = (totalLagByPartition.keys.asScala ++ remotePrefixUnknownByPartition.keys.asScala ++
+    val partitions = (totalLagByPartition.keys.asScala ++ localTimeLagByPartition.keys.asScala ++
+      remotePrefixUnknownByPartition.keys.asScala ++
       remotePrefixGenerationByPartition.keys.asScala).toSet
     partitions.foreach(unregisterPartition)
     remotePrefixGenerationByPartition.clear()
     // Unregistering aggregated metrics
     metricsGroup.removeMetric(TotalLag)
     metricsGroup.removeMetric(LocalLag)
+    metricsGroup.removeMetric(LocalTimeLag)
     metricsGroup.removeMetric(DeletableMessages)
     metricsGroup.removeMetric(OversizedBatch)
     metricsGroup.removeMetric(RemotePrefixUnknown)
@@ -187,4 +246,7 @@ class ConsolidationMetrics extends Closeable {
 
   private def sumValues(map: ConcurrentHashMap[TopicPartition, AtomicLong]): Long =
     map.values.asScala.foldLeft(0L)(_ + _.get)
+
+  private def maxValues(map: ConcurrentHashMap[TopicPartition, AtomicLong]): Long =
+    map.values.asScala.foldLeft(0L)((max, value) => Math.max(max, value.get))
 }

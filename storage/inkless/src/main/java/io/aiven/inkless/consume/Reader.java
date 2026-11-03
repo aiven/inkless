@@ -473,6 +473,7 @@ public class Reader implements AutoCloseable {
                 params,
                 fetchInfos,
                 maxBatchesPerPartitionToFind,
+                isConsolidationFetch,
                 fetchMetrics::findBatchesFinished
             ),
             metadataExecutor

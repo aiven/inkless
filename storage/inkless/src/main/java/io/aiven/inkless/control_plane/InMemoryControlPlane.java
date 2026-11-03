@@ -289,7 +289,7 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         final int fetchMaxBytes,
         final int maxBatchesPerPartition
     ) {
-        // Mirrors find_batches_v2: fetchMaxBytes is one budget shared across the whole request,
+        // Mirrors `find_batches_v3`: `fetchMaxBytes` is one budget shared across the whole request,
         // spent in request order, with a single request-level minOneMessage grant.
         // Kept deliberately aligned with the SQL -- AbstractControlPlaneTest asserts the same
         // expectations against both planes, because the diskless fetch path's fairness depends on
@@ -344,6 +344,11 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         final List<BatchInfo> batches = new ArrayList<>();
         long partitionBytes = 0;
         long globalBytes = globalBytesAlreadySpent;
+        boolean budgetRejected = false;
+        boolean batchCapReached = false;
+        long lastReturnedLastOffset = -1;
+        OptionalLong startingOffsetTimestamp = OptionalLong.empty();
+        OptionalLong highWatermarkTimestamp = OptionalLong.empty();
         for (final Long batchOffset : coordinates.navigableKeySet().tailSet(request.offset())) {
             final BatchInfo batch = coordinates.get(batchOffset).batchInfo();
             // globalBytes == 0 is the request-level grant: it holds only until the first batch anywhere in
@@ -352,16 +357,52 @@ public class InMemoryControlPlane extends AbstractControlPlane {
             final boolean withinBudget =
                 partitionBytes < request.maxPartitionFetchBytes() && globalBytes < fetchMaxBytes;
             if (globalBytes != 0 && !withinBudget) {
+                if (request.includeBacklogTimestamps()) {
+                    startingOffsetTimestamp = OptionalLong.of(batch.metadata().timestamp());
+                }
+                budgetRejected = true;
                 break;
             }
             batches.add(batch);
             partitionBytes += batch.metadata().byteSize();
             globalBytes += batch.metadata().byteSize();
+            lastReturnedLastOffset = batch.metadata().lastOffset();
             if (maxBatchesPerPartition > 0 && batches.size() >= maxBatchesPerPartition) {
+                batchCapReached = true;
                 break;
             }
         }
-        return new PartitionServed(FindBatchResponse.success(batches, logInfo.logStartOffset, logInfo.highWatermark), partitionBytes);
+        if (request.includeBacklogTimestamps()) {
+            if (batchCapReached) {
+                Map.Entry<Long, BatchInfoInternal> next = coordinates.higherEntry(lastReturnedLastOffset);
+                while (next != null && next.getValue().batchInfo().metadata().baseOffset() >= logInfo.highWatermark) {
+                    next = coordinates.higherEntry(next.getKey());
+                }
+                if (next != null) {
+                    startingOffsetTimestamp = OptionalLong.of(next.getValue().batchInfo().metadata().timestamp());
+                }
+            } else if (!budgetRejected && batches.isEmpty()) {
+                final BatchInfoInternal starting = coordinates.tailMap(request.offset()).values().stream()
+                    .filter(batch -> batch.batchInfo().metadata().baseOffset() < logInfo.highWatermark)
+                    .findFirst()
+                    .orElse(null);
+                if (starting != null) {
+                    startingOffsetTimestamp = OptionalLong.of(starting.batchInfo().metadata().timestamp());
+                }
+            }
+            final Map.Entry<Long, BatchInfoInternal> head = coordinates.lowerEntry(logInfo.highWatermark);
+            if (head != null) {
+                highWatermarkTimestamp = OptionalLong.of(head.getValue().batchInfo().metadata().timestamp());
+            }
+        }
+        return new PartitionServed(
+            FindBatchResponse.success(
+                batches,
+                logInfo.logStartOffset,
+                logInfo.highWatermark,
+                startingOffsetTimestamp,
+                highWatermarkTimestamp),
+            partitionBytes);
     }
 
     @Override

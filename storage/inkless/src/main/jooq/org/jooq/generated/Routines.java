@@ -26,6 +26,7 @@ import org.jooq.generated.tables.EnforceRetentionV1;
 import org.jooq.generated.tables.EnforceRetentionV2;
 import org.jooq.generated.tables.FindBatchesV1;
 import org.jooq.generated.tables.FindBatchesV2;
+import org.jooq.generated.tables.FindBatchesV3;
 import org.jooq.generated.tables.InitDisklessLogV1;
 import org.jooq.generated.tables.ListOffsetsV1;
 import org.jooq.generated.tables.PruneBatchesBelowHighestTieredOffsetV1;
@@ -40,6 +41,7 @@ import org.jooq.generated.tables.records.EnforceRetentionV1Record;
 import org.jooq.generated.tables.records.EnforceRetentionV2Record;
 import org.jooq.generated.tables.records.FindBatchesV1Record;
 import org.jooq.generated.tables.records.FindBatchesV2Record;
+import org.jooq.generated.tables.records.FindBatchesV3Record;
 import org.jooq.generated.tables.records.InitDisklessLogV1Record;
 import org.jooq.generated.tables.records.ListOffsetsV1Record;
 import org.jooq.generated.tables.records.PruneBatchesBelowHighestTieredOffsetV1Record;
@@ -51,6 +53,7 @@ import org.jooq.generated.udt.records.CommitBatchRequestV1Record;
 import org.jooq.generated.udt.records.DeleteRecordsRequestV1Record;
 import org.jooq.generated.udt.records.EnforceRetentionRequestV1Record;
 import org.jooq.generated.udt.records.FindBatchesRequestV1Record;
+import org.jooq.generated.udt.records.FindBatchesRequestV2Record;
 import org.jooq.generated.udt.records.InitDisklessLogProducerStateV1Record;
 import org.jooq.generated.udt.records.InitDisklessLogRequestV1Record;
 import org.jooq.generated.udt.records.ListOffsetsRequestV1Record;
@@ -582,6 +585,52 @@ public class Routines {
         , Field<Integer> maxBatchesPerPartition
     ) {
         return org.jooq.generated.tables.FindBatchesV2.FIND_BATCHES_V2.call(
+            argRequests,
+            fetchMaxBytes,
+            maxBatchesPerPartition
+        );
+    }
+
+    /**
+     * Call <code>find_batches_v3</code>.
+     */
+    public static Result<FindBatchesV3Record> findBatchesV3(
+          Configuration configuration
+        , FindBatchesRequestV2Record[] argRequests
+        , Integer fetchMaxBytes
+        , Integer maxBatchesPerPartition
+    ) {
+        return configuration.dsl().selectFrom(org.jooq.generated.tables.FindBatchesV3.FIND_BATCHES_V3.call(
+              argRequests
+            , fetchMaxBytes
+            , maxBatchesPerPartition
+        )).fetch();
+    }
+
+    /**
+     * Get <code>find_batches_v3</code> as a table.
+     */
+    public static FindBatchesV3 findBatchesV3(
+          FindBatchesRequestV2Record[] argRequests
+        , Integer fetchMaxBytes
+        , Integer maxBatchesPerPartition
+    ) {
+        return org.jooq.generated.tables.FindBatchesV3.FIND_BATCHES_V3.call(
+            argRequests,
+            fetchMaxBytes,
+            maxBatchesPerPartition
+        );
+    }
+
+    /**
+     * Get <code>find_batches_v3</code> as a table.
+     */
+    public static FindBatchesV3 findBatchesV3(
+          Field<FindBatchesRequestV2Record[]> argRequests
+        , Field<Integer> fetchMaxBytes
+        , Field<Integer> maxBatchesPerPartition
+    ) {
+        return org.jooq.generated.tables.FindBatchesV3.FIND_BATCHES_V3.call(
             argRequests,
             fetchMaxBytes,
             maxBatchesPerPartition

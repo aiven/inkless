@@ -25,13 +25,12 @@ import org.apache.kafka.common.errors.RecordBatchTooLargeException
 import org.apache.kafka.common.record.internal.{MemoryRecords, Records}
 import org.apache.kafka.common.requests.FetchResponse
 import org.apache.kafka.metadata.PartitionRegistration
-import org.apache.kafka.server.LeaderEndPoint
 import org.apache.kafka.storage.internals.log.LogAppendInfo
 
 import scala.util.Try
 
 class ConsolidationFetcherThread(name: String,
-                                 leader: LeaderEndPoint,
+                                 leader: DisklessLeaderEndPoint,
                                  brokerConfig: KafkaConfig,
                                  failedPartitions: FailedPartitions,
                                  replicaMgr: ReplicaManager,
@@ -60,7 +59,9 @@ class ConsolidationFetcherThread(name: String,
     partitionLeaderEpoch: Int,
     partitionData: FetchData
   ): Option[LogAppendInfo] = {
+    val timeLagSample = leader.takeTimeLagSample(topicPartition, fetchOffset)
     maybeStampDisklessLeaderEpoch(topicPartition, partitionData)
+    val fetchedRecords = FetchResponse.recordsOrFail(partitionData)
     val result =
       try {
         super.processPartitionData(topicPartition, fetchOffset, partitionLeaderEpoch, partitionData)
@@ -78,6 +79,12 @@ class ConsolidationFetcherThread(name: String,
             s"larger than segment.bytes. Consolidation is parked and will retry with backoff; raise " +
             s"segment.bytes above the batch size to resume. Underlying: ${e.getMessage}", e)
           consolidationMetrics.foreach(_.recordOversizedBatch(topicPartition))
+          // The sample was already taken for this fetch. Publish it before the rethrow, or each retry
+          // discards another sample and the gauge stays at the last successful value while the batch waits.
+          reportConsolidationLag(
+            topicPartition,
+            partitionData,
+            sampleForUnlandedBatch(timeLagSample, fetchedRecords))
           throw new ConsolidationSegmentOverflowException(
             s"Consolidation block for $topicPartition exceeds segment.bytes ($segmentSize)", e)
       }
@@ -88,6 +95,19 @@ class ConsolidationFetcherThread(name: String,
       }
     }
 
+    reportConsolidationLag(
+      topicPartition,
+      partitionData,
+      adjustTimeLagSample(timeLagSample, fetchedRecords, result))
+
+    result
+  }
+
+  private def reportConsolidationLag(
+    topicPartition: TopicPartition,
+    partitionData: FetchData,
+    sample: Option[TimeLagSample]
+  ): Unit = {
     consolidationMetrics.foreach { metrics =>
       val logOpt = Try(replicaMgr.getPartitionOrException(topicPartition).localLogOrException).toOption
       logOpt.foreach { log =>
@@ -96,14 +116,64 @@ class ConsolidationFetcherThread(name: String,
         val remoteLogEndOffset = log.highestOffsetInRemoteStorage()
 
         metrics.updateLocalLag(topicPartition, Math.max(0L, disklessLogEndOffset - localLogEndOffset))
+        metrics.reportLocalTimeLag(
+          topicPartition,
+          sample.flatMap(_.startingOffsetTimestamp),
+          sample.flatMap(_.highWatermarkTimestamp),
+          localLogEndOffset,
+          disklessLogEndOffset,
+          sample.exists(_.backlogConsumed))
         if (remoteLogEndOffset >= 0) {
           metrics.updateTotalLag(topicPartition, Math.max(0L, disklessLogEndOffset - remoteLogEndOffset))
           metrics.updateDeletableMessages(topicPartition, Math.max(0L, remoteLogEndOffset - log.localLogStartOffset()))
         }
       }
     }
+  }
 
-    result
+  private def sampleForUnlandedBatch(
+    sample: Option[TimeLagSample],
+    fetchedRecords: Records
+  ): Option[TimeLagSample] = sample.map { timeLagSample =>
+    val start = firstBatchTimestamp(fetchedRecords).orElse(timeLagSample.startingOffsetTimestamp)
+    timeLagSample.copy(startingOffsetTimestamp = start, backlogConsumed = false)
+  }
+
+  private def firstBatchTimestamp(records: Records): Option[Long] = {
+    val batches = records.batches().iterator()
+    if (batches.hasNext) Some(batches.next().maxTimestamp()) else None
+  }
+
+  private def adjustTimeLagSample(
+    sample: Option[TimeLagSample],
+    fetchedRecords: Records,
+    appendResult: Option[LogAppendInfo]
+  ): Option[TimeLagSample] = {
+    (sample, appendResult) match {
+      case (Some(timeLagSample), Some(logAppendInfo))
+          if logAppendInfo.validBytes >= 0 && logAppendInfo.validBytes < fetchedRecords.sizeInBytes =>
+        val adjustedSample = timeLagSample.copy(backlogConsumed = false)
+        firstUnappendedBatchTimestamp(fetchedRecords, logAppendInfo.validBytes)
+          .map(timestamp => adjustedSample.copy(startingOffsetTimestamp = Some(timestamp)))
+          .orElse(Some(adjustedSample))
+      case (Some(timeLagSample), None) =>
+        Some(timeLagSample.copy(backlogConsumed = false))
+      case _ =>
+        sample
+    }
+  }
+
+  private def firstUnappendedBatchTimestamp(records: Records, validBytes: Int): Option[Long] = {
+    var consumedBytes = 0L
+    val batches = records.batches().iterator()
+    while (batches.hasNext) {
+      val batch = batches.next()
+      consumedBytes += batch.sizeInBytes()
+      if (consumedBytes > validBytes) {
+        return Some(batch.maxTimestamp())
+      }
+    }
+    None
   }
 
   /**

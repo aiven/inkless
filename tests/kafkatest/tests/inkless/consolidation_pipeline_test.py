@@ -138,7 +138,10 @@ class ConsolidationPipelineTest(Test):
         # for diagnostics; we don't assert lag rose, as it is not reliably observable).
         self.kafka.read_jmx_output_all_nodes()
         jmx_keys = self.kafka.maximum_jmx_value
-        local_lag_key = ConsolidationVerifier.find_aggregate_key(jmx_keys, ConsolidationVerifier.LOCAL_LAG)
+        local_lag_key = ConsolidationVerifier.assert_aggregate_exported(
+            jmx_keys, ConsolidationVerifier.LOCAL_LAG)
+        ConsolidationVerifier.assert_aggregate_exported(
+            jmx_keys, ConsolidationVerifier.LOCAL_TIME_LAG)
         total_lag_key = ConsolidationVerifier.find_aggregate_key(jmx_keys, ConsolidationVerifier.TOTAL_LAG)
         deletable_key = ConsolidationVerifier.find_aggregate_key(jmx_keys, ConsolidationVerifier.DELETABLE_MESSAGES)
         local_lag_peak = jmx_keys.get(local_lag_key, 0) if local_lag_key else 0
@@ -146,10 +149,6 @@ class ConsolidationPipelineTest(Test):
         deletable_peak = jmx_keys.get(deletable_key, 0) if deletable_key else 0
         self.logger.info("Consolidation JMX peaks: local_lag=%s total_lag=%s deletable=%s" %
                          (local_lag_peak, total_lag_peak, deletable_peak))
-        assert local_lag_key is not None, \
-            ("ConsolidationLocalLag was not exported/scraped via JMX. Expected a "
-             "%s 'name=ConsolidationLocalLag' Value column; got keys: %s"
-             % (ConsolidationVerifier.JMX_PACKAGE, sorted(jmx_keys)))
 
         # Read every acked record back (from remote). Track unique offsets to avoid a false pass if
         # the consumer skips ranges (e.g. due to data loss) or re-reads duplicates during retries/rebalances.

@@ -41,6 +41,7 @@ class ConsolidationVerifier(object):
     JMX_TYPE = "ConsolidationMetrics"
     TOTAL_LAG = "ConsolidationTotalLag"
     LOCAL_LAG = "ConsolidationLocalLag"
+    LOCAL_TIME_LAG = "ConsolidationLocalTimeLag"
     DELETABLE_MESSAGES = "ConsolidationDeletableMessages"
     JMX_ATTRIBUTE = "Value"
 
@@ -103,9 +104,17 @@ class ConsolidationVerifier(object):
 
     @classmethod
     def aggregate_object_names(cls):
-        # Object names for the three broker-aggregate gauges.
         return [cls.aggregate_object_name(n)
-                for n in (cls.TOTAL_LAG, cls.LOCAL_LAG, cls.DELETABLE_MESSAGES)]
+                for n in (cls.TOTAL_LAG, cls.LOCAL_LAG, cls.LOCAL_TIME_LAG, cls.DELETABLE_MESSAGES)]
+
+    @classmethod
+    def assert_aggregate_exported(cls, jmx_keys, name):
+        key = cls.find_aggregate_key(jmx_keys, name)
+        assert key is not None, (
+            "%s was not exported/scraped via JMX. Expected a "
+            "%s 'name=%s' Value column; got keys: %s"
+            % (name, cls.JMX_PACKAGE, name, sorted(jmx_keys)))
+        return key
 
     @classmethod
     def find_aggregate_key(cls, keys, name):

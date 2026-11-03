@@ -93,6 +93,27 @@ public abstract class AbstractControlPlaneTest {
         controlPlane.configure(override);
     }
 
+    private void commitTimestampedBatches(final String objectKeyPrefix) {
+        for (int batch = 0; batch < 3; batch++) {
+            final int baseOffset = batch * 10;
+            controlPlane.commitFile(
+                objectKeyPrefix + batch,
+                ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT,
+                BROKER_ID,
+                FILE_SIZE,
+                List.of(CommitBatchRequest.of(
+                    0,
+                    EXISTING_TOPIC_1_ID_PARTITION_0,
+                    baseOffset,
+                    10,
+                    baseOffset,
+                    baseOffset + 9,
+                    (batch + 1) * 100L,
+                    TimestampType.CREATE_TIME))
+            );
+        }
+    }
+
     @BeforeEach
     void setupControlPlane(final TestInfo testInfo) {
         final var controlPlaneAndConfigs = createControlPlane(testInfo);
@@ -227,6 +248,127 @@ public abstract class AbstractControlPlaneTest {
                 ), expectedLogStartOffset, expectedHighWatermark)
             );
         }
+    }
+
+    @Test
+    void findTimestampBoundariesUseTheOffsetRange() {
+        controlPlane.commitFile(
+            "head-timestamp-1",
+            ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT,
+            BROKER_ID,
+            FILE_SIZE,
+            List.of(CommitBatchRequest.of(
+                0,
+                EXISTING_TOPIC_1_ID_PARTITION_0,
+                1,
+                10,
+                0,
+                9,
+                1000,
+                TimestampType.CREATE_TIME))
+        );
+        controlPlane.commitFile(
+            "head-timestamp-2",
+            ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT,
+            BROKER_ID,
+            FILE_SIZE,
+            List.of(CommitBatchRequest.of(
+                0,
+                EXISTING_TOPIC_1_ID_PARTITION_0,
+                11,
+                10,
+                10,
+                19,
+                10,
+                TimestampType.CREATE_TIME))
+        );
+
+        final FindBatchResponse response = controlPlane.findBatches(
+            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE, true)),
+            Integer.MAX_VALUE,
+            0
+        ).get(0);
+
+        assertThat(response.batches()).hasSize(2);
+        assertThat(response.startingOffsetTimestamp()).isEmpty();
+        assertThat(response.highWatermarkTimestamp()).hasValue(10L);
+    }
+
+    @Test
+    void findTimestampBoundariesUseRejectedBatchForByteBudgetExit() {
+        commitTimestampedBatches("byte-budget-boundary-");
+
+        final FindBatchResponse response = controlPlane.findBatches(
+            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, 10, true)),
+            1000,
+            0
+        ).get(0);
+
+        assertThat(response.batches()).hasSize(1);
+        assertThat(response.startingOffsetTimestamp()).hasValue(200L);
+        assertThat(response.highWatermarkTimestamp()).hasValue(300L);
+    }
+
+    @Test
+    void findTimestampBoundariesUseNextBatchForBatchCapExit() {
+        commitTimestampedBatches("batch-cap-boundary-");
+
+        final FindBatchResponse response = controlPlane.findBatches(
+            List.of(new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, 1000, true)),
+            1000,
+            1
+        ).get(0);
+
+        assertThat(response.batches()).hasSize(1);
+        assertThat(response.startingOffsetTimestamp()).hasValue(200L);
+        assertThat(response.highWatermarkTimestamp()).hasValue(300L);
+    }
+
+    @Test
+    void findTimestampBoundariesReturnWithAnEmptyBudgetResponse() {
+        controlPlane.commitFile(
+            "empty-boundary-0",
+            ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT,
+            BROKER_ID,
+            FILE_SIZE,
+            List.of(CommitBatchRequest.of(
+                0,
+                EXISTING_TOPIC_1_ID_PARTITION_0,
+                0,
+                10,
+                0,
+                9,
+                1,
+                TimestampType.CREATE_TIME))
+        );
+        controlPlane.commitFile(
+            "empty-boundary-1",
+            ObjectFormat.WRITE_AHEAD_MULTI_SEGMENT,
+            BROKER_ID,
+            FILE_SIZE,
+            List.of(CommitBatchRequest.of(
+                0,
+                EXISTING_TOPIC_1_ID_PARTITION_1,
+                0,
+                10,
+                0,
+                9,
+                100,
+                TimestampType.CREATE_TIME))
+        );
+
+        final List<FindBatchResponse> responses = controlPlane.findBatches(
+            List.of(
+                new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 0, Integer.MAX_VALUE, true),
+                new FindBatchRequest(EXISTING_TOPIC_1_ID_PARTITION_1, 0, Integer.MAX_VALUE, true)
+            ),
+            10,
+            0
+        );
+
+        assertThat(responses.get(1).batches()).isEmpty();
+        assertThat(responses.get(1).startingOffsetTimestamp()).hasValue(100L);
+        assertThat(responses.get(1).highWatermarkTimestamp()).hasValue(100L);
     }
 
     @Test

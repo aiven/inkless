@@ -24,7 +24,7 @@ import org.apache.kafka.common.InvalidRecordException
  * A consolidation fetch served a single record block larger than the follower's `segment.bytes`, so the
  * follower append rejected it with `RecordBatchTooLargeException`. This happens when a partition holds a
  * batch larger than the current `segment.bytes` (e.g. `max.message.bytes` was lowered below `segment.bytes`
- * over time, or a coalesced diskless unit). See `DisklessLeaderEndPoint.clampRecordsToSegment`.
+ * over time, or a coalesced diskless unit). See `DisklessLeaderEndPoint.selectRecordsWithinSegmentBudget`.
  *
  * Extends [[InvalidRecordException]] (same `InvalidConfigurationException` family as
  * `RecordBatchTooLargeException`) so [[kafka.server.AbstractFetcherThread]] treats it as a soft,
