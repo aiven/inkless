@@ -3662,26 +3662,34 @@ class ReplicaManager(val config: KafkaConfig,
 
     // Shrink ISRs for non offline partitions
     allPartitions.forEach { (topicPartition, _) =>
-      onlinePartition(topicPartition).filter(isIsrShrinkEligible).foreach(_.maybeShrinkIsr())
+      if (isIsrShrinkEligible(topicPartition))
+        onlinePartition(topicPartition).foreach(_.maybeShrinkIsr())
     }
   }
 
   /**
    * Returns true if the partition shrinks ISR for lag by classic rules: a classic partition, or a
-   * partition in phase 1 of the classic-to-diskless switch whose leader log ends at the seal. In phase 1
-   * the ISR members' local logs are the only complete copy of the classic prefix, and the leader records
-   * a follower fetch at or above the seal as a fetch at the seal. Lag against the leader's log end offset
-   * is then lag on the prefix. A leader that consolidated in phase 1 before an upgrade can keep a suffix
-   * above the seal, and lag against that suffix would remove followers that hold the whole prefix. A
-   * born-diskless or phase-2 partition has no prefix to lag on.
+   * partition in phase 1 of the classic-to-diskless switch. In phase 1 the ISR members' local logs are
+   * the only complete copy of the classic prefix, and `replicationEndOffset` caps the lag at the seal,
+   * so the shrink measures lag on the prefix. A born-diskless or phase-2 partition has no prefix to lag on.
    */
-  private[server] def isIsrShrinkEligible(partition: Partition): Boolean = {
-    val topicPartition = partition.topicPartition
+  private[server] def isIsrShrinkEligible(topicPartition: TopicPartition): Boolean =
     !_inklessMetadataView.isDisklessTopic(topicPartition.topic()) ||
-      (_inklessMetadataView.isClassicPrefixWaitingForUpload(topicPartition) &&
-        partition.leaderLogIfLocal.exists(
-          _.logEndOffset <= _inklessMetadataView.getClassicToDisklessStartOffset(topicPartition)))
-  }
+      _inklessMetadataView.isClassicPrefixWaitingForUpload(topicPartition)
+
+  /**
+   * Returns the offset at which follower replication of the partition ends, if it ends before the
+   * leader's log end offset. In phase 1 of the classic-to-diskless switch, it's the seal. The leader
+   * records a follower fetch at or above the seal as a fetch at the seal, but its log can end past the
+   * seal and its leader epoch can start past it. Both happen after an upgrade from a release that
+   * consolidated in phase 1, and the epoch start also moves past the seal when a new leader truncates
+   * a tail above it. `Partition` caps the offsets of the ISR lag and admission checks at the seal.
+   */
+  private[kafka] def replicationEndOffset(topicPartition: TopicPartition): Option[Long] =
+    if (_inklessMetadataView.isClassicPrefixWaitingForUpload(topicPartition))
+      Some(_inklessMetadataView.getClassicToDisklessStartOffset(topicPartition))
+    else
+      None
 
   private def leaderPartitionsIterator: Iterator[Partition] =
     onlinePartitionsIterator.filter(_.leaderLogIfLocal.isDefined)
