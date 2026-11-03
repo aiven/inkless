@@ -47,7 +47,7 @@ import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
 import org.mockito.ArgumentCaptor
 import org.mockito.ArgumentMatchers.{any, anyBoolean, anyLong}
-import org.mockito.Mockito.{mock, times, verify, when}
+import org.mockito.Mockito.{inOrder, mock, times, verify, when}
 
 import java.lang.{Long => JLong}
 import java.nio.charset.StandardCharsets
@@ -851,11 +851,35 @@ class ReplicaFetcherThreadTest {
       expectEviction = false)
   }
 
+  // A consolidating topic in phase 1 of the classic-to-diskless switch has consolidation inactive, so it
+  // waits for the ISR like a topic that doesn't consolidate.
+  @ParameterizedTest
+  @ValueSource(booleans = Array(true, false))
+  def shouldEvictPartitionAtSealWithInactiveConsolidationOnlyFromIsr(replicaInIsr: Boolean): Unit = {
+    verifyDisklessSwitchEviction(
+      classicToDisklessStartOffset = 100L,
+      logEndOffsetAfterAppend = 100L,
+      expectEviction = replicaInIsr,
+      replicaInIsr = replicaInIsr,
+      consolidationActive = false)
+  }
+
+  @Test
+  def shouldEvictPartitionAtSealWithActiveConsolidationWithoutWaitingForIsr(): Unit = {
+    verifyDisklessSwitchEviction(
+      classicToDisklessStartOffset = 100L,
+      logEndOffsetAfterAppend = 100L,
+      expectEviction = true,
+      replicaInIsr = false,
+      consolidationActive = true)
+  }
+
   private def verifyDisklessSwitchEviction(
     classicToDisklessStartOffset: Long,
     logEndOffsetAfterAppend: Long,
     expectEviction: Boolean,
-    replicaInIsr: Boolean = true
+    replicaInIsr: Boolean = true,
+    consolidationActive: Boolean = false
   ): Unit = {
     val props = TestUtils.createBrokerConfig(1)
     val config = KafkaConfig.fromProps(props)
@@ -882,6 +906,7 @@ class ReplicaFetcherThreadTest {
     val replicaFetcherManager: ReplicaFetcherManager = mock(classOf[ReplicaFetcherManager])
 
     val replicaManager: ReplicaManager = mock(classOf[ReplicaManager])
+    when(replicaManager.consolidationActiveFor(t1p0)).thenReturn(consolidationActive)
     when(replicaManager.getPartitionOrException(any[TopicPartition])).thenReturn(partition)
     when(replicaManager.brokerTopicStats).thenReturn(new BrokerTopicStats)
     when(replicaManager.inklessMetadataView()).thenReturn(inklessMetadataView)
@@ -914,9 +939,13 @@ class ReplicaFetcherThreadTest {
 
     if (expectEviction) {
       verify(replicaFetcherManager, times(1)).removeFetcherForPartitions(Set(t1p0))
-      verify(replicaManager, times(1)).startConsolidationFetchersForCaughtUpClassicPartitions(Set(t1p0))
+      // The prefix goes before consolidation can append next to it.
+      val handOff = inOrder(replicaManager)
+      handOff.verify(replicaManager).maybeDropLocalClassicPrefix(Set(t1p0))
+      handOff.verify(replicaManager).startConsolidationFetchersForCaughtUpClassicPartitions(Set(t1p0))
     } else {
       verify(replicaFetcherManager, times(0)).removeFetcherForPartitions(any())
+      verify(replicaManager, times(0)).maybeDropLocalClassicPrefix(any[collection.Set[TopicPartition]]())
       verify(replicaManager, times(0)).startConsolidationFetchersForCaughtUpClassicPartitions(any())
     }
     assertEquals(mutable.Buffer.empty, thread.partitionsToEvictAfterDisklessSwitch)
