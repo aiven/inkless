@@ -33,8 +33,9 @@ import scala.jdk.OptionConverters.RichOptional
 /**
  * Outcome of per-partition reconciliation before consolidation can start.
  *  - Ready: the partition is safe to hand to the consolidation fetcher at the given offset.
- *  - Retry: the partition cannot consolidate yet (e.g., pending seal, LEO below seal) — skip
- *    this round; a later metadata delta or classic-fetcher catch-up will re-trigger.
+ *  - Retry: the partition can't consolidate yet. Either the classic-to-diskless switch is pending or in
+ *    phase 1, or the local LEO is below the seal. A later metadata delta or classic-fetcher catch-up
+ *    re-triggers reconciliation.
  *  - Failed: an unrecoverable error; mark the partition as failed in the fetcher manager.
  */
 private sealed trait ConsolidationStartState
@@ -151,6 +152,11 @@ class ConsolidationReconciler(replicaManager: ReplicaManager,
           s"Diskless topic $tp has remote storage disabled but was switched from classic " +
             s"(violates diskless.enable implies remote.storage.enable); consolidation cannot start " +
             s"(see FailedPartitionsCount)"))
+      case seal if seal >= 0 && !inklessMetadataView.isClassicPrefixInRemoteStorage(tp) =>
+        // Phase 1 of the classic-to-diskless switch: the classic prefix lives only on local disks. The
+        // classicPrefixInRemoteStorage commit bumps the leader epoch and re-runs reconciliation.
+        ConsolidationStartState.Retry(s"Skipping consolidation for $tp because the classic prefix " +
+          s"below the seal $seal is not in remote storage yet")
       case seal if seal >= 0 =>
         val log = partition.localLogOrException
         if (log.logEndOffset < seal) {

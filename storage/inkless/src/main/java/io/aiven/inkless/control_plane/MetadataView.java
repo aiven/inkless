@@ -39,6 +39,15 @@ public interface MetadataView {
 
     boolean isConsolidatingDisklessTopic(String topicName);
 
+    /**
+     * Checks whether the partition is in a classic-to-diskless switch and its classic prefix lives only
+     * on the replicas' local disks.
+     *
+     * @return true if the classic-to-diskless switch is pending, or if the controller committed the seal
+     *     and {@code classicPrefixInRemoteStorage} is unset; false otherwise.
+     */
+    boolean isClassicPrefixOnlyOnLocalDisks(String topicName, int partition);
+
     LogConfig getTopicConfig(String topicName);
 
     Set<TopicIdPartition> getDisklessTopicPartitions();
