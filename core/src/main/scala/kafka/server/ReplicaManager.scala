@@ -3662,21 +3662,26 @@ class ReplicaManager(val config: KafkaConfig,
 
     // Shrink ISRs for non offline partitions
     allPartitions.forEach { (topicPartition, _) =>
-      if (isIsrShrinkEligible(topicPartition))
-        onlinePartition(topicPartition).foreach(_.maybeShrinkIsr())
+      onlinePartition(topicPartition).filter(isIsrShrinkEligible).foreach(_.maybeShrinkIsr())
     }
   }
 
   /**
    * Returns true if the partition shrinks ISR for lag by classic rules: a classic partition, or a
-   * partition in phase 1 of the classic-to-diskless switch. In phase 1 the ISR members' local logs are
-   * the only complete copy of the classic prefix, and every log stays at the seal, so lag against the
-   * leader's log end offset is lag on the prefix. A born-diskless or phase-2 partition has no prefix to
-   * lag on.
+   * partition in phase 1 of the classic-to-diskless switch whose leader log ends at the seal. In phase 1
+   * the ISR members' local logs are the only complete copy of the classic prefix, and the leader records
+   * a follower fetch at or above the seal as a fetch at the seal. Lag against the leader's log end offset
+   * is then lag on the prefix. A leader that consolidated in phase 1 before an upgrade can keep a suffix
+   * above the seal, and lag against that suffix would remove followers that hold the whole prefix. A
+   * born-diskless or phase-2 partition has no prefix to lag on.
    */
-  private[server] def isIsrShrinkEligible(topicPartition: TopicPartition): Boolean =
+  private[server] def isIsrShrinkEligible(partition: Partition): Boolean = {
+    val topicPartition = partition.topicPartition
     !_inklessMetadataView.isDisklessTopic(topicPartition.topic()) ||
-      _inklessMetadataView.isClassicPrefixWaitingForUpload(topicPartition)
+      (_inklessMetadataView.isClassicPrefixWaitingForUpload(topicPartition) &&
+        partition.leaderLogIfLocal.exists(
+          _.logEndOffset <= _inklessMetadataView.getClassicToDisklessStartOffset(topicPartition)))
+  }
 
   private def leaderPartitionsIterator: Iterator[Partition] =
     onlinePartitionsIterator.filter(_.leaderLogIfLocal.isDefined)
