@@ -2358,7 +2358,7 @@ class ReplicaManager(val config: KafkaConfig,
     var remoteFetchTask: Future[Void] = null
     try {
       remoteFetchTask = remoteLogManager.get.asyncRead(remoteFetchInfo, (result: RemoteLogReadResult) => {
-        val tp = remoteFetchInfo.topicIdPartition
+        val tp = topicIdPartition(remoteFetchInfo.topicPartition)
         val fetchOffset = remoteFetchInfo.fetchInfo.fetchOffset
         val outcome = result.error.toScala match {
           case Some(e: LeaderEpochNotAvailableException) if isRetainedByLocalLog(tp, fetchOffset) =>

@@ -3128,7 +3128,7 @@ public class RemoteLogManagerTest {
             doReturn(true).when(remoteLogMetadataManager).isReady(any(TopicIdPartition.class));
             RemoteLogManager.RLMExpirationTask task = rlm.new RLMExpirationTask(leaderTopicIdPartition);
 
-            assertThrows(RetriableRemoteStorageException.class, task::cleanupExpiredRemoteLogSegments);
+            assertThrows(RemoteStorageException.class, task::cleanupExpiredRemoteLogSegments);
             verify(remoteStorageManager, never()).deleteLogSegmentData(any(RemoteLogSegmentMetadata.class));
             assertEquals(-1L, reported.get());
 
@@ -3823,7 +3823,7 @@ public class RemoteLogManagerTest {
                 Uuid.randomUuid(), 0, 0, 10, Optional.empty()
         );
         RemoteStorageFetchInfo fetchInfo = new RemoteStorageFetchInfo(
-                0, false, tpId, partitionData, FetchIsolation.TXN_COMMITTED
+                0, false, tp, partitionData, FetchIsolation.TXN_COMMITTED
         );
 
         try (RemoteLogManager remoteLogManager = new RemoteLogManager(
