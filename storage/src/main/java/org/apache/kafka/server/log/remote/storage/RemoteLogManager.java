@@ -1925,8 +1925,9 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
 
         if (rlsMetadataOptional.isEmpty()) {
             String epochStr = (epoch.isPresent()) ? Integer.toString(epoch.getAsInt()) : "NOT AVAILABLE";
-            throw new OffsetOutOfRangeException("Received request for offset " + offset + " for leader epoch "
-                    + epochStr + " and partition " + tp + " which does not exist in remote tier.");
+            String message = "Received request for offset " + offset + " for leader epoch "
+                    + epochStr + " and partition " + tp + " which does not exist in remote tier.";
+            throw epoch.isPresent() ? new OffsetOutOfRangeException(message) : new LeaderEpochNotAvailableException(message);
         }
 
         RemoteLogSegmentMetadata remoteLogSegmentMetadata = rlsMetadataOptional.get();

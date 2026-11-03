@@ -27,7 +27,7 @@ import io.aiven.inkless.consolidation.{ConsolidatedDisklessLogPruner, Consolidat
 import kafka.cluster.Partition
 import kafka.log.LogManager
 import kafka.server.QuotaFactory.QuotaManagers
-import kafka.server.ReplicaManager.{AtMinIsrPartitionCountMetricName, ConsolidationFetchBytesInPerSecMetricName, ConsolidationHighWatermarkLagFetchRateMetricName, ConsolidationHighWatermarkLagPartitionCountMetricName, ConsolidationLocalBytesPerSecMetricName, ConsolidationSupplementBytesPerSecMetricName, ConsolidationSupplementRateMetricName, FailedIsrUpdatesPerSecMetricName, IsrExpandsPerSecMetricName, IsrShrinksPerSecMetricName, LeaderCountMetricName, OfflineReplicaCountMetricName, PartitionCountMetricName, PartitionsWithLateTransactionsCountMetricName, ProducerIdCountMetricName, ReassigningPartitionsMetricName, SealedPartitionsCountMetricName, DisklessSwitchedReplicasOutsideIsrCountMetricName, UnderMinIsrPartitionCountMetricName, UnderReplicatedPartitionsMetricName, DisklessSwitchedPrefixLagMetricName, DisklessSwitchedPrefixMissingFetchRateMetricName, createLogReadResult, isListOffsetsTimestampUnsupported}
+import kafka.server.ReplicaManager.{AtMinIsrPartitionCountMetricName, ConsolidationFetchBytesInPerSecMetricName, ConsolidationHighWatermarkLagFetchRateMetricName, ConsolidationHighWatermarkLagPartitionCountMetricName, ConsolidationLocalBytesPerSecMetricName, ConsolidationSupplementBytesPerSecMetricName, ConsolidationSupplementRateMetricName, FailedIsrUpdatesPerSecMetricName, IsrExpandsPerSecMetricName, IsrShrinksPerSecMetricName, LeaderCountMetricName, OfflineReplicaCountMetricName, PartitionCountMetricName, PartitionsWithLateTransactionsCountMetricName, ProducerIdCountMetricName, ReassigningPartitionsMetricName, SealedPartitionsCountMetricName, DisklessSwitchedReplicasOutsideIsrCountMetricName, UnderMinIsrPartitionCountMetricName, UnderReplicatedPartitionsMetricName, DisklessSwitchedPrefixLagMetricName, DisklessSwitchedPrefixMissingFetchRateMetricName, ConsolidationDeferredPrefixFetchRateMetricName, PrefixDeferralLogGapMs, createLogReadResult, isListOffsetsTimestampUnsupported}
 import kafka.server.metadata.InklessMetadataView
 import kafka.server.share.DelayedShareFetch
 import kafka.utils._
@@ -63,7 +63,7 @@ import org.apache.kafka.server.LogAppendResult.LogAppendSummary
 import org.apache.kafka.server.common.{DirectoryEventHandler, RequestLocal, StopPartition, TransactionVersion}
 import org.apache.kafka.server.log.remote.TopicPartitionLog
 import org.apache.kafka.server.config.ReplicationConfigs
-import org.apache.kafka.server.log.remote.storage.RemoteLogManager
+import org.apache.kafka.server.log.remote.storage.{LeaderEpochNotAvailableException, RemoteLogManager}
 import org.apache.kafka.server.metrics.KafkaMetricsGroup
 import org.apache.kafka.server.network.BrokerEndPoint
 import org.apache.kafka.server.partition.PartitionListener
@@ -86,7 +86,7 @@ import java.lang.{Long => JLong}
 import java.nio.ByteBuffer
 import java.nio.file.{Files, Paths}
 import java.util
-import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.{AtomicBoolean, AtomicLong}
 import java.util.concurrent.{CompletableFuture, ConcurrentHashMap, Future, RejectedExecutionException, TimeUnit}
 import java.util.{Collections, Optional, OptionalInt, OptionalLong}
 import java.util.function.Consumer
@@ -131,6 +131,10 @@ object ReplicaManager {
   private[server] val DisklessSwitchedPrefixLagMetricName = "DisklessSwitchedPrefixLag"
   private val DisklessSwitchedPrefixMissingFetchRateMetricName =
     "DisklessSwitchedPrefixMissingFetchRate"
+  private val ConsolidationDeferredPrefixFetchRateMetricName = "ConsolidationDeferredPrefixFetchRate"
+
+  // Far above the consumer retry backoff, so a quiet period has no consumer waiting.
+  private val PrefixDeferralLogGapMs = 60000L
 
   private[server] val GaugeMetricNames = Set(
     LeaderCountMetricName,
@@ -157,6 +161,7 @@ object ReplicaManager {
     ConsolidationSupplementBytesPerSecMetricName,
     ConsolidationLocalBytesPerSecMetricName,
     ConsolidationHighWatermarkLagFetchRateMetricName,
+    ConsolidationDeferredPrefixFetchRateMetricName,
     DisklessSwitchedPrefixMissingFetchRateMetricName
   )
 
@@ -465,6 +470,9 @@ class ReplicaManager(val config: KafkaConfig,
   metricsGroup.newGauge(ConsolidationHighWatermarkLagPartitionCountMetricName,
     () => consolidationHighWatermarkLagPartitionCount)
   metricsGroup.newGauge(DisklessSwitchedPrefixLagMetricName, () => disklessSwitchedPrefixLag)
+  private val consolidationDeferredPrefixFetchRate: Meter =
+    metricsGroup.newMeter(ConsolidationDeferredPrefixFetchRateMetricName, "fetches", TimeUnit.SECONDS)
+  private val lastPrefixDeferralMs = new AtomicLong(0L)
   metricsGroup.newGauge(PartitionsWithLateTransactionsCountMetricName, () => lateTransactionsCount)
   metricsGroup.newGauge(ProducerIdCountMetricName, () => producerIdCount)
 
@@ -2031,6 +2039,9 @@ class ReplicaManager(val config: KafkaConfig,
   def markConsolidationRemotePrefixUnknown(topicPartition: TopicPartition, unknown: Boolean, generation: Long): Unit =
     consolidationMetrics.foreach(_.setRemotePrefixUnknown(topicPartition, unknown, generation))
 
+  def recordConsolidationTierRebuildRequest(topicPartition: TopicPartition): Unit =
+    consolidationMetrics.foreach(_.recordTierRebuildRequest(topicPartition))
+
   /**
    * The authoritative, broker-agnostic cross-tier earliest offset for a consolidating diskless
    * partition, as tracked by the control plane (`COALESCE(remote_log_start_offset, log_start_offset)`,
@@ -2353,7 +2364,15 @@ class ReplicaManager(val config: KafkaConfig,
     var remoteFetchTask: Future[Void] = null
     try {
       remoteFetchTask = remoteLogManager.get.asyncRead(remoteFetchInfo, (result: RemoteLogReadResult) => {
-        remoteFetchResult.complete(result)
+        val tp = remoteFetchInfo.topicIdPartition
+        val fetchOffset = remoteFetchInfo.fetchInfo.fetchOffset
+        val outcome = result.error.toScala match {
+          case Some(e: LeaderEpochNotAvailableException) if isRetainedByLocalLog(tp, fetchOffset) =>
+            recordPrefixDeferral(tp, fetchOffset, None)
+            new RemoteLogReadResult(Optional.empty, Optional.of(new OffsetNotAvailableException(e.getMessage)))
+          case _ => result
+        }
+        remoteFetchResult.complete(outcome)
         delayedRemoteFetchPurgatory.checkAndComplete(key)
       })
     } catch {
@@ -2458,20 +2477,83 @@ class ReplicaManager(val config: KafkaConfig,
    * are what make that order fair across rounds. See the find_batches_v2 header comment for the full
    * contract. This is the last hop that can preserve the order, so every producer of the Seq handed in
    * here has to preserve it too.
+   *
+   * A supplement passes `deferPrefixReads = false`: the merge drops its errors, so no consumer sees
+   * the `OFFSET_NOT_AVAILABLE` that the mapping would count.
    */
   def fetchDisklessMessages(params: FetchParams,
-                            fetchInfos: Seq[(TopicIdPartition, PartitionData)]): CompletableFuture[Seq[(TopicIdPartition, FetchPartitionData)]] = {
+                            fetchInfos: Seq[(TopicIdPartition, PartitionData)],
+                            deferPrefixReads: Boolean): CompletableFuture[Seq[(TopicIdPartition, FetchPartitionData)]] = {
     inklessFetchHandler match {
       case Some(handler) =>
         // fetchInfos.toMap would be a HashMap above 4 entries, whose iteration order ignores insertion.
         val ordered = mutable.LinkedHashMap.from(fetchInfos).asJava
-        handler.handle(params, ordered).thenApply(_.asScala.toSeq)
+        handler.handle(params, ordered).thenApply { results =>
+          results.asScala.toSeq.map {
+            case (tp, data) =>
+              val fetchOffset = ordered.get(tp).fetchOffset
+              if (deferPrefixReads && data.error == Errors.OFFSET_OUT_OF_RANGE
+                && shouldDeferPrefixRead(params.isFromConsumer, tp, fetchOffset, data.logStartOffset)) {
+                recordPrefixDeferral(tp, fetchOffset, Some(data.logStartOffset))
+                tp -> new FetchPartitionData(
+                  Errors.OFFSET_NOT_AVAILABLE,
+                  data.highWatermark,
+                  data.logStartOffset,
+                  data.records,
+                  data.divergingEpoch,
+                  data.lastStableOffset,
+                  data.abortedTransactions,
+                  data.preferredReadReplica,
+                  data.isReassignmentFetch
+                )
+              } else
+                tp -> data
+          }
+        }
       case None =>
         if (fetchInfos.nonEmpty)
           error(s"Received diskless fetch request for topics ${fetchInfos.map(_._1.topic()).distinct.mkString(", ")} but diskless fetch handler is not available. " +
             s"Replying an empty response.")
         CompletableFuture.completedFuture(Seq.empty)
     }
+  }
+
+  /**
+   * Checks whether an `OFFSET_OUT_OF_RANGE` from the diskless path comes from a replica that hasn't
+   * rebuilt its tier state, so the consumer should retry instead of resetting.
+   * True for a consumer fetch on a consolidating topic with
+   * `crossTierEarliest <= fetchOffset < disklessStartOffset`; false otherwise.
+   * An unknown `crossTierEarliest` defers too: it is unknown only until the control plane answers.
+   * Replica fetches keep the error, because the consolidation fetcher starts the rebuild from it.
+   */
+  private def shouldDeferPrefixRead(isFromConsumer: Boolean,
+                                    tp: TopicIdPartition,
+                                    fetchOffset: Long,
+                                    disklessStartOffset: Long): Boolean =
+    // Doesn't read the local log: the rebuild can finish between routing and this answer.
+    isFromConsumer && fetchOffset < disklessStartOffset && consolidationActiveFor(tp.topicPartition()) && {
+      val earliest = crossTierEarliestOffset(tp.topicPartition())
+      earliest.isEmpty || fetchOffset >= earliest.getAsLong
+    }
+
+  /**
+   * Checks whether `offset` of a consolidating topic is at or above the log start offset of the local log.
+   * A remote read finds no leader epoch for such an offset only while this replica can't read the tier yet,
+   * for example after a rebuild cleared the epoch cache. An offset below the log start is deleted, so its
+   * error stays.
+   */
+  private def isRetainedByLocalLog(tp: TopicIdPartition, offset: Long): Boolean =
+    consolidationActiveFor(tp.topicPartition()) &&
+      getPartitionOrError(tp.topicPartition()).toOption.flatMap(_.log).exists(offset >= _.logStartOffset)
+
+  /** Counts a deferred fetch, and logs the first one after a quiet period of [[ReplicaManager.PrefixDeferralLogGapMs]]. */
+  private def recordPrefixDeferral(tp: TopicIdPartition, fetchOffset: Long, disklessStartOffset: Option[Long]): Unit = {
+    consolidationDeferredPrefixFetchRate.mark()
+    val now = time.milliseconds
+    val lastMs = lastPrefixDeferralMs.getAndSet(now)
+    if (lastMs == 0L || now - lastMs >= PrefixDeferralLogGapMs)
+      info(s"Answering consumer fetches of $tp ${disklessStartOffset.fold("from remote storage")(o => s"below the diskless WAL start $o")} with " +
+        s"${Errors.OFFSET_NOT_AVAILABLE} until this replica can read the prefix; fetch offset $fetchOffset")
   }
 
   /**
@@ -3005,7 +3087,7 @@ class ReplicaManager(val config: KafkaConfig,
         try {
           val supplementParams = fetchParamsWithNewMaxBytes(params, supplementFetchInfos.size.toFloat / fetchInfos.size.toFloat)
           // Future not cancelled on failure — diskless reads are idempotent and hold no resources.
-          consolidationSupplementData = fetchDisklessMessages(supplementParams, supplementFetchInfos)
+          consolidationSupplementData = fetchDisklessMessages(supplementParams, supplementFetchInfos, deferPrefixReads = false)
             .get(Math.max(config.disklessFetchMaxWaitMs.toLong, params.maxWaitMs), TimeUnit.MILLISECONDS)
             .toMap
           val supplementBytes = successfulSupplementBytes(consolidationSupplementData)
@@ -3068,7 +3150,7 @@ class ReplicaManager(val config: KafkaConfig,
         val disklessFetchResults = new util.LinkedHashMap[TopicIdPartition, LogReadResult]()
         try {
           val disklessParams = fetchParamsWithNewMaxBytes(params, disklessFetchInfos.size.toFloat / fetchInfos.size.toFloat)
-          val disklessResponsesFuture = fetchDisklessMessages(disklessParams, disklessFetchInfos)
+          val disklessResponsesFuture = fetchDisklessMessages(disklessParams, disklessFetchInfos, deferPrefixReads = true)
 
           val response = disklessResponsesFuture.get(maxWaitMs, TimeUnit.MILLISECONDS)
           response.foreach { case (tp, data) =>
