@@ -2219,7 +2219,7 @@ public class ReplicationControlManager {
                 // qualify. In phase 1 or mid-switch (PENDING), classic records still exist only
                 // in the replicas' local logs, so an unfenced replica is not necessarily complete
                 // and earns ISR through AlterPartition instead.
-                if (isSwitchedWithLocalClassicPrefix(partition)) continue;
+                if (isClassicPrefixOnlyOnLocalDisks(partition)) continue;
                 if (!Replicas.contains(partition.replicas, brokerId)) continue;
                 if (Replicas.contains(partition.isr, brokerId)) continue;
                 // Use PartitionChangeBuilder so that ELR is reconciled alongside the ISR
@@ -2695,7 +2695,7 @@ public class ReplicationControlManager {
         return partition.classicToDisklessStartOffset == PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING;
     }
 
-    private static boolean isSwitchedWithLocalClassicPrefix(PartitionRegistration partition) {
+    private static boolean isClassicPrefixOnlyOnLocalDisks(PartitionRegistration partition) {
         return partition.classicToDisklessStartOffset != PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET
             && !partition.classicPrefixInRemoteStorage;
     }
@@ -3148,7 +3148,7 @@ public class ReplicationControlManager {
         // one-step path. In phase 1, records below classicToDisklessStartOffset still live only on
         // the replicas' local disks, so a target replica is not interchangeable and earns ISR
         // through the staged path.
-        boolean useOneStepReassignment = isDisklessTopic(topicName) && !isSwitchedWithLocalClassicPrefix(part);
+        boolean useOneStepReassignment = isDisklessTopic(topicName) && !isClassicPrefixOnlyOnLocalDisks(part);
 
         PartitionChangeBuilder builder = new PartitionChangeBuilder(
             part,
@@ -3854,13 +3854,13 @@ public class ReplicationControlManager {
      * because they don't rely on local storage.
      */
     private IntPredicate leaderAcceptorFor(String topicName, PartitionRegistration partition) {
-        return isDisklessTopic(topicName) && !isSwitchedWithLocalClassicPrefix(partition)
+        return isDisklessTopic(topicName) && !isClassicPrefixOnlyOnLocalDisks(partition)
             ? clusterControl::isActive
             : new LeaderAcceptor(clusterControl, partition);
     }
 
     private IntPredicate leaderAcceptorFor(String topicName, PartitionRegistration partition, IntPredicate isAcceptableLeader) {
-        return isDisklessTopic(topicName) && !isSwitchedWithLocalClassicPrefix(partition)
+        return isDisklessTopic(topicName) && !isClassicPrefixOnlyOnLocalDisks(partition)
             ? isAcceptableLeader
             : new LeaderAcceptor(clusterControl, partition, isAcceptableLeader);
     }
