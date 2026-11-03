@@ -553,4 +553,9 @@ For a detailed description of spotbugs bug categories, see https://spotbugs.read
     <Match>
         <Package name="~org\.jooq\.generated(\..*)?" />
     </Match>
+
+    <Match>
+        <Class name="kafka.server.ReplicaManager"/>
+        <Bug pattern="SKIPPED_CLASS_TOO_BIG"/>
+    </Match>
 </FindBugsFilter>
