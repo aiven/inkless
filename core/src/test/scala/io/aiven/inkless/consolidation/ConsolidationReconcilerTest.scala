@@ -58,7 +58,7 @@ class ConsolidationReconcilerTest {
     )
   }
 
-  // Switched partitions default to phase 2, where consolidation can start.
+  // Switched partitions default to phase 2 of the classic-to-diskless switch, where consolidation can start.
   private def mockMetadataView(classicToDisklessStartOffset: Long,
                                classicPrefixInRemoteStorage: Boolean = true): InklessMetadataView = {
     val view = mock(classOf[InklessMetadataView])

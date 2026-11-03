@@ -788,17 +788,17 @@ class InklessTopicMetadataTransformerTest {
     }
 
     /**
-     * Tests for switched partitions whose classic prefix lives only on local disks (switch pending or
-     * phase 1). The ISR members are the only replicas with a complete copy, and the transformer routes to
-     * them alone.
+     * Tests for switched partitions whose classic prefix lives only on local disks (classic-to-diskless
+     * switch pending or in phase 1). The ISR members are the only replicas with a complete copy, and the
+     * transformer routes to them alone.
      */
     @Nested
-    class SwitchedWithLocalClassicPrefix {
+    class ClassicPrefixOnlyOnLocalDisks {
         @BeforeEach
         void setup() {
             when(metadataView.isDisklessTopic(eq(TOPIC_DISKLESS))).thenReturn(true);
             when(metadataView.isRemoteStorageEnabled(eq(TOPIC_DISKLESS))).thenReturn(false);
-            when(metadataView.isSwitchedWithLocalClassicPrefix(eq(TOPIC_DISKLESS), eq(0))).thenReturn(true);
+            when(metadataView.isClassicPrefixOnlyOnLocalDisks(eq(TOPIC_DISKLESS), eq(0))).thenReturn(true);
             when(metadataView.getAliveBrokerNodes(LISTENER_NAME)).thenReturn(List.of(
                 new Node(0, "host", 9092, "az0"),
                 new Node(1, "host", 9093, "az1"),

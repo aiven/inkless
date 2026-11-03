@@ -132,9 +132,10 @@ public class InklessTopicTypeSwitcherClusterTest {
         s3Container.createBucket(testInfo);
         pgContainer.createDatabase(testInfo);
 
-        // Phase 2 deletes the local classic prefix and serves those offsets from remote storage.
-        // A no-op remote storage manager reports the copy as complete and doesn't keep the bytes.
-        // The prefix is then unreadable. Tiered storage serves the prefix after the switch.
+        // Phase 2 of the classic-to-diskless switch deletes the local classic prefix and serves those
+        // offsets from remote storage. A no-op remote storage manager reports the copy as complete and
+        // doesn't keep the bytes. The prefix is then unreadable. Tiered storage serves the prefix after
+        // the switch.
         // `DiskChunkCache` wipes its path on startup. Each broker gets its own cache directory.
         final Map<Integer, Map<String, String>> perServerProps = new HashMap<>();
         for (int brokerId = 0; brokerId < 3; brokerId++) {
@@ -290,7 +291,7 @@ public class InklessTopicTypeSwitcherClusterTest {
         }
 
         // `diskless.enable` commits before the prefix upload. Without this wait, the consumer can read
-        // the whole prefix from local logs in phase 1.
+        // the whole prefix from local logs in phase 1 of the classic-to-diskless switch.
         log.warn("[stage=await-prefix-deletion] Waiting for every broker to delete the local classic prefix of topic={}", classicToDisklessTopic);
         waitForLocalClassicPrefixDeletion(classicToDisklessTopic);
 

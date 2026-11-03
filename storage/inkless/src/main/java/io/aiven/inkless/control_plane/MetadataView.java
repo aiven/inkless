@@ -43,10 +43,10 @@ public interface MetadataView {
      * Checks whether the partition is in a classic-to-diskless switch and its classic prefix lives only
      * on the replicas' local disks.
      *
-     * @return true if the switch is pending, or if the controller committed the seal and
-     *     {@code classicPrefixInRemoteStorage} is unset; false otherwise.
+     * @return true if the classic-to-diskless switch is pending, or if the controller committed the seal
+     *     and {@code classicPrefixInRemoteStorage} is unset; false otherwise.
      */
-    boolean isSwitchedWithLocalClassicPrefix(String topicName, int partition);
+    boolean isClassicPrefixOnlyOnLocalDisks(String topicName, int partition);
 
     LogConfig getTopicConfig(String topicName);
 

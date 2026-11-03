@@ -53,9 +53,9 @@ import io.aiven.inkless.control_plane.MetadataView;
  * that serves reads. For untiered partitions with unmanaged replicas (RF = 1), uses legacy behavior:
  * hash-based selection from all alive brokers.
  *
- * <p>A switched partition's classic prefix lives only on local disks while the switch is pending and in
- * phase 1. For such a partition, the transformer routes to alive ISR members only and advertises them as
- * the ISR. This rule applies for any replication factor and remote storage config.
+ * <p>A switched partition's classic prefix lives only on local disks while the classic-to-diskless switch
+ * is pending and in phase 1. For such a partition, the transformer routes to alive ISR members only and
+ * advertises them as the ISR. This rule applies for any replication factor and remote storage config.
  */
 public class InklessTopicMetadataTransformer implements Closeable {
     private final MetadataView metadataView;
@@ -105,7 +105,7 @@ public class InklessTopicMetadataTransformer implements Closeable {
             for (final var partition : topic.partitions()) {
                 final List<Integer> assignedReplicas = partition.replicaNodes();
                 final boolean hasLocalClassicPrefix =
-                    metadataView.isSwitchedWithLocalClassicPrefix(topicName, partition.partitionIndex());
+                    metadataView.isClassicPrefixOnlyOnLocalDisks(topicName, partition.partitionIndex());
                 final boolean routeToReplicas =
                     assignedReplicas.size() > 1 || isRemoteStorageEnabled || hasLocalClassicPrefix;
 
@@ -157,7 +157,7 @@ public class InklessTopicMetadataTransformer implements Closeable {
             for (final var partition : topic.partitions()) {
                 final List<Integer> assignedReplicas = partition.replicaNodes();
                 final boolean hasLocalClassicPrefix =
-                    metadataView.isSwitchedWithLocalClassicPrefix(topicName, partition.partitionIndex());
+                    metadataView.isClassicPrefixOnlyOnLocalDisks(topicName, partition.partitionIndex());
                 final boolean routeToReplicas =
                     assignedReplicas.size() > 1 || isRemoteStorageEnabled || hasLocalClassicPrefix;
 

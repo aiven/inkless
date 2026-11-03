@@ -329,10 +329,10 @@ class InklessMetadataViewTest {
     assertEquals(List(false, false, false, true),
       List(bornDiskless, pending, phaseOne, phaseTwo).map(metadataView.isClassicPrefixInRemoteStorage))
     assertEquals(List(false, false, true, false),
-      List(bornDiskless, pending, phaseOne, phaseTwo).map(metadataView.isSwitchedPhaseOne))
+      List(bornDiskless, pending, phaseOne, phaseTwo).map(metadataView.isClassicPrefixWaitingForUpload))
     assertEquals(List(false, true, true, false),
       List(bornDiskless, pending, phaseOne, phaseTwo).map(tp =>
-        metadataView.isSwitchedWithLocalClassicPrefix(tp.topic, tp.partition)))
+        metadataView.isClassicPrefixOnlyOnLocalDisks(tp.topic, tp.partition)))
   }
 
   @Test
@@ -340,8 +340,8 @@ class InklessMetadataViewTest {
     val tp = new TopicPartition("missing", 0)
     stubImageWithoutTopic(tp.topic())
     assertFalse(metadataView.isClassicPrefixInRemoteStorage(tp))
-    assertFalse(metadataView.isSwitchedPhaseOne(tp))
-    assertFalse(metadataView.isSwitchedWithLocalClassicPrefix(tp.topic, tp.partition))
+    assertFalse(metadataView.isClassicPrefixWaitingForUpload(tp))
+    assertFalse(metadataView.isClassicPrefixOnlyOnLocalDisks(tp.topic, tp.partition))
   }
 
   @Nested
