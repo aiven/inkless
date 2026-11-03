@@ -83,9 +83,10 @@ class ReplicaAlterLogDirsThread(name: String,
       throw new IllegalStateException("Offset mismatch for the future replica %s: fetched offset = %d, log end offset = %d.".format(
         topicPartition, fetchOffset, futureLog.logEndOffset))
 
-    val logAppendInfo = if (records.sizeInBytes() > 0)
+    val logAppendInfo = if (records.sizeInBytes() > 0) {
+      replicaMgr.maybeRollFutureLogAtSeal(partition, fetchOffset)
       partition.appendRecordsToFollowerOrFutureReplica(records, isFuture = true, partitionLeaderEpoch)
-    else
+    } else
       None
 
     futureLog.updateHighWatermark(partitionData.highWatermark)
@@ -93,7 +94,7 @@ class ReplicaAlterLogDirsThread(name: String,
 
     directoryEventHandler match {
       case DirectoryEventHandler.NOOP =>
-        if (partition.maybeReplaceCurrentWithFutureReplica())
+        if (maybeReplaceCurrentWithFutureReplica(partition))
           removePartitions(Set(topicPartition))
       case _ =>
         maybePromoteFutureReplica(topicPartition, partition)
@@ -127,6 +128,9 @@ class ReplicaAlterLogDirsThread(name: String,
     promotionStates.put(topicPartition, promotionStates.get(topicPartition).withAssignment(state))
   }
 
+  private def maybeReplaceCurrentWithFutureReplica(partition: Partition): Boolean =
+    !replicaMgr.shouldDelayFutureReplicaPromotion(partition) && partition.maybeReplaceCurrentWithFutureReplica()
+
   private def maybePromoteFutureReplica(topicPartition: TopicPartition, partition: Partition) = {
     val topicId = partition.topicId
     if (topicId.isEmpty)
@@ -143,7 +147,7 @@ class ReplicaAlterLogDirsThread(name: String,
         })
       case ReassignmentState.Accepted =>
         // Promote future replica if controller accepted the request and the replica caught-up with the original log.
-        if (partition.maybeReplaceCurrentWithFutureReplica()) {
+        if (maybeReplaceCurrentWithFutureReplica(partition)) {
           updateReassignmentState(topicPartition, ReassignmentState.Effective)
           removePartitions(Set(topicPartition))
         }

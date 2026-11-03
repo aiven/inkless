@@ -164,6 +164,7 @@ class ReplicaManagerTest {
     }
     // make sure metadataCache can map between topic name and id
     setupMetadataCacheWithTopicIds(topicIds, metadataCache)
+    when(metadataCache.currentImage()).thenReturn(MetadataImage.EMPTY)
   }
 
   private def setupMetadataCacheWithTopicIds(topicIds: Map[String, Uuid], metadataCache:MetadataCache): Unit = {
@@ -363,6 +364,7 @@ class ReplicaManagerTest {
     val spyLogManager = spy(logManager)
     val metadataCache: KRaftMetadataCache = mock(classOf[KRaftMetadataCache])
     when(metadataCache.topicConfig(anyString())).thenReturn(new Properties())
+    when(metadataCache.currentImage()).thenReturn(MetadataImage.EMPTY)
     mockGetAliveBrokerFunctions(metadataCache, Seq(new Node(0, "host0", 0)))
     when(metadataCache.metadataVersion()).thenReturn(MetadataVersion.MINIMUM_VERSION)
     val tp0 = new TopicPartition(topic, 0)
@@ -3324,6 +3326,7 @@ class ReplicaManagerTest {
 
     val metadataCache: KRaftMetadataCache = mock(classOf[KRaftMetadataCache])
     when(metadataCache.topicConfig(anyString())).thenReturn(new Properties())
+    when(metadataCache.currentImage()).thenReturn(MetadataImage.EMPTY)
     when(metadataCache.topicIdsToNames()).thenReturn(topicNames.asJava)
     when(metadataCache.metadataVersion()).thenReturn(MetadataVersion.MINIMUM_VERSION)
     mockGetAliveBrokerFunctions(metadataCache, aliveBrokers)
@@ -3660,6 +3663,8 @@ class ReplicaManagerTest {
     val metadataCache1: KRaftMetadataCache = mock(classOf[KRaftMetadataCache])
     when(metadataCache0.topicConfig(anyString())).thenReturn(new Properties())
     when(metadataCache1.topicConfig(anyString())).thenReturn(new Properties())
+    when(metadataCache0.currentImage()).thenReturn(MetadataImage.EMPTY)
+    when(metadataCache1.currentImage()).thenReturn(MetadataImage.EMPTY)
     val aliveBrokers = Seq(new Node(0, "host0", 0), new Node(1, "host1", 1))
     mockGetAliveBrokerFunctions(metadataCache0, aliveBrokers)
     mockGetAliveBrokerFunctions(metadataCache1, aliveBrokers)
