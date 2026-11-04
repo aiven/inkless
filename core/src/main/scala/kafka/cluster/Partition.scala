@@ -129,7 +129,7 @@ object Partition {
       metadataCache = replicaManager.metadataCache,
       logManager = replicaManager.logManager,
       alterIsrManager = replicaManager.alterPartitionManager)
-    partition.replicationEndOffset = () => replicaManager.replicationEndOffset(topicPartition)
+    partition.replicationStopOffset = () => replicaManager.replicationStopOffset(topicPartition)
     partition
   }
 
@@ -203,9 +203,9 @@ class Partition(val topicPartition: TopicPartition,
   // Set under the write lock to guarantee that once sealed, LEO cannot increase.
   @volatile private var _sealed: Boolean = false
 
-  // Inkless: where follower replication of a sealed partition ends, if before the log end offset. A field
-  // rather than a constructor parameter, so Java callers such as the JMH benchmarks keep compiling.
-  @volatile private[cluster] var replicationEndOffset: () => Option[Long] = () => None
+  // Inkless: where follower replication of a sealed partition stops, if it does. A field rather than a
+  // constructor parameter, so Java callers such as the JMH benchmarks keep compiling.
+  @volatile private[cluster] var replicationStopOffset: () => Option[Long] = () => None
 
   // Logs belonging to this partition. Majority of time it will be only one log, but if log directory
   // is getting changed (as a result of ReplicaAlterLogDirs command), we may have two logs until copy
@@ -1048,22 +1048,22 @@ class Partition(val topicPartition: TopicPartition,
   private def isFollowerInSync(followerReplica: Replica): Boolean = {
     leaderLogIfLocal.exists { leaderLog =>
       val followerEndOffset = followerReplica.stateSnapshot.logEndOffset
-      val replicationEnd = sealedReplicationEndOffset
-      followerEndOffset >= capAt(leaderLog.highWatermark, replicationEnd) &&
-        leaderEpochStartOffsetOpt.exists(epochStart => followerEndOffset >= capAt(epochStart, replicationEnd))
+      val replicationStop = sealedReplicationStopOffset
+      followerEndOffset >= capAt(leaderLog.highWatermark, replicationStop) &&
+        leaderEpochStartOffsetOpt.exists(epochStart => followerEndOffset >= capAt(epochStart, replicationStop))
     }
   }
 
   // Inkless: in phase 1 of the classic-to-diskless switch, followers of the sealed partition replicate up
-  // to the seal, and the leader records a follower fetch at or above the seal as a fetch at the seal. The
-  // ISR checks measure followers against the seal even when the leader's log ends past it or its leader
-  // epoch starts past it. A follower recorded at or past the seal holds the whole prefix. An operator re-seal
+  // to the seal, and the leader records a follower fetch at or above the seal as a fetch at the seal. A
+  // follower recorded at or past the seal holds the whole prefix, so the ISR checks treat it as caught up
+  // even when the leader's high watermark or leader epoch start offset is past the seal. An operator re-seal
   // that lowers the seal keeps the leader epoch, so no fetch moves a follower recorded at the old seal.
-  private def sealedReplicationEndOffset: Option[Long] =
-    if (_sealed) replicationEndOffset() else None
+  private def sealedReplicationStopOffset: Option[Long] =
+    if (_sealed) replicationStopOffset() else None
 
-  private def capAt(offset: Long, replicationEnd: Option[Long]): Long =
-    replicationEnd.fold(offset)(math.min(offset, _))
+  private def capAt(offset: Long, replicationStop: Option[Long]): Long =
+    replicationStop.fold(offset)(math.min(offset, _))
 
   private def isReplicaIsrEligible(followerReplicaId: Int): Boolean = {
     // A replica which meets all of the following requirements is allowed to join the ISR.
@@ -1286,12 +1286,12 @@ class Partition(val topicPartition: TopicPartition,
 
   private def isFollowerOutOfSync(replicaId: Int,
                                   leaderEndOffset: Long,
-                                  replicationEnd: Option[Long],
+                                  replicationStop: Option[Long],
                                   currentTimeMs: Long,
                                   maxLagMs: Long): Boolean = {
     getReplica(replicaId).fold(true) { followerReplica =>
       val followerState = followerReplica.stateSnapshot
-      !replicationEnd.exists(followerState.logEndOffset >= _) &&
+      !replicationStop.exists(followerState.logEndOffset >= _) &&
         !followerState.isCaughtUp(leaderEndOffset, currentTimeMs, maxLagMs)
     }
   }
@@ -1314,10 +1314,10 @@ class Partition(val topicPartition: TopicPartition,
     if (!current.isInflight) {
       val candidateReplicaIds = (current.isr.asScala.map(_.toInt) - localBrokerId).toSet
       val currentTimeMs = time.milliseconds()
-      val replicationEnd = sealedReplicationEndOffset
-      val leaderEndOffset = capAt(localLogOrException.logEndOffset, replicationEnd)
+      val leaderEndOffset = localLogOrException.logEndOffset
+      val replicationStop = sealedReplicationStopOffset
       candidateReplicaIds.filter(replicaId =>
-        isFollowerOutOfSync(replicaId, leaderEndOffset, replicationEnd, currentTimeMs, maxLagMs))
+        isFollowerOutOfSync(replicaId, leaderEndOffset, replicationStop, currentTimeMs, maxLagMs))
     } else {
       Set.empty
     }

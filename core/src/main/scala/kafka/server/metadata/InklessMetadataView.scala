@@ -119,11 +119,17 @@ class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConf
    * the seal and the classic prefix isn't in remote storage yet. A pending switch has no committed seal,
    * so it's excluded.
    */
-  def isClassicPrefixWaitingForUpload(topicPartition: TopicPartition): Boolean = {
-    partitionRegistration(topicPartition).exists { partition =>
-      partition.classicToDisklessStartOffset >= 0 && !partition.classicPrefixInRemoteStorage
-    }
-  }
+  def isClassicPrefixWaitingForUpload(topicPartition: TopicPartition): Boolean =
+    classicPrefixWaitingForUploadSeal(topicPartition).isDefined
+
+  /**
+   * Returns the seal of a partition in phase 1 of the classic-to-diskless switch, or `None` outside
+   * phase 1. The seal and the phase come from one image read.
+   */
+  def classicPrefixWaitingForUploadSeal(topicPartition: TopicPartition): Option[Long] =
+    partitionRegistration(topicPartition)
+      .filter(p => p.classicToDisklessStartOffset >= 0 && !p.classicPrefixInRemoteStorage)
+      .map(_.classicToDisklessStartOffset)
 
   override def isClassicPrefixOnlyOnLocalDisks(topicName: String, partition: Int): Boolean = {
     partitionRegistration(new TopicPartition(topicName, partition)).exists { registration =>

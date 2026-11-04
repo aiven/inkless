@@ -232,6 +232,7 @@ class DisklessSwitchInvariantsTest {
     when(sharedState.maybeLaggingFetchStorage()).thenReturn(Optional.empty())
     val inklessMetadata = mock(classOf[InklessMetadataView])
     when(inklessMetadata.isDisklessTopic(any())).thenReturn(false)
+    when(inklessMetadata.classicPrefixWaitingForUploadSeal(any())).thenReturn(None)
     disklessTopics.foreach(t => when(inklessMetadata.isDisklessTopic(t)).thenReturn(true))
     when(sharedState.metadata()).thenReturn(inklessMetadata)
 
