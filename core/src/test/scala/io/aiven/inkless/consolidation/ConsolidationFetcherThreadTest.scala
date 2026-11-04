@@ -617,6 +617,29 @@ class ConsolidationFetcherThreadTest {
   }
 
   @Test
+  def testTierRebuildRequestCounterAggregatesAndSurvivesReRegistration(): Unit = {
+    val tp0 = new TopicPartition("topic-a", 0)
+    val tp1 = new TopicPartition("topic-a", 1)
+
+    metrics.registerPartition(tp0)
+    metrics.registerPartition(tp1)
+
+    metrics.recordTierRebuildRequest(tp0)
+    metrics.recordTierRebuildRequest(tp0)
+    metrics.recordTierRebuildRequest(tp1)
+
+    assertEquals(2L, findGaugeValue("ConsolidationTierRebuildRequests", tp0))
+    assertEquals(3L, findBrokerGaugeValue("ConsolidationTierRebuildRequests"))
+
+    metrics.registerPartition(tp0)
+    assertEquals(2L, findGaugeValue("ConsolidationTierRebuildRequests", tp0))
+
+    metrics.unregisterPartition(tp0)
+    assertEquals(1L, findBrokerGaugeValue("ConsolidationTierRebuildRequests"))
+    assertNull(findGaugeOrNull("ConsolidationTierRebuildRequests", tp0))
+  }
+
+  @Test
   def testRemotePrefixUnknownGaugeTracksWaitingPartitions(): Unit = {
     val tp0 = new TopicPartition("topic-a", 0)
     val tp1 = new TopicPartition("topic-a", 1)
