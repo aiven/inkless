@@ -3612,6 +3612,65 @@ public class RemoteLogManagerTest {
         verify(remoteStorageManager, atLeastOnce()).deleteLogSegmentData(metadataList.get(0));
     }
 
+    @ParameterizedTest(name = "testEpochCacheCleanupKeepsConsolidatingSegmentsFromCrossTierStart consolidating={0}")
+    @ValueSource(booleans = {true, false})
+    public void testEpochCacheCleanupKeepsConsolidatingSegmentsFromCrossTierStart(boolean consolidating)
+            throws RemoteStorageException, ExecutionException, InterruptedException, IOException {
+        // Inkless: a consolidating leader that truncated its log below the seal caches only its own epoch (5)
+        // until the rebuild restores the older epochs from remote storage. The cleanup of segments from epochs
+        // before the earliest cached epoch keeps the segment from the cross-tier start (100). A classic topic
+        // keeps the upstream behavior and deletes both segments.
+        Map<String, Long> logProps = new HashMap<>();
+        logProps.put("retention.bytes", -1L);
+        logProps.put("retention.ms", -1L);
+        when(mockLog.config()).thenReturn(new LogConfig(logProps));
+
+        checkpoint.write(List.of(new EpochEntry(5, 0)));
+        LeaderEpochFileCache cache = new LeaderEpochFileCache(tp, checkpoint, scheduler);
+        when(mockLog.leaderEpochCache()).thenReturn(cache);
+        when(mockLog.topicPartition()).thenReturn(leaderTopicIdPartition.topicPartition());
+        when(mockLog.logEndOffset()).thenReturn(0L);
+        when(mockLog.logStartOffset()).thenReturn(0L);
+
+        // Segment i covers [100 * i, 100 * i + 99] in epoch i.
+        List<RemoteLogSegmentMetadata> metadataList = listRemoteLogSegmentMetadata(leaderTopicIdPartition, 2, 100, 1024,
+                List.of(epochEntry0, epochEntry1), RemoteLogSegmentState.COPY_SEGMENT_FINISHED);
+        when(remoteLogMetadataManager.listRemoteLogSegments(leaderTopicIdPartition))
+                .thenAnswer(ans -> metadataList.iterator());
+        when(remoteLogMetadataManager.listRemoteLogSegments(eq(leaderTopicIdPartition), anyInt()))
+                .thenAnswer(ans -> {
+                    int epoch = ans.getArgument(1);
+                    return epoch < metadataList.size()
+                            ? List.of(metadataList.get(epoch)).iterator()
+                            : Collections.emptyIterator();
+                });
+        when(remoteLogMetadataManager.updateRemoteLogSegmentMetadata(any(RemoteLogSegmentMetadataUpdate.class)))
+                .thenReturn(CompletableFuture.runAsync(() -> { }));
+        doNothing().when(remoteStorageManager).deleteLogSegmentData(any(RemoteLogSegmentMetadata.class));
+
+        try (RemoteLogManager rlm = new RemoteLogManager(config, brokerId, logDir, clusterId, time,
+                tp -> Optional.of(mockLog),
+                (topicPartition, offset) -> currentLogStartOffset.set(offset),
+                brokerTopicStats, metrics, endPoint,
+                topicPartition -> consolidating ? OptionalLong.of(100L) : OptionalLong.empty(),
+                topicPartition -> consolidating) {
+            @Override
+            public RemoteStorageManager createRemoteStorageManager() {
+                return remoteStorageManager;
+            }
+            @Override
+            public RemoteLogMetadataManager createRemoteLogMetadataManager() {
+                return remoteLogMetadataManager;
+            }
+        }) {
+            doReturn(true).when(remoteLogMetadataManager).isReady(any(TopicIdPartition.class));
+            rlm.new RLMExpirationTask(leaderTopicIdPartition).cleanupExpiredRemoteLogSegments();
+        }
+
+        verify(remoteStorageManager).deleteLogSegmentData(metadataList.get(0));
+        verify(remoteStorageManager, consolidating ? never() : times(1)).deleteLogSegmentData(metadataList.get(1));
+    }
+
     @ParameterizedTest(name = "testRemoteDeleteLagsOnRetentionBreachedSegments retentionSize={0} retentionMs={1}")
     @CsvSource(value = {"0, -1", "-1, 0"})
     public void testRemoteDeleteLagsOnRetentionBreachedSegments(long retentionSize,
