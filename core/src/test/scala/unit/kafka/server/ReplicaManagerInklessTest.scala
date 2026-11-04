@@ -9767,7 +9767,7 @@ class ReplicaManagerInklessTest {
     }
   }
 
-  // The consolidation fetcher needs OFFSET_OUT_OF_RANGE to start the tier-state rebuild.
+  // Only a consumer resets its position on OFFSET_OUT_OF_RANGE, so a replica fetch keeps it.
   @Test
   def testDisklessFollowerFetchInPrefixRangeStaysOutOfRange(): Unit = {
     withPrefixFixture(Map(prefixTp0 -> prefixResponse(Errors.OFFSET_OUT_OF_RANGE))) { replicaManager =>

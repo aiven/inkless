@@ -2524,7 +2524,7 @@ class ReplicaManager(val config: KafkaConfig,
    * True for a consumer fetch on a consolidating topic with
    * `crossTierEarliest <= fetchOffset < disklessStartOffset`; false otherwise.
    * An unknown `crossTierEarliest` defers too: it is unknown only until the control plane answers.
-   * Replica fetches keep the error, because the consolidation fetcher starts the rebuild from it.
+   * Replica fetches keep the error, because only a consumer resets its position on it.
    */
   private def shouldDeferPrefixRead(isFromConsumer: Boolean,
                                     tp: TopicIdPartition,
