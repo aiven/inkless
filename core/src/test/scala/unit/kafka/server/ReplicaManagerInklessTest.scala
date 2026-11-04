@@ -8659,7 +8659,7 @@ class ReplicaManagerInklessTest {
   }
 
   @ParameterizedTest(name = "{0}: shrinks ISR for lag = {1}")
-  @CsvSource(Array("PHASE_ONE, true", "PHASE_TWO, false", "BORN_DISKLESS, false"))
+  @CsvSource(Array("PENDING, true", "PHASE_ONE, true", "PHASE_TWO, false", "BORN_DISKLESS, false"))
   def testMaybeShrinkIsrGatesDisklessPartitionOnSwitchPhase(phase: String, expectShrink: Boolean): Unit = {
     val followerId = 2
     val sealOffset = 5L
@@ -8673,8 +8673,16 @@ class ReplicaManagerInklessTest {
       val partition = setupSwitchedLeaderWithOutOfSyncFollower(
         replicaManager, disklessTopicPartition, followerId, sealOffset, followerInIsr = true)
       phase match {
+        case "PENDING" =>
+          when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp))
+            .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
+          when(replicaManager.inklessMetadataView().isClassicPrefixOnlyOnLocalDisks(tp.topic(), tp.partition()))
+            .thenReturn(true)
         case "PHASE_ONE" =>
           when(replicaManager.inklessMetadataView().isClassicPrefixWaitingForUpload(tp)).thenReturn(true)
+          when(replicaManager.inklessMetadataView().isClassicPrefixOnlyOnLocalDisks(tp.topic(), tp.partition()))
+            .thenReturn(true)
+          when(replicaManager.inklessMetadataView().classicPrefixWaitingForUploadSeal(tp)).thenReturn(Some(sealOffset))
         case "PHASE_TWO" =>
           when(replicaManager.inklessMetadataView().isClassicPrefixInRemoteStorage(tp)).thenReturn(true)
         case "BORN_DISKLESS" =>
@@ -8692,6 +8700,43 @@ class ReplicaManagerInklessTest {
         verify(alterPartitionManager).submit(any(), argThat[LeaderAndIsr](!_.isr.contains(followerId)))
       else
         verify(alterPartitionManager, never()).submit(any(), any())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testMaybeShrinkIsrRemovesStalledFollowerBelowFrozenLeoWhileSwitchPending(): Unit = {
+    // While the switch is pending, the leader is sealed, so its log end offset is frozen, and the seal
+    // commits only once the high watermark reaches it. A follower in ISR that stops fetching below the log
+    // end offset holds the high watermark below it until the shrink removes the follower.
+    val followerId = 2
+    val leo = 10L
+    val stalledAt = 5L
+    val tp = disklessTopicPartition.topicPartition()
+    val replicaManager = createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      topicIdMapping = Map(disklessTopicPartition.topic() -> disklessTopicPartition.topicId()),
+      disklessManagedReplicasEnabled = true,
+    )
+    try {
+      val partition = setupSwitchedLeaderWithOutOfSyncFollower(
+        replicaManager, disklessTopicPartition, followerId, leo, followerInIsr = true)
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp))
+        .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
+      when(replicaManager.inklessMetadataView().isClassicPrefixOnlyOnLocalDisks(tp.topic(), tp.partition()))
+        .thenReturn(true)
+      partition.seal()
+      // The follower replicated up to stalledAt and then stopped fetching.
+      partition.localLogOrException.updateHighWatermark(stalledAt)
+      assertEquals(stalledAt, partition.localLogOrException.highWatermark)
+      assertEquals(leo, partition.localLogOrException.logEndOffset)
+      prepareAlterPartitionSubmit()
+
+      time.sleep(replicaManager.config.replicaLagTimeMaxMs + 1)
+      replicaManager.maybeShrinkIsr()
+
+      verify(alterPartitionManager).submit(any(), argThat[LeaderAndIsr](!_.isr.contains(followerId)))
     } finally {
       replicaManager.shutdown(checkpointHW = false)
     }
@@ -9852,6 +9897,7 @@ class ReplicaManagerInklessTest {
     when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(sealOffset)
     when(replicaManager.inklessMetadataView().getDisklessLeaderEpoch(tp)).thenReturn(disklessLeaderEpoch)
     when(replicaManager.inklessMetadataView().isClassicPrefixWaitingForUpload(tp)).thenReturn(true)
+    when(replicaManager.inklessMetadataView().isClassicPrefixOnlyOnLocalDisks(tp.topic(), tp.partition())).thenReturn(true)
     when(replicaManager.inklessMetadataView().classicPrefixWaitingForUploadSeal(tp)).thenReturn(Some(sealOffset))
 
     val delta = new TopicsDelta(TopicsImage.EMPTY)
@@ -9891,6 +9937,7 @@ class ReplicaManagerInklessTest {
     populateLocalLogAtLeoAndCheckpointedHwm(replicaManager, tp, log, leo = sealOffset, hw = sealOffset)
     when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(sealOffset)
     when(replicaManager.inklessMetadataView().isClassicPrefixWaitingForUpload(tp)).thenReturn(true)
+    when(replicaManager.inklessMetadataView().isClassicPrefixOnlyOnLocalDisks(tp.topic(), tp.partition())).thenReturn(true)
     when(replicaManager.inklessMetadataView().classicPrefixWaitingForUploadSeal(tp)).thenReturn(Some(sealOffset))
 
     val delta = new TopicsDelta(TopicsImage.EMPTY)

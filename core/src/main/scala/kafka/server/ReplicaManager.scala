@@ -3669,14 +3669,16 @@ class ReplicaManager(val config: KafkaConfig,
 
   /**
    * Returns true if the partition shrinks ISR for lag by classic rules: a classic partition, or a
-   * partition in phase 1 of the classic-to-diskless switch. In phase 1 the ISR members' local logs are
-   * the only complete copy of the classic prefix, and the lag check stops at `replicationStopOffset`, the
-   * seal, so the shrink measures lag on the prefix. A born-diskless or phase-2 partition has no prefix to
-   * lag on.
+   * partition whose classic-to-diskless switch is pending or in phase 1. In both, the ISR members' local
+   * logs are the only complete copy of the classic prefix. While the switch is pending, the leader commits
+   * the seal only once its high watermark reaches its frozen log end offset, so a follower that stops
+   * fetching below it blocks the switch until the shrink removes it. In phase 1 the lag check stops at
+   * `replicationStopOffset`, the seal, so the shrink measures lag on the prefix. A born-diskless or
+   * phase-2 partition has no prefix to lag on.
    */
   private[server] def isIsrShrinkEligible(topicPartition: TopicPartition): Boolean =
     !_inklessMetadataView.isDisklessTopic(topicPartition.topic()) ||
-      _inklessMetadataView.isClassicPrefixWaitingForUpload(topicPartition)
+      _inklessMetadataView.isClassicPrefixOnlyOnLocalDisks(topicPartition.topic(), topicPartition.partition())
 
   /**
    * Returns the offset at which follower replication of the partition stops, or `None` if it doesn't
