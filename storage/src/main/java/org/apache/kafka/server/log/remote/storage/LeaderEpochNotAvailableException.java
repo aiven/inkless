@@ -19,10 +19,9 @@ package org.apache.kafka.server.log.remote.storage;
 import org.apache.kafka.common.errors.OffsetOutOfRangeException;
 
 /**
- * Thrown when a remote read finds no leader epoch for the requested offset in the leader epoch cache
- * of the local log. The read is out of range for this replica only until the cache is restored, for
- * example during a tier state rebuild. A read whose epoch is known but has no remote segment throws
- * a plain {@link OffsetOutOfRangeException}.
+ * Thrown when the leader epoch cache of the local log has no leader epoch for the offset of a remote
+ * read. The read is out of range for this replica only until a tier state rebuild restores the cache.
+ * A read with a known epoch but no remote segment throws a plain {@link OffsetOutOfRangeException}.
  */
 public class LeaderEpochNotAvailableException extends OffsetOutOfRangeException {
     private static final long serialVersionUID = 1L;
