@@ -195,7 +195,7 @@ Brokers also follow different rules in each phase. The consolidation rows apply 
 | Broker behavior | Phase 1 | Phase 2 |
 | --- | --- | --- |
 | Consolidation | Off. The partition runs like a switched partition that doesn't consolidate. | On, from the seal. |
-| Follower at the seal | Leaves the classic fetcher once it's in the ISR, like a follower that doesn't consolidate. | Leaves the classic fetcher and consolidates from the seal. |
+| Follower at the seal | Leaves the classic fetcher once it's in the ISR, like a follower that doesn't consolidate. | Consolidates from the seal. If its high watermark is below the seal, it first fetches once at the seal on the classic fetcher. |
 | Local classic prefix | Kept, and serves reads below the seal. | Deleted. Reads below the seal come from remote storage. |
 | Metadata routing | Clients go to alive ISR members only. | Clients go to any replica, by the managed replica rules. |
 
@@ -232,6 +232,14 @@ A log directory move copies the prefix into the future log, and the deletion on 
 A follower below the seal stays on the classic fetcher in phase 2. If the leader already deleted that part of its local log, it returns `OFFSET_MOVED_TO_TIERED_STORAGE`, and the follower rebuilds its log from remote storage. When the follower's local LEO equals the seal, it deletes any part of the prefix it fetched and hands off to consolidation.
 
 Forced deletion skips a segment that starts below the seal and ends past it, like the one in the last case. Consumers read the prefix part of that segment from remote storage. If the replica leads the partition, a follower below the seal can't fetch that part until local retention deletes the segment. A log directory move on the replica waits for the same deletion. If remote storage is off for the topic, or `remote.log.copy.disable` is `true`, the broker keeps the local prefix and logs a warning. Consumer reads succeed only for offsets that this broker already sees in remote storage.
+
+### Divergent classic tails in phase 2
+
+Any replica can join the ISR or lead in phase 2, including one whose local log contains records below the seal that the partition never committed. Such a replica may have led an older leader epoch and written records that no follower replicated. Forced deletion keeps the leader epoch cache, and the remote log manager uses that cache to pick remote segments. With a divergent cache, a tiered read fails with `OFFSET_OUT_OF_RANGE` and the consumer resets its offset. On an idle topic, the highest offset in remote storage also stays below the seal, so forced deletion never completes.
+
+The partition committed every record below a replica's high watermark. Only a replica whose high watermark is below the seal needs a check:
+
+* A follower fetches once at the seal on the classic fetcher before it consolidates. The leader checks the follower's last fetched epoch against its own epoch cache. If they diverge, the follower truncates and catches up like any follower below the seal, which rebuilds its log and epoch cache from remote storage.
 
 ## Operator override of the seal offset
 

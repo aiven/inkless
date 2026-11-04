@@ -8018,6 +8018,74 @@ class ReplicaManagerInklessTest {
     }
   }
 
+  // In phase 2 of the classic-to-diskless switch, the controller adds every live replica to the ISR without
+  // checking its local prefix. A follower whose high watermark is below the seal may hold records the leader
+  // never committed, so it fetches once at the seal on the classic fetcher and lets the leader check its
+  // epoch history. A high watermark at the seal means every local record is committed.
+  @ParameterizedTest(name = "testSwitchedConsolidatingFollowerInPhaseTwoFetchesAtSealBelowHighWatermark with highWatermarkAtSeal: {0}")
+  @ValueSource(booleans = Array(true, false))
+  def testSwitchedConsolidatingFollowerInPhaseTwoFetchesAtSealBelowHighWatermark(highWatermarkAtSeal: Boolean): Unit = {
+    val topicName = "switched-consolidating-topic"
+    val topicId = Uuid.randomUuid()
+    val tp = new TopicPartition(topicName, 0)
+    val followerId = 1
+    val leaderId = 2
+    val sealOffset = 10L
+
+    val mockFetcherManager = mock(classOf[ReplicaFetcherManager])
+    when(mockFetcherManager.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    val ctorInit: MockedConstruction.MockInitializer[ConsolidationFetcherManager] = {
+      case (mockCfm, _) =>
+        when(mockCfm.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    }
+    val consolidationCtor = mockConstruction(classOf[ConsolidationFetcherManager], ctorInit)
+    try {
+      val replicaManager = createReplicaManager(
+        Seq(topicName),
+        disklessRemoteStorageConsolidationEnabled = true,
+        consolidatingDisklessTopics = Set(topicName),
+        mockReplicaFetcherManager = Some(mockFetcherManager),
+        defaultLogConfig = Some(LogTestUtils.createLogConfig(remoteLogStorageEnable = true)),
+      )
+      try {
+        val mockCfm = consolidationCtor.constructed().get(0)
+        val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+        val highWatermark = if (highWatermarkAtSeal) sealOffset else sealOffset - 3
+        populateLocalLogAtLeoAndCheckpointedHwm(replicaManager, tp, log, leo = sealOffset, hw = highWatermark)
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(sealOffset)
+        when(replicaManager.inklessMetadataView().isClassicPrefixInRemoteStorage(tp)).thenReturn(true)
+
+        val delta = disklessFollowerDelta(topicName, topicId, followerId, leaderId,
+          classicToDisklessStartOffset = sealOffset, classicPrefixInRemoteStorage = true)
+        replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))
+
+        assertEquals(highWatermark, log.highWatermark)
+        if (highWatermarkAtSeal) {
+          verify(mockFetcherManager).addFetcherForPartitions(Map.empty[TopicPartition, InitialFetchState])
+          verify(mockCfm).addFetcherForPartitions(Map(tp -> InitialFetchState(
+            topicId = Some(topicId),
+            leader = new BrokerEndPoint(-1, "diskless", -1),
+            currentLeaderEpoch = 0,
+            initOffset = sealOffset
+          )))
+        } else {
+          val leaderEndpoint = ClusterImageTest.IMAGE1.broker(leaderId).listeners().get("PLAINTEXT")
+          verify(mockFetcherManager).addFetcherForPartitions(Map(tp -> InitialFetchState(
+            topicId = Some(topicId),
+            leader = new BrokerEndPoint(leaderId, leaderEndpoint.host(), leaderEndpoint.port()),
+            currentLeaderEpoch = 0,
+            initOffset = sealOffset
+          )))
+          verify(mockCfm, never()).addFetcherForPartitions(any())
+        }
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
+    } finally {
+      consolidationCtor.close()
+    }
+  }
+
   // A storage error while become-follower truncates a switched follower takes the partition offline after
   // it was picked for a fetcher. Going offline clears its log, which the fetcher setup reads.
   @Test

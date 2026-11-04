@@ -4496,11 +4496,20 @@ class ReplicaManager(val config: KafkaConfig,
    *  - switch pending (seal == -2): keep replicating the frozen classic prefix on the classic
    *    fetcher until the controller commits the seal;
    *  - switched (seal >= 0): only consolidate in phase 2 of the classic-to-diskless switch
-   *    (`classicPrefixInRemoteStorage` set) and once the local LEO has reached the committed seal.
-   *    In phase 1 the follower runs like a switched partition that doesn't consolidate. Below the
-   *    seal it stays on the classic fetcher, which rebuilds the prefix from remote storage if the
-   *    leader has tiered it, self-evicts at the seal, and hands off to consolidation in phase 2.
+   *    (`classicPrefixInRemoteStorage` set) and once both the local LEO and the high watermark have
+   *    reached the committed seal. In phase 1 the follower runs like a switched partition that
+   *    doesn't consolidate. Below the seal it stays on the classic fetcher, which rebuilds the prefix
+   *    from remote storage if the leader has tiered it, self-evicts at the seal, and hands off to
+   *    consolidation in phase 2.
    * Non-consolidating topics are never routed to the consolidation fetcher.
+   *
+   * The controller adds every live replica to the ISR in phase 2 without checking its local copy of the
+   * prefix, and the consolidation fetcher can't detect a divergent classic tail. A follower whose high
+   * watermark is below the seal may hold records between its high watermark and the seal that the
+   * partition never committed, for example from an older leader epoch in which it led. One classic fetch
+   * at the seal lets the leader return the diverging epoch from the epoch cache that forced deletion keeps.
+   * The follower then truncates and rebuilds its log and epoch cache from remote storage. A high watermark
+   * at the seal means every local record below it is committed.
    */
   private def isReadyForConsolidation(tp: TopicPartition, partition: Partition): Boolean = {
     if (!_inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)) return false
@@ -4508,8 +4517,9 @@ class ReplicaManager(val config: KafkaConfig,
       case PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET => true
       case PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING => false
       case committedSeal =>
+        val log = partition.localLogOrException
         _inklessMetadataView.isClassicPrefixInRemoteStorage(tp) &&
-          partition.localLogOrException.logEndOffset >= committedSeal
+          log.logEndOffset >= committedSeal && log.highWatermark >= committedSeal
     }
   }
 
@@ -4893,11 +4903,11 @@ class ReplicaManager(val config: KafkaConfig,
       // Stopping the fetchers must be done first in order to initialize the fetch
       // position correctly.
       // A consolidating diskless follower only joins the consolidation fetcher in phase 2 of the
-      // classic-to-diskless switch, once its local log has reached the committed seal. While the
-      // switch is pending, in phase 1, or while the log is below the seal, it must stay on the
-      // classic ReplicaFetcher so it can catch up
-      // from the leader; that fetcher self-evicts at the seal and, in phase 2, hands the partition off
-      // to the consolidation reconciler (startConsolidationFetchersForCaughtUpClassicPartitions).
+      // classic-to-diskless switch, once its local log and high watermark have reached the committed
+      // seal. While the switch is pending, in phase 1, or while either is below the seal, it must stay
+      // on the classic ReplicaFetcher so it can catch up from the leader; that fetcher self-evicts at
+      // the seal and, in phase 2, hands the partition off to the consolidation reconciler
+      // (startConsolidationFetchersForCaughtUpClassicPartitions).
       // Routing a below-seal/pending partition straight to the reconciler would strand it: the
       // reconciler returns Retry and no classic fetcher would ever bring it up to the seal.
       val (consolidatingDisklessPartitionsToStartFetching, classicPartitionsToStartFetching) = partitionsToStartFetching.partition { case (tp, partition) =>

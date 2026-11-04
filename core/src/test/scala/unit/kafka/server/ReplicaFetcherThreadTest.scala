@@ -455,6 +455,62 @@ class ReplicaFetcherThreadTest {
     verify(log, times(0)).maybeUpdateHighWatermark(anyLong())
   }
 
+  // In phase 2 of the classic-to-diskless switch, a consolidating follower whose high watermark is below the
+  // seal fetches once at the seal before it hands off. A diverging epoch from the leader must truncate it
+  // and keep it on the classic fetcher, so it refetches the committed prefix instead of consolidating.
+  @Test
+  def testDivergingEpochAtSealTruncatesConsolidatingFollowerWithoutEviction(): Unit = {
+    val config = KafkaConfig.fromProps(TestUtils.createBrokerConfig(1))
+    val log: UnifiedLog = mock(classOf[UnifiedLog])
+    val partition: Partition = mock(classOf[Partition])
+    val replicaManager: ReplicaManager = mock(classOf[ReplicaManager])
+
+    val seal = 150L
+    when(log.highWatermark).thenReturn(130L)
+    when(log.latestEpoch).thenReturn(Optional.of(5))
+    when(log.endOffsetForEpoch(4)).thenReturn(Optional.of(new OffsetAndEpoch(149, 4)))
+    when(log.logEndOffset).thenReturn(seal)
+
+    when(replicaManager.metadataCache).thenReturn(metadataCache)
+    when(replicaManager.logManager).thenReturn(mock(classOf[LogManager]))
+    when(replicaManager.replicaAlterLogDirsManager).thenReturn(mock(classOf[ReplicaAlterLogDirsManager]))
+    when(replicaManager.localLogOrException(t1p0)).thenReturn(log)
+    when(replicaManager.getPartitionOrException(t1p0)).thenReturn(partition)
+    when(replicaManager.consolidationActiveFor(t1p0)).thenReturn(true)
+    val inklessMetadataView: InklessMetadataView = mock(classOf[InklessMetadataView])
+    when(inklessMetadataView.getClassicToDisklessStartOffset(t1p0)).thenReturn(seal)
+    when(replicaManager.inklessMetadataView()).thenReturn(inklessMetadataView)
+    when(partition.localLogOrException).thenReturn(log)
+
+    val logContext = new LogContext(s"[ReplicaFetcher replicaId=${config.brokerId}, leaderId=${brokerEndPoint.id}, fetcherId=0] ")
+    val mockNetwork = new MockBlockingSender(Collections.emptyMap(), brokerEndPoint, Time.SYSTEM)
+    val leader = new RemoteLeaderEndPoint(logContext.logPrefix, mockNetwork,
+      new FetchSessionHandler(logContext, brokerEndPoint.id), config, replicaManager,
+      mock(classOf[ReplicationQuotaManager]), () => MetadataVersion.MINIMUM_VERSION, () => 1)
+    val thread = new ReplicaFetcherThread("fetcher-thread", leader, config, failedPartitions, replicaManager,
+      mock(classOf[ReplicationQuotaManager]), logContext.logPrefix)
+    thread.addPartitions(Map(t1p0 -> initialFetchState(Some(topicId1), seal)))
+
+    mockNetwork.setFetchPartitionDataForNextResponse(Map(
+      t1p0 -> new FetchResponseData.PartitionData()
+        .setPartitionIndex(t1p0.partition)
+        .setLastStableOffset(0)
+        .setLogStartOffset(0)
+        .setHighWatermark(seal)
+        .setDivergingEpoch(new FetchResponseData.EpochEndOffset()
+          .setEpoch(4)
+          .setEndOffset(140))
+    ))
+    mockNetwork.setIdsForNextResponse(topicIds)
+    thread.doWork()
+
+    verify(partition).truncateTo(140, false)
+    verify(log, times(0)).maybeUpdateHighWatermark(anyLong())
+    verify(replicaManager, times(0)).startConsolidationFetchersForCaughtUpClassicPartitions(any())
+    assertEquals(mutable.Buffer.empty, thread.partitionsToEvictAfterDisklessSwitch)
+    assertEquals(Some(140L), thread.fetchState(t1p0).map(_.fetchOffset))
+  }
+
   @Test
   def testLagIsUpdatedWhenNoRecords(): Unit = {
     val config = KafkaConfig.fromProps(TestUtils.createBrokerConfig(1))
