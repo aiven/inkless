@@ -2523,7 +2523,8 @@ class ReplicaManager(val config: KafkaConfig,
    * rebuilt its tier state, so the consumer should retry instead of resetting.
    * True for a consumer fetch on a consolidating topic with
    * `crossTierEarliest <= fetchOffset < disklessStartOffset`; false otherwise.
-   * An unknown `crossTierEarliest` defers too: it is unknown only until the control plane answers.
+   * An unknown `crossTierEarliest` defers too: it is unknown only until the consolidation fetcher or a
+   * `ListOffsets` fills the cache.
    * Replica fetches keep the error, because only a consumer resets its position on it.
    */
   private def shouldDeferPrefixRead(isFromConsumer: Boolean,
@@ -2532,8 +2533,9 @@ class ReplicaManager(val config: KafkaConfig,
                                     disklessStartOffset: Long): Boolean =
     // Doesn't read the local log: the rebuild can finish between routing and this answer.
     isFromConsumer && fetchOffset < disklessStartOffset && consolidationActiveFor(tp.topicPartition()) && {
-      val earliest = crossTierEarliestOffset(tp.topicPartition())
-      earliest.isEmpty || fetchOffset >= earliest.getAsLong
+      // Reads the cache only: a miss would query the control plane on the fetch thread.
+      val earliest = inklessSharedState.flatMap(s => Option(s.crossTierLogStartCache().get(tp)))
+      earliest.forall(fetchOffset >= _.longValue)
     }
 
   /**

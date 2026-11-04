@@ -9637,7 +9637,8 @@ class ReplicaManagerInklessTest {
   private def withPrefixFixture(responses: Map[TopicIdPartition, FetchPartitionData],
                                 consolidating: Boolean = true,
                                 remoteStorage: Boolean = true,
-                                crossTierEarliest: Option[Long] = Some(prefixCrossTierEarliest))
+                                crossTierEarliest: Option[Long] = Some(prefixCrossTierEarliest),
+                                controlPlane: Option[ControlPlane] = None)
                                (body: ReplicaManager => Unit): Unit = {
     val fetchHandlerCtor = mockConstruction(classOf[FetchHandler], {
       case (mock, _) =>
@@ -9658,6 +9659,7 @@ class ReplicaManagerInklessTest {
       consolidatingDisklessTopics = if (consolidating) Set(topic) else Set.empty,
       topicIdMapping = Map(topic -> prefixTp0.topicId()),
       crossTierLogStartCache = Some(cache),
+      controlPlane = controlPlane,
     )
     try {
       if (consolidating) {
@@ -9745,9 +9747,12 @@ class ReplicaManagerInklessTest {
 
   @Test
   def testDisklessConsumerFetchWithUnknownCrossTierEarliestIsNotAvailable(): Unit = {
-    withPrefixFixture(Map(prefixTp0 -> prefixResponse(Errors.OFFSET_OUT_OF_RANGE)), crossTierEarliest = None) { replicaManager =>
+    val cp = mock(classOf[ControlPlane])
+    withPrefixFixture(Map(prefixTp0 -> prefixResponse(Errors.OFFSET_OUT_OF_RANGE)),
+      crossTierEarliest = None, controlPlane = Some(cp)) { replicaManager =>
       val results = fetchPrefix(replicaManager, consumerParams, prefixFetch(prefixTp0, 0L))
       assertEquals(Seq(Errors.OFFSET_NOT_AVAILABLE), prefixErrors(results))
+      verify(cp, never()).listOffsets(anyList())
     }
   }
 
