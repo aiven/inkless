@@ -1497,8 +1497,8 @@ public class ReplicationControlManager {
                 )
                     .setEligibleLeaderReplicasEnabled(featureControl.isElrFeatureEnabled());
                 if (configurationControl.uncleanLeaderElectionEnabledForTopic(topic.name())) {
-                    if (hasClassicToDisklessSwitchPending(partition)) {
-                        warnSkippingUncleanElectionForPendingSwitch(topic.name, partitionId);
+                    if (isClassicPrefixOnlyOnLocalDisks(partition)) {
+                        warnSkippingUncleanElectionForLocalClassicPrefix(topic.name, partitionId);
                     } else {
                         builder.setElection(PartitionChangeBuilder.Election.UNCLEAN);
                     }
@@ -2380,11 +2380,11 @@ public class ReplicationControlManager {
             || (electionType == ElectionType.UNCLEAN && partition.hasLeader())) {
             return new ApiError(Errors.ELECTION_NOT_NEEDED);
         }
-        if (electionType == ElectionType.UNCLEAN && hasClassicToDisklessSwitchPending(partition)) {
-            warnSkippingUncleanElectionForPendingSwitch(topic, partitionId);
+        if (electionType == ElectionType.UNCLEAN && isClassicPrefixOnlyOnLocalDisks(partition)) {
+            warnSkippingUncleanElectionForLocalClassicPrefix(topic, partitionId);
             return new ApiError(INVALID_REQUEST,
                 "Cannot perform unclean leader election for partition " + topic + "-" + partitionId +
-                " because it has a pending classic-to-diskless switch.");
+                " because it is switching to diskless and its classic prefix is not in remote storage yet.");
         }
 
         PartitionChangeBuilder.Election election = PartitionChangeBuilder.Election.PREFERRED;
@@ -2603,11 +2603,11 @@ public class ReplicationControlManager {
             TopicIdPartition topicIdPartition = iterator.next();
             TopicControlInfo topic = topics.get(topicIdPartition.topicId());
             PartitionRegistration partition = topic.parts.get(topicIdPartition.partitionId());
-            if (partition != null && hasClassicToDisklessSwitchPending(partition)) {
-                warnSkippingUncleanElectionForPendingSwitch(topic.name, topicIdPartition.partitionId());
-                continue;
-            }
             if (configurationControl.uncleanLeaderElectionEnabledForTopic(topic.name)) {
+                if (partition != null && isClassicPrefixOnlyOnLocalDisks(partition)) {
+                    warnSkippingUncleanElectionForLocalClassicPrefix(topic.name, topicIdPartition.partitionId());
+                    continue;
+                }
                 ApiError result = electLeader(topic.name, topicIdPartition.partitionId(),
                         ElectionType.UNCLEAN, records);
                 if (result.error().equals(Errors.NONE)) {
@@ -2625,23 +2625,19 @@ public class ReplicationControlManager {
         }
     }
 
-    private static boolean hasClassicToDisklessSwitchPending(PartitionRegistration partition) {
-        return partition.classicToDisklessStartOffset == PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING;
-    }
-
     private static boolean isClassicPrefixOnlyOnLocalDisks(PartitionRegistration partition) {
         return partition.classicToDisklessStartOffset != PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET
             && !partition.classicPrefixInRemoteStorage;
     }
 
-    private static boolean hasAnyPartitionWithPendingSwitch(TopicControlInfo topicInfo) {
+    private static boolean hasAnyPartitionWithLocalClassicPrefix(TopicControlInfo topicInfo) {
         return topicInfo.parts.values().stream().anyMatch(
-            ReplicationControlManager::hasClassicToDisklessSwitchPending);
+            ReplicationControlManager::isClassicPrefixOnlyOnLocalDisks);
     }
 
-    private void warnSkippingUncleanElectionForPendingSwitch(String topicName, int partitionId) {
+    private void warnSkippingUncleanElectionForLocalClassicPrefix(String topicName, int partitionId) {
         log.warn("Skipping unclean leader election for partition {}-{} " +
-                "because it has a pending classic-to-diskless switch.",
+                "because it is switching to diskless and its classic prefix is not in remote storage yet.",
             topicName, partitionId);
     }
 
@@ -2878,8 +2874,8 @@ public class ReplicationControlManager {
             );
             builder.setEligibleLeaderReplicasEnabled(featureControl.isElrFeatureEnabled());
             if (configurationControl.uncleanLeaderElectionEnabledForTopic(topic.name)) {
-                if (hasClassicToDisklessSwitchPending(partition)) {
-                    warnSkippingUncleanElectionForPendingSwitch(topic.name, topicIdPart.partitionId());
+                if (isClassicPrefixOnlyOnLocalDisks(partition)) {
+                    warnSkippingUncleanElectionForLocalClassicPrefix(topic.name, topicIdPart.partitionId());
                 } else {
                     builder.setElection(PartitionChangeBuilder.Election.UNCLEAN);
                 }
@@ -3003,6 +2999,12 @@ public class ReplicationControlManager {
                     "assignment for " + topicName + ":" + tp.partitionId() + " because " +
                     "it would require an unclean leader election.");
             }
+            if (isClassicPrefixOnlyOnLocalDisks(part)) {
+                throw new InvalidReplicaAssignmentException("Unable to revert partition " +
+                    "assignment for " + topicName + ":" + tp.partitionId() + " because " +
+                    "it would require an unclean leader election, and the partition is switching " +
+                    "to diskless and its classic prefix is not in remote storage yet.");
+            }
         }
         PartitionChangeBuilder builder = new PartitionChangeBuilder(
             part,
@@ -3014,7 +3016,11 @@ public class ReplicationControlManager {
         );
         builder.setEligibleLeaderReplicasEnabled(featureControl.isElrFeatureEnabled());
         if (configurationControl.uncleanLeaderElectionEnabledForTopic(topicName)) {
-            builder.setElection(PartitionChangeBuilder.Election.UNCLEAN);
+            if (isClassicPrefixOnlyOnLocalDisks(part)) {
+                warnSkippingUncleanElectionForLocalClassicPrefix(topicName, tp.partitionId());
+            } else {
+                builder.setElection(PartitionChangeBuilder.Election.UNCLEAN);
+            }
         }
         return builder
             .setTargetIsr(revert.isr()).
@@ -3434,15 +3440,15 @@ public class ReplicationControlManager {
         boolean disklessEnabled = topicOverrides.containsKey(DISKLESS_ENABLE_CONFIG)
             ? Boolean.parseBoolean(topicOverrides.get(DISKLESS_ENABLE_CONFIG))
             : defaultDisklessEnable;
-        boolean hasPendingSwitch = hasAnyPartitionWithPendingSwitch(topicInfo);
+        boolean hasLocalClassicPrefix = hasAnyPartitionWithLocalClassicPrefix(topicInfo);
         boolean initiatingSwitch = disklessEnabled && !isDisklessTopic(topicName);
 
         // Unclean leader election is incompatible with diskless
         if (uncleanEnabled) {
-            if (hasPendingSwitch) {
+            if (hasLocalClassicPrefix) {
                 return new ApiError(INVALID_CONFIG,
                     "Cannot enable unclean leader election for topic " + topicName +
-                    ": topic has a pending classic-to-diskless switch.");
+                    ": topic is switching to diskless and its classic prefix is not in remote storage yet.");
             }
             if (initiatingSwitch) {
                 return new ApiError(INVALID_CONFIG,
