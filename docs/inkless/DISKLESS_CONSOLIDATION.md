@@ -342,6 +342,8 @@ Inkless doesn't change the rebuild, and the pruner doesn't wait for a slow repli
 
 To find the loop, watch `ConsolidationTierRebuildRequests` (see [Metrics](#metrics)). The loop shows as a count that keeps rising for one partition, such as one rebuild per minute for an hour. If the count stops after a few increases, the replica caught up.
 
+The upstream `BuildRemoteLogAuxStateRequestsPerSec` and `BuildRemoteLogAuxStateErrorsPerSec` meters in `kafka.server:type=BrokerTopicMetrics` count the same rebuilds per topic. If the errors meter rises with the requests meter, the rebuild fails. Check the fetcher log before you change the prune settings. If only the requests meter rises, the prune outruns the replica.
+
 Settings 1 and 2 slow the prune. Setting 3 speeds up the fetcher.
 
 > **Caution**
