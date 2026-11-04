@@ -7845,10 +7845,11 @@ class ReplicaManagerInklessTest {
   // This replica led epoch 1 and wrote [7, 10), which never committed. In phase 2 the controller can elect
   // it, so it drops that tail, and consolidation starts below the seal, where the first fetch rebuilds the
   // classic prefix from remote storage. In phase 1 only ISR members lead, so the leader keeps its log and
-  // advances its stale high watermark.
-  @ParameterizedTest(name = "testSwitchedLeaderWithHighWatermarkBelowSeal with classicPrefixInRemoteStorage: {0}")
-  @ValueSource(booleans = Array(true, false))
-  def testSwitchedLeaderWithHighWatermarkBelowSeal(classicPrefixInRemoteStorage: Boolean): Unit = {
+  // advances its stale high watermark. As the only ISR member, makeLeader would raise the high watermark
+  // to the log end offset, so the phase 2 truncation must run first.
+  @ParameterizedTest(name = "testSwitchedLeaderWithHighWatermarkBelowSeal with classicPrefixInRemoteStorage: {0}, singletonIsr: {1}")
+  @CsvSource(Array("true, false", "true, true", "false, false", "false, true"))
+  def testSwitchedLeaderWithHighWatermarkBelowSeal(classicPrefixInRemoteStorage: Boolean, singletonIsr: Boolean): Unit = {
     val topicName = "switched-consolidating-topic"
     val topicId = Uuid.randomUuid()
     val tp = new TopicPartition(topicName, 0)
@@ -7889,7 +7890,7 @@ class ReplicaManagerInklessTest {
           .setPartitionId(tp.partition)
           .setTopicId(topicId)
           .setReplicas(util.Arrays.asList(brokerId, followerId))
-          .setIsr(util.Arrays.asList(brokerId, followerId))
+          .setIsr(if (singletonIsr) util.List.of(brokerId) else util.Arrays.asList(brokerId, followerId))
           .setLeader(brokerId)
           .setLeaderEpoch(leaderEpoch)
           .setPartitionEpoch(0)
@@ -7903,7 +7904,8 @@ class ReplicaManagerInklessTest {
         if (classicPrefixInRemoteStorage) {
           assertEquals(highWatermark, log.logEndOffset)
           assertEquals(highWatermark, log.highWatermark)
-          assertEquals(util.List.of(new EpochEntry(0, 0L)), log.leaderEpochCache.epochEntries)
+          assertEquals(util.List.of(new EpochEntry(0, 0L), new EpochEntry(leaderEpoch, highWatermark)),
+            log.leaderEpochCache.epochEntries)
           verify(mockCfm).addFetcherForPartitions(Map(tp -> InitialFetchState(
             topicId = Some(topicId),
             leader = new BrokerEndPoint(-1, "diskless", -1),

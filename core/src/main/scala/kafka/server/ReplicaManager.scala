@@ -4136,6 +4136,33 @@ class ReplicaManager(val config: KafkaConfig,
   }
 
   /**
+   * Truncates a switched replica that becomes the leader in phase 2 to its high watermark if that's below the seal.
+   * The controller can elect any live replica in phase 2, so the records between the high watermark and the seal
+   * may diverge from the committed prefix. The log end offset is then below the seal, so
+   * `maybeReconcileSwitchedLeader` keeps the partition online, and consolidation rebuilds the classic prefix from
+   * remote storage. Must run before makeLeader, which can raise the high watermark to the log end offset, for
+   * example when this replica is the only ISR member.
+   */
+  private def maybeTruncateBelowSealBeforePromotion(partition: Partition,
+                                                    registration: PartitionRegistration,
+                                                    offsetCheckpoints: OffsetCheckpoints): Unit = {
+    val tp = partition.topicPartition
+    val seal = registration.classicToDisklessStartOffset
+    if (seal < 0 || !registration.classicPrefixInRemoteStorage) return
+
+    partition.log.orElse(logManager.getLog(tp)).filter(_.remoteLogEnabled()).foreach { log =>
+      val highWatermark = partition.log.map(_.highWatermark).getOrElse(
+        offsetCheckpoints.fetch(log.parentDir, tp).toScala.map(_.longValue).getOrElse(0L))
+      if (log.logEndOffset >= seal && highWatermark < seal) {
+        stateChangeLogger.info(s"Truncating switched partition $tp from LEO ${log.logEndOffset} to its high " +
+          s"watermark $highWatermark below the seal $seal before it becomes the leader: in phase 2 these records " +
+          s"may diverge from the committed prefix, so consolidation rebuilds the classic prefix from the remote tier.")
+        partition.truncateTo(highWatermark, isFuture = false)
+      }
+    }
+  }
+
+  /**
    * Reconcile a leader whose classic-to-diskless seal has already been committed.
    *
    * A committed seal is the first diskless offset and the classic prefix [0, seal) must be fully
@@ -4144,10 +4171,7 @@ class ReplicaManager(val config: KafkaConfig,
    *
    *  - LEO > seal: truncate down to the seal unless the local suffix [seal, LEO) is already
    *    materialized consolidated diskless data.
-   *  - LEO == seal and HW < seal: advance HW to the seal so consumers can cross into diskless. In
-   *    phase 2 the controller can elect any live replica, so the records in [HW, seal) may diverge
-   *    from the committed prefix. A consolidating leader truncates to HW instead, which puts it in
-   *    the LEO < seal case.
+   *  - LEO == seal and HW < seal: advance HW to the seal so consumers can cross into diskless.
    *  - LEO < seal: fence offline, unless this is a consolidating diskless topic with remote
    *    storage enabled. In that case the classic prefix [0, seal) lives in the remote tier and
    *    can be rebuilt, so the partition is left online for the ConsolidationReconciler to
@@ -4177,18 +4201,10 @@ class ReplicaManager(val config: KafkaConfig,
             }
             if (partition.isLeader) {
               if (log.logEndOffset >= seal && log.highWatermark < seal) {
-                if (newRegistration.classicPrefixInRemoteStorage && consolidationActiveFor(tp) && log.remoteLogEnabled()) {
-                  stateChangeLogger.info(s"Truncating switched leader partition $tp from LEO ${log.logEndOffset} to its " +
-                    s"high watermark ${log.highWatermark} below the seal $seal: in phase 2 these records may diverge " +
-                    s"from the committed prefix, so consolidation rebuilds the classic prefix from the remote tier.")
-                  partition.truncateTo(log.highWatermark, isFuture = false)
-                } else {
-                  log.maybeUpdateHighWatermark(seal)
-                  stateChangeLogger.info(s"Stale high watermark detected: advanced high watermark to seal offset $seal for " +
-                    s"switched leader partition $tp")
-                }
-              }
-              if (log.logEndOffset < seal) {
+                log.maybeUpdateHighWatermark(seal)
+                stateChangeLogger.info(s"Stale high watermark detected: advanced high watermark to seal offset $seal for " +
+                  s"switched leader partition $tp")
+              } else if (log.logEndOffset < seal) {
                 if (consolidationActiveFor(tp) && log.remoteLogEnabled()) {
                   // The leader's local classic prefix was lost (full local-storage wipe / DR).
                   // [0, seal) lives in the remote tier, so leave the partition online and let the
@@ -4665,6 +4681,9 @@ class ReplicaManager(val config: KafkaConfig,
         getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
           try {
             val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
+            if (isConsolidatingDisklessTopic) {
+              maybeTruncateBelowSealBeforePromotion(partition, info.partition, offsetCheckpoints)
+            }
             partition.makeLeader(info.partition, isNew, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
 
             // A classic topic must never stay sealed. If this partition was sealed for a
