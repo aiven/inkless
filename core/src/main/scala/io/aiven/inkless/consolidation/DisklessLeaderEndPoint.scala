@@ -203,6 +203,7 @@ class DisklessLeaderEndPoint(
                     logger.debug("Offset {} for {} is below the diskless WAL start {} but at/above the whole-log start {}; " +
                       "signalling OFFSET_MOVED_TO_TIERED_STORAGE to rebuild the consolidated remote prefix.",
                       requestedOffset, tp.topicPartition, disklessStartOffset, logStartOffset)
+                    replicaManager.recordConsolidationTierRebuildRequest(tp.topicPartition)
                     fetchResponseData.setErrorCode(Errors.OFFSET_MOVED_TO_TIERED_STORAGE.code)
                     fetchResponseData.setRecords(MemoryRecords.EMPTY)
                   } else {

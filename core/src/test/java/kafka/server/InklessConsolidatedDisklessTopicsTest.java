@@ -32,6 +32,7 @@ import org.apache.kafka.clients.admin.RecordsToDelete;
 import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
+import org.apache.kafka.clients.consumer.OffsetOutOfRangeException;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.Producer;
 import org.apache.kafka.clients.producer.ProducerConfig;
@@ -42,6 +43,7 @@ import org.apache.kafka.common.TopicPartitionInfo;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.errors.RecordTooLargeException;
+import org.apache.kafka.common.errors.RetriableException;
 import org.apache.kafka.common.errors.UnknownTopicOrPartitionException;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.serialization.StringDeserializer;
@@ -61,6 +63,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInfo;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.testcontainers.junit.jupiter.Container;
@@ -85,6 +89,7 @@ import java.util.NavigableSet;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -115,6 +120,8 @@ import static org.apache.kafka.common.config.TopicConfig.SEGMENT_BYTES_CONFIG;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 @Testcontainers
 public class InklessConsolidatedDisklessTopicsTest {
@@ -582,6 +589,140 @@ public class InklessConsolidatedDisklessTopicsTest {
         }
     }
 
+    /**
+     * A replica with an empty local log must serve a read of the remote-only prefix.
+     *
+     * <p>Once tiering and pruning remove the WAL below {@code walStart}, {@code [0, walStart)} lives only in
+     * the remote tier. A replica that lost its local data, or a reassignment target, starts with
+     * {@code localLogStartOffset = 0}. The broker sends its fetches to the diskless path until the
+     * consolidation fetcher rebuilds the tier state from {@code OFFSET_MOVED_TO_TIERED_STORAGE}.
+     * Metadata routing picks any alive assigned replica, so it can send a consumer to the replica in that
+     * window. The diskless path alone answers {@code OFFSET_OUT_OF_RANGE} below the WAL start.
+     *
+     * <p>The consumer can't retry {@code OFFSET_OUT_OF_RANGE}: with {@code none} {@code poll} throws it to the
+     * caller, and with {@code latest} the consumer resets its position. Each policy must either deliver
+     * offset 0 or keep the position at 0. A reset past 0 skips records silently. The {@code earliest}
+     * policy resets to the cross-tier earliest offset, which is 0. It passes without the fix. The test leaves it out.
+     *
+     * <p>The test exercises the diskless path, in the window the skip condition below checks. It doesn't
+     * record whether a second tier rebuild ran, so it doesn't cover the remote path.
+     *
+     * <p>The consumer reads from offset 0 in a loop while the replica restarts, so the first fetch that
+     * reaches the replica comes as early as possible. The window is short, so JUnit reports the test as
+     * skipped when no iteration saw the consumer routed to the replica while its local log was empty.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"none", "latest"})
+    public void testWipedReplicaServesRemoteOnlyPrefixOfConsolidatedTopic(String autoOffsetReset) throws Exception {
+        numPartitions = 1;
+        topicName = "remote-only-prefix-empty-replica";
+        final TopicPartition tp = new TopicPartition(topicName, 0);
+        final int recordCount = 50;
+
+        final Map<String, Object> commonConfigs = new HashMap<>();
+        commonConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
+
+        final Uuid topicUuid;
+        try (Admin admin = AdminClient.create(commonConfigs)) {
+            final NewTopic topic = new NewTopic(topicName, numPartitions, (short) -1).configs(Map.of(
+                DISKLESS_ENABLE_CONFIG, "true",
+                REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true",
+                CLEANUP_POLICY_CONFIG, CLEANUP_POLICY_DELETE,
+                SEGMENT_BYTES_CONFIG, "1048576"));
+            topicUuid = admin.createTopics(Collections.singletonList(topic)).topicId(topicName).get(30, TimeUnit.SECONDS);
+        }
+        produceRecords(commonConfigs, recordCount, largeValueRecordFactory());
+        waitForAtLeastOneTieredObject("after produce");
+
+        final AtomicLong walStartOffset = new AtomicLong(0L);
+        TestUtils.waitForCondition(() -> {
+            try {
+                walStartOffset.set(readControlPlaneDisklessSnapshot(topicUuid).minLogStartOffset());
+            } catch (SQLException e) {
+                throw new RuntimeException(e);
+            }
+            return walStartOffset.get() > 0;
+        }, 120_000, () -> "The WAL start must move past offset 0 so that [0, walStart) is remote-only");
+        log.info("Diskless WAL start offset is {}", walStartOffset.get());
+
+        final var kraftPartition = cluster.brokers().get(0).metadataCache()
+            .currentImage().topics().getTopic(topicName).partitions().get(0);
+        final int targetBrokerId = kraftPartition.leader == 0 ? 1 : 0;
+        log.info("KRaft leader is {}, wiping follower {}", kraftPartition.leader, targetBrokerId);
+
+        cluster.brokers().get(targetBrokerId).shutdown();
+        cluster.brokers().get(targetBrokerId).awaitShutdown();
+        wipeLocalPartitionData(targetBrokerId, tp);
+
+        final Map<String, Object> pinnedConfigs = new HashMap<>(commonConfigs);
+        pinnedConfigs.put(ConsumerConfig.CLIENT_RACK_CONFIG, "az" + (targetBrokerId + 1));
+        pinnedConfigs.put(CommonClientConfigs.CLIENT_ID_CONFIG, "remote-prefix-client,diskless_az=az" + (targetBrokerId + 1));
+        pinnedConfigs.put(ConsumerConfig.METADATA_MAX_AGE_CONFIG, 100);
+        pinnedConfigs.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+        pinnedConfigs.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+        pinnedConfigs.put(ConsumerConfig.GROUP_ID_CONFIG, "remote-prefix-group-" + UUID.randomUUID());
+        pinnedConfigs.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, autoOffsetReset);
+
+        boolean windowHit = false;
+        boolean servedFromStart = false;
+        final long restartStartMs = System.currentTimeMillis();
+        final CompletableFuture<Void> restart =
+            CompletableFuture.runAsync(() -> cluster.brokers().get(targetBrokerId).startup());
+        try (var consumer = new KafkaConsumer<String, String>(pinnedConfigs)) {
+            consumer.assign(Collections.singletonList(tp));
+            consumer.seek(tp, 0L);
+            final long deadlineMs = System.currentTimeMillis() + 120_000;
+            while (System.currentTimeMillis() < deadlineMs) {
+                final LocalLogState state = localLogState(targetBrokerId, tp);
+                final boolean emptyBeforePoll =
+                    routedLeaderId(consumer, topicName) == targetBrokerId && isLogEmpty(state);
+                try {
+                    final var records = consumer.poll(Duration.ofMillis(100));
+                    if (!records.isEmpty()) {
+                        final long firstOffset = records.iterator().next().offset();
+                        assertEquals(0L, firstOffset, "A read from offset 0 skipped [0, " + firstOffset
+                            + ") with auto.offset.reset=" + autoOffsetReset + "; WAL start=" + walStartOffset.get()
+                            + ", state=" + localLogState(targetBrokerId, tp));
+                        if (!servedFromStart) {
+                            log.info("Prefix served from offset 0 {} ms after the restart began",
+                                System.currentTimeMillis() - restartStartMs);
+                        }
+                        servedFromStart = true;
+                    } else {
+                        // The next position lookup resolves an out-of-range reset.
+                        final long position = consumer.position(tp, Duration.ofSeconds(30));
+                        assertEquals(0L, position, "auto.offset.reset=" + autoOffsetReset
+                            + " moved the position from 0 to " + position + ", skipping the remote-only prefix; WAL start="
+                            + walStartOffset.get() + ", state=" + localLogState(targetBrokerId, tp));
+                    }
+                } catch (OffsetOutOfRangeException e) {
+                    fail("A read of the remote-only prefix failed with OFFSET_OUT_OF_RANGE while the replica "
+                        + targetBrokerId + " rebuilt its local log; WAL start=" + walStartOffset.get()
+                        + ", state=" + localLogState(targetBrokerId, tp) + ", " + e.getMessage(), e);
+                }
+                // The poll sent the fetch while the replica had an empty log only if it still has one after the poll.
+                if (emptyBeforePoll && isLogEmpty(localLogState(targetBrokerId, tp))) {
+                    windowHit = true;
+                }
+                // Read the prefix again on the next iteration, whichever broker the metadata routes to.
+                consumer.seek(tp, 0L);
+                if (restart.isDone() && state != null && state.highWatermark() >= recordCount && servedFromStart) {
+                    break;
+                }
+            }
+        } finally {
+            restart.join();
+        }
+
+        assertTrue(servedFromStart, "The prefix must be readable from offset 0; state=" + localLogState(targetBrokerId, tp));
+        assumeTrue(windowHit, "The consumer was never routed to replica " + targetBrokerId
+            + " while its local log was empty, so the window was not exercised");
+    }
+
+    private static boolean isLogEmpty(final LocalLogState state) {
+        return state != null && state.localLogStartOffset() == 0 && state.logEndOffset() == 0;
+    }
+
     /** Simulates the loss of a replica's local data: DR, a replaced log directory, or a fresh target. */
     private void wipeLocalPartitionData(int brokerId, TopicPartition tp) throws Exception {
         final String entryPrefix = tp.topic() + " " + tp.partition() + " ";
@@ -622,6 +763,17 @@ public class InklessConsolidatedDisklessTopicsTest {
 
     private record LocalLogState(long logStartOffset, long localLogStartOffset,
                                  long highWatermark, long logEndOffset) { }
+
+    /** Returns the broker id that metadata routes the consumer to, or -1 if there is none yet. */
+    private static int routedLeaderId(KafkaConsumer<String, String> consumer, String topicName) {
+        try {
+            final Node leader = consumer.partitionsFor(topicName, Duration.ofSeconds(5)).get(0).leader();
+            return leader == null ? -1 : leader.id();
+        } catch (RetriableException e) {
+            // Metadata times out while the replica restarts.
+            return -1;
+        }
+    }
 
     private LocalLogState localLogState(int brokerId, TopicPartition tp) {
         final var log = cluster.brokers().get(brokerId).logManager().getLog(tp, false);

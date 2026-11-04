@@ -41,6 +41,11 @@ import scala.jdk.CollectionConverters._
  *   and retried with backoff, so this increments once per retry while the condition persists. Non-zero
  *   indicates a partition holding a batch larger than the current `segment.bytes`; raise `segment.bytes` above the
  *   batch size to resume. See DisklessLeaderEndPoint.clampRecordsToSegment.
+ * - ConsolidationTierRebuildRequests: count of times the consolidation fetcher on this broker got
+ *   `OFFSET_MOVED_TO_TIERED_STORAGE`, which starts a tier state rebuild. A rebuild that fails and retries counts again.
+ *   The count resets when the broker stops the replica. The WAL prune moves the WAL start without
+ *   reading the fetch position of the replicas, so a replica that lags can rebuild once per remote segment.
+ *   A count that keeps rising for a partition points at a fetcher that the prune outruns.
  * - ConsolidationRemotePrefixUnknown: 1 while a WAL-gap fetch is waiting on RLMM to decide OFFSET_MOVED
  *   vs never-tiered OFFSET_OUT_OF_RANGE (unregistered, not ready, list failed, or a covering segment
  *   still transitional); 0 once decided.
@@ -52,6 +57,7 @@ class ConsolidationMetrics extends Closeable {
   private val LocalLag = "ConsolidationLocalLag"
   private val DeletableMessages = "ConsolidationDeletableMessages"
   private val OversizedBatch = "ConsolidationOversizedBatch"
+  private val TierRebuildRequests = "ConsolidationTierRebuildRequests"
   private val RemotePrefixUnknown = "ConsolidationRemotePrefixUnknown"
 
   private val metricsGroup = new KafkaMetricsGroup("io.aiven.inkless.consolidation", "ConsolidationMetrics")
@@ -60,6 +66,7 @@ class ConsolidationMetrics extends Closeable {
   private val localLagByPartition = new ConcurrentHashMap[TopicPartition, AtomicLong]()
   private val deletableByPartition = new ConcurrentHashMap[TopicPartition, AtomicLong]()
   private val oversizedBatchByPartition = new ConcurrentHashMap[TopicPartition, AtomicLong]()
+  private val tierRebuildRequestsByPartition = new ConcurrentHashMap[TopicPartition, AtomicLong]()
   private val remotePrefixUnknownByPartition = new ConcurrentHashMap[TopicPartition, AtomicLong]()
   private val remotePrefixGenerationByPartition = new ConcurrentHashMap[TopicPartition, AtomicLong]()
 
@@ -68,6 +75,7 @@ class ConsolidationMetrics extends Closeable {
   metricsGroup.newGauge(LocalLag, () => sumValues(localLagByPartition))
   metricsGroup.newGauge(DeletableMessages, () => sumValues(deletableByPartition))
   metricsGroup.newGauge(OversizedBatch, () => sumValues(oversizedBatchByPartition))
+  metricsGroup.newGauge(TierRebuildRequests, () => sumValues(tierRebuildRequestsByPartition))
   metricsGroup.newGauge(RemotePrefixUnknown, () => sumValues(remotePrefixUnknownByPartition))
 
   def registerPartition(tp: TopicPartition): Unit = {
@@ -94,6 +102,12 @@ class ConsolidationMetrics extends Closeable {
       metricsGroup.newGauge(OversizedBatch, () => value.get, tags)
       value
     })
+    // Monotonic event count, like the oversized batch count.
+    tierRebuildRequestsByPartition.computeIfAbsent(tp, _ => {
+      val value = new AtomicLong(0)
+      metricsGroup.newGauge(TierRebuildRequests, () => value.get, tags)
+      value
+    })
     // Resets to 0 on re-arm so a previous WAL-gap wait does not survive re-registration.
     // Bumps the generation so an in-flight fetch from the previous arm cannot restore the latch.
     remotePrefixGenerationByPartition.computeIfAbsent(tp, _ => new AtomicLong(0L)).incrementAndGet()
@@ -115,6 +129,9 @@ class ConsolidationMetrics extends Closeable {
 
   def recordOversizedBatch(tp: TopicPartition): Unit =
     Option(oversizedBatchByPartition.get(tp)).foreach(_.incrementAndGet())
+
+  def recordTierRebuildRequest(tp: TopicPartition): Unit =
+    Option(tierRebuildRequestsByPartition.get(tp)).foreach(_.incrementAndGet())
 
   def remotePrefixGeneration(tp: TopicPartition): Long =
     Option(remotePrefixGenerationByPartition.get(tp)).map(_.get).getOrElse(0L)
@@ -163,11 +180,13 @@ class ConsolidationMetrics extends Closeable {
     localLagByPartition.remove(tp)
     deletableByPartition.remove(tp)
     oversizedBatchByPartition.remove(tp)
+    tierRebuildRequestsByPartition.remove(tp)
     remotePrefixUnknownByPartition.remove(tp)
     metricsGroup.removeMetric(TotalLag, tags)
     metricsGroup.removeMetric(LocalLag, tags)
     metricsGroup.removeMetric(DeletableMessages, tags)
     metricsGroup.removeMetric(OversizedBatch, tags)
+    metricsGroup.removeMetric(TierRebuildRequests, tags)
     metricsGroup.removeMetric(RemotePrefixUnknown, tags)
   }
 
@@ -182,6 +201,7 @@ class ConsolidationMetrics extends Closeable {
     metricsGroup.removeMetric(LocalLag)
     metricsGroup.removeMetric(DeletableMessages)
     metricsGroup.removeMetric(OversizedBatch)
+    metricsGroup.removeMetric(TierRebuildRequests)
     metricsGroup.removeMetric(RemotePrefixUnknown)
   }
 
