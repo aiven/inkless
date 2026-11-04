@@ -528,8 +528,8 @@ public class InklessTopicTypeSwitcherClusterTest {
                     alterTopicConfigWithIncrementalAlterConfigs(admin, topic, Map.of(
                             TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG, "true")));
             assertInstanceOf(InvalidConfigurationException.class, ex.getCause());
-            assertTrue(ex.getCause().getMessage().contains("pending classic-to-diskless switch"),
-                    "Expected 'pending classic-to-diskless switch' in: " + ex.getCause().getMessage());
+            assertTrue(ex.getCause().getMessage().contains("classic prefix is not in remote storage yet"),
+                    "Expected 'classic prefix is not in remote storage yet' in: " + ex.getCause().getMessage());
 
             // Same check via the legacy AlterConfigs path
             final Errors legacyError = alterTopicConfigWithLegacyAlterConfigsExpectingError(

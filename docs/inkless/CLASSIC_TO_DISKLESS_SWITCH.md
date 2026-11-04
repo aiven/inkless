@@ -183,6 +183,7 @@ A switched partition runs in one of two phases. The `classicPrefixInRemoteStorag
 | Controller behavior | Phase 1 | Phase 2 |
 | --- | --- | --- |
 | Leader election | Classic rules: the leader must be an active replica with an online log directory. | Born-diskless rules: any active replica can lead. |
+| Unclean leader election | Blocked, even if `unclean.leader.election.enable` is `true`. See [Unclean leader election](#unclean-leader-election). | Allowed if `unclean.leader.election.enable` is `true`, as for a born-diskless topic. |
 | ISR expansion when a broker unfences | Skipped. As for a classic partition, only `AlterPartition` expands the ISR. | The controller re-adds the unfenced replica and completes an in-flight reassignment. |
 | Reassignment | The controller stages the move as it does for a classic topic. New replicas are adding and dropped replicas are removing until the adding replicas join the ISR. | The target replicas replace the current replicas in one step. |
 | `AlterDisklessSwitch` | Accepted. See [Operator override](#operator-override-of-the-seal-offset). | Rejected with `INVALID_REQUEST`. |
@@ -199,6 +200,17 @@ Brokers also follow different rules in each phase. The consolidation rows apply 
 | Metadata routing | Clients go to alive ISR members only. | Clients go to any replica, by the managed replica rules. |
 
 The broker applies the metadata routing rules to every switched partition. The replication factor and the remote storage config don't change them. The broker also applies the phase 1 rule while the switch is pending, because the ISR members are the only replicas with a complete copy of the classic prefix.
+
+### Unclean leader election
+
+In phase 1, only the ISR members store a complete copy of the classic prefix. An unclean leader election makes a replica outside the ISR the leader and resets the ISR to that replica. Until the controller sets `classicPrefixInRemoteStorage`, it blocks unclean leader election for the partition:
+
+* It rejects `unclean.leader.election.enable=true` for the topic with `INVALID_CONFIG`.
+* It rejects an `ElectLeaders` request of type `UNCLEAN` with `INVALID_REQUEST`.
+* It rejects a reassignment cancellation that needs an unclean leader election with `INVALID_REPLICA_ASSIGNMENT`.
+* It skips the unclean election in the other paths that can run one: broker fencing, `AlterPartition`, reassignment cancellation, and the periodic check for leaderless partitions.
+
+These guards also apply if the cluster default enables unclean leader election, which the topic config check doesn't cover. A partition that loses every ISR member has no leader until one of them returns.
 
 ### Forced deletion of the local classic prefix
 
