@@ -22,20 +22,27 @@ import org.apache.kafka.clients.admin.AlterConfigOp;
 import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.clients.admin.NewPartitions;
 import org.apache.kafka.clients.admin.NewTopic;
+import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.consumer.KafkaConsumer;
+import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.common.errors.InvalidPartitionsException;
 import org.apache.kafka.common.errors.KafkaStorageException;
+import org.apache.kafka.common.errors.RetriableException;
 import org.apache.kafka.common.errors.TopicExistsException;
 import org.apache.kafka.common.protocol.Errors;
+import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.apache.kafka.common.test.KafkaClusterTestKit;
 import org.apache.kafka.common.test.TestKitNodes;
 import org.apache.kafka.coordinator.group.GroupCoordinatorConfig;
+import org.apache.kafka.server.IntegrationTestUtils;
 import org.apache.kafka.server.config.ServerConfigs;
 import org.apache.kafka.test.TestUtils;
 
@@ -48,11 +55,17 @@ import org.junit.jupiter.api.function.Executable;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.io.IOException;
+import java.net.ServerSocket;
+import java.net.Socket;
+import java.time.Duration;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.control_plane.ControlPlane;
@@ -88,6 +101,7 @@ public class InklessControlPlaneOutageClusterTest {
     private static final String TOPIC_NAME = "control-plane-outage-topic";
     private static final String CLASSIC_TOPIC_NAME = "control-plane-outage-classic-topic";
     private static final String NEW_TOPIC_NAME = "control-plane-outage-new-topic";
+    private static final String GROUP_ID = "control-plane-outage-group";
     private static final String CONNECTION_STRING_KEY = InklessConfig.PREFIX
         + InklessConfig.CONTROL_PLANE_PREFIX + PostgresControlPlaneConfig.CONNECTION_STRING_CONFIG;
 
@@ -251,6 +265,219 @@ public class InklessControlPlaneOutageClusterTest {
         }
     }
 
+    @Test
+    @Timeout(value = 300, unit = TimeUnit.SECONDS)
+    void classicTrafficSucceedsAndDisklessTrafficFailsRetriablyWhileConnectionStringIsEmpty() throws Exception {
+        final BrokerServer broker = cluster.brokers().values().iterator().next();
+        final ControlPlaneAvailability availability = broker.sharedServer().inklessControlPlaneAvailability().get();
+        final ConfigResource brokerResource = new ConfigResource(ConfigResource.Type.BROKER, "");
+        final int port = InklessDisklessRequestClient.brokerPort(broker);
+        final TopicPartition classicPartition = new TopicPartition(CLASSIC_TOPIC_NAME, 0);
+        final TopicPartition disklessPartition = new TopicPartition(TOPIC_NAME, 0);
+
+        try (Admin admin = Admin.create(Map.of(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers()))) {
+            admin.createTopics(List.of(
+                new NewTopic(TOPIC_NAME, 1, (short) 1).configs(Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true")),
+                new NewTopic(CLASSIC_TOPIC_NAME, 1, (short) 1))).all().get(30, TimeUnit.SECONDS);
+            final Uuid topicId = topicId(admin, TOPIC_NAME);
+            TestUtils.waitForCondition(availability::isAvailable, 30_000, "Control plane must be available after startup");
+            produceOnce(TOPIC_NAME);
+            produceOnce(CLASSIC_TOPIC_NAME);
+
+            setConnectionString(admin, brokerResource, "");
+            TestUtils.waitForCondition(() -> !availability.isAvailable(), 30_000,
+                "Control plane must go out of service after the connection string is emptied");
+
+            produceOnce(CLASSIC_TOPIC_NAME);
+            try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(consumerConfigs())) {
+                assertEquals(2, consumeFromBeginning(consumer, classicPartition, 2),
+                    "Classic consume must return both records while the control plane is out of service");
+                consumer.commitSync(Map.of(
+                    classicPartition, new OffsetAndMetadata(2),
+                    disklessPartition, new OffsetAndMetadata(1)));
+            }
+            final Map<TopicPartition, OffsetAndMetadata> committed = admin.listConsumerGroupOffsets(GROUP_ID)
+                .partitionsToOffsetAndMetadata().get(30, TimeUnit.SECONDS);
+            assertEquals(2, committed.get(classicPartition).offset());
+            assertEquals(1, committed.get(disklessPartition).offset());
+
+            assertInstanceOf(RetriableException.class, Errors.KAFKA_STORAGE_ERROR.exception(),
+                "Clients must retry the error the gate returns");
+            final ExecutionException produceFailure = assertThrows(ExecutionException.class, () -> produceOnce(TOPIC_NAME));
+            assertInstanceOf(KafkaStorageException.class, produceFailure.getCause());
+            assertEquals(Errors.KAFKA_STORAGE_ERROR, InklessDisklessRequestClient.fetch(port, TOPIC_NAME, topicId, 0));
+            assertEquals(Errors.KAFKA_STORAGE_ERROR, InklessDisklessRequestClient.listOffsets(port, TOPIC_NAME, 0));
+
+            setConnectionString(admin, brokerResource, pgContainer.getJdbcUrl());
+            TestUtils.waitForCondition(() -> succeeds(() -> produceOnce(TOPIC_NAME)), 60_000,
+                "Diskless produce must succeed again after the connection string is restored");
+            assertEquals(Errors.NONE, InklessDisklessRequestClient.fetch(port, TOPIC_NAME, topicId, 0));
+            assertEquals(Errors.NONE, InklessDisklessRequestClient.listOffsets(port, TOPIC_NAME, 0));
+        }
+    }
+
+    @Test
+    @Timeout(value = 300, unit = TimeUnit.SECONDS)
+    void brokerRestartedWhileConnectionStringIsEmptyServesClassicTrafficAndRecoversDisklessTraffic() throws Exception {
+        final BrokerServer broker = cluster.brokers().values().iterator().next();
+        final ControlPlaneAvailability availabilityBeforeRestart = broker.sharedServer().inklessControlPlaneAvailability().get();
+        final ConfigResource brokerResource = new ConfigResource(ConfigResource.Type.BROKER, "");
+
+        try (Admin admin = Admin.create(Map.of(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers()))) {
+            admin.createTopics(List.of(new NewTopic(TOPIC_NAME, 1, (short) 1)
+                .configs(Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true")))).all().get(30, TimeUnit.SECONDS);
+            TestUtils.waitForCondition(availabilityBeforeRestart::isAvailable, 30_000,
+                "Control plane must be available after startup");
+            produceOnce(TOPIC_NAME);
+
+            setConnectionString(admin, brokerResource, "");
+            TestUtils.waitForCondition(() -> !availabilityBeforeRestart.isAvailable(), 30_000,
+                "Control plane must go out of service after the connection string is emptied");
+        }
+
+        broker.shutdown();
+        broker.awaitShutdown();
+        broker.startup();
+        cluster.waitForReadyBrokers();
+
+        // The restarted broker replays the emptied connection string from the metadata log.
+        final ControlPlaneAvailability availability = broker.sharedServer().inklessControlPlaneAvailability().get();
+        assertEquals(ControlPlaneAvailability.State.UNAVAILABLE, availability.state());
+        assertEquals(ControlPlaneAvailability.UnavailableReason.NOT_CONFIGURED, availability.unavailableReason());
+
+        // The broker's port changes on restart, so a new `Admin` client must bootstrap again.
+        try (Admin admin = Admin.create(Map.of(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers()))) {
+            admin.createTopics(List.of(new NewTopic(CLASSIC_TOPIC_NAME, 1, (short) 1))).all().get(30, TimeUnit.SECONDS);
+            produceOnce(CLASSIC_TOPIC_NAME);
+            try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(consumerConfigs())) {
+                assertEquals(1, consumeFromBeginning(consumer, new TopicPartition(CLASSIC_TOPIC_NAME, 0), 1));
+            }
+
+            final ExecutionException failure = assertThrows(ExecutionException.class, () -> produceOnce(TOPIC_NAME));
+            assertInstanceOf(KafkaStorageException.class, failure.getCause());
+
+            setConnectionString(admin, brokerResource, pgContainer.getJdbcUrl());
+            TestUtils.waitForCondition(() -> succeeds(() -> produceOnce(TOPIC_NAME)), 60_000,
+                "Diskless produce must succeed again after the connection string is restored");
+        }
+    }
+
+    @Test
+    @Timeout(value = 300, unit = TimeUnit.SECONDS)
+    void produceFailsFastWithoutConnectingPerRequestWhileControlPlaneIsUnreachable() throws Exception {
+        final BrokerServer broker = cluster.brokers().values().iterator().next();
+        final ControlPlaneAvailability availability = broker.sharedServer().inklessControlPlaneAvailability().get();
+        final ConfigResource brokerResource = new ConfigResource(ConfigResource.Type.BROKER, "");
+        final int requests = 20;
+
+        // The server socket plays an unreachable database. It counts connection attempts and closes
+        // each one before the Postgres handshake.
+        try (Admin admin = Admin.create(Map.of(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers()));
+             ServerSocket unreachableDatabase = new ServerSocket(0)) {
+            final AtomicInteger connectionAttempts = new AtomicInteger();
+            final Thread acceptor = new Thread(() -> {
+                while (!unreachableDatabase.isClosed()) {
+                    try (Socket ignored = unreachableDatabase.accept()) {
+                        connectionAttempts.incrementAndGet();
+                    } catch (final IOException e) {
+                        // Closing the server socket ends the loop.
+                    }
+                }
+            }, "unreachable-database-acceptor");
+            acceptor.setDaemon(true);
+            acceptor.start();
+
+            admin.createTopics(List.of(new NewTopic(TOPIC_NAME, 1, (short) 1)
+                .configs(Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true")))).all().get(30, TimeUnit.SECONDS);
+            final Uuid topicId = topicId(admin, TOPIC_NAME);
+            TestUtils.waitForCondition(availability::isAvailable, 30_000, "Control plane must be available after startup");
+
+            setConnectionString(admin, brokerResource,
+                "jdbc:postgresql://localhost:" + unreachableDatabase.getLocalPort() + "/unreachable");
+            // The controller applies the same cluster-wide change on its own and may connect first,
+            // so a connection attempt alone doesn't show that the broker has retired its delegate.
+            TestUtils.waitForCondition(() -> connectionAttempts.get() > 0 && !availability.isAvailable(), 30_000,
+                "The broker must go out of service and the unreachable database must see a connection attempt");
+
+            final int attemptsBeforeProduce = connectionAttempts.get();
+            final long startNs = System.nanoTime();
+            try (Socket socket = IntegrationTestUtils.connect(InklessDisklessRequestClient.brokerPort(broker))) {
+                for (int i = 0; i < requests; i++) {
+                    assertEquals(Errors.KAFKA_STORAGE_ERROR, InklessDisklessRequestClient.produce(socket, topicId, 0));
+                }
+            }
+            final long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs);
+            assertTrue(elapsedMs < 10_000, "Gated produce requests must fail without waiting on the database, took "
+                + elapsedMs + " ms");
+            // The reconciler's own retries may land during the burst, but a connection per request
+            // would add at least one attempt for each of them.
+            final int attemptsDuringProduce = connectionAttempts.get() - attemptsBeforeProduce;
+            assertTrue(attemptsDuringProduce < requests,
+                "Produce must not open a connection per request, saw " + attemptsDuringProduce + " attempts");
+
+            setConnectionString(admin, brokerResource, pgContainer.getJdbcUrl());
+            TestUtils.waitForCondition(() -> succeeds(() -> produceOnce(TOPIC_NAME)), 60_000,
+                "Diskless produce must succeed once the connection string points at a reachable database");
+        }
+    }
+
+    @Test
+    @Timeout(value = 300, unit = TimeUnit.SECONDS)
+    void removingEmptiedConnectionStringOverrideResumesProduceThroughStaticConnectionString() throws Exception {
+        final BrokerServer broker = cluster.brokers().values().iterator().next();
+        final ControlPlaneAvailability availability = broker.sharedServer().inklessControlPlaneAvailability().get();
+        final ConfigResource brokerResource = new ConfigResource(ConfigResource.Type.BROKER, "");
+
+        try (Admin admin = Admin.create(Map.of(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers()))) {
+            admin.createTopics(List.of(new NewTopic(TOPIC_NAME, 1, (short) 1)
+                .configs(Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true")))).all().get(30, TimeUnit.SECONDS);
+            TestUtils.waitForCondition(availability::isAvailable, 30_000, "Control plane must be available after startup");
+            produceOnce(TOPIC_NAME);
+
+            setConnectionString(admin, brokerResource, "");
+            TestUtils.waitForCondition(() -> !availability.isAvailable(), 30_000,
+                "Control plane must go out of service after the connection string is emptied");
+            final ExecutionException failure = assertThrows(ExecutionException.class, () -> produceOnce(TOPIC_NAME));
+            assertInstanceOf(KafkaStorageException.class, failure.getCause());
+
+            admin.incrementalAlterConfigs(Map.of(brokerResource, List.of(
+                new AlterConfigOp(new ConfigEntry(CONNECTION_STRING_KEY, null), AlterConfigOp.OpType.DELETE))))
+                .all().get(30, TimeUnit.SECONDS);
+            TestUtils.waitForCondition(() -> succeeds(() -> produceOnce(TOPIC_NAME)), 60_000,
+                "Diskless produce must resume through the static connection string once the override is removed");
+            assertTrue(availability.isAvailable());
+        }
+    }
+
+    private static boolean succeeds(final Executable executable) {
+        try {
+            executable.execute();
+            return true;
+        } catch (final Throwable e) {
+            return false;
+        }
+    }
+
+    private Map<String, Object> consumerConfigs() {
+        return Map.of(
+            ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers(),
+            ConsumerConfig.GROUP_ID_CONFIG, GROUP_ID,
+            ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false",
+            ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName(),
+            ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+    }
+
+    private static int consumeFromBeginning(final KafkaConsumer<String, String> consumer,
+                                            final TopicPartition partition,
+                                            final int expected) throws InterruptedException {
+        consumer.assign(List.of(partition));
+        consumer.seekToBeginning(List.of(partition));
+        final AtomicInteger consumed = new AtomicInteger();
+        TestUtils.waitForCondition(() -> consumed.addAndGet(consumer.poll(Duration.ofMillis(500)).count()) >= expected,
+            30_000, "Expected " + expected + " records from " + partition);
+        return consumed.get();
+    }
+
     private static void assertControlPlaneUnavailable(final Executable executable) {
         final ExecutionException failure = assertThrows(ExecutionException.class, executable);
         final KafkaStorageException cause = assertInstanceOf(KafkaStorageException.class, failure.getCause());
@@ -276,7 +503,11 @@ public class InklessControlPlaneOutageClusterTest {
      * Sends one record with a producer that doesn't retry, because {@code KAFKA_STORAGE_ERROR} is
      * retriable and a retrying producer would hide it until the delivery timeout.
      */
-    private void produceOnce() throws ExecutionException, InterruptedException, java.util.concurrent.TimeoutException {
+    private void produceOnce() throws ExecutionException, InterruptedException, TimeoutException {
+        produceOnce(TOPIC_NAME);
+    }
+
+    private void produceOnce(final String topic) throws ExecutionException, InterruptedException, TimeoutException {
         final Map<String, Object> configs = Map.of(
             ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers(),
             ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName(),
@@ -286,7 +517,7 @@ public class InklessControlPlaneOutageClusterTest {
             ProducerConfig.ACKS_CONFIG, "1",
             ProducerConfig.LINGER_MS_CONFIG, "0");
         try (KafkaProducer<String, String> producer = new KafkaProducer<>(configs)) {
-            producer.send(new ProducerRecord<>(TOPIC_NAME, 0, null, "value")).get(30, TimeUnit.SECONDS);
+            producer.send(new ProducerRecord<>(topic, 0, null, "value")).get(30, TimeUnit.SECONDS);
         }
     }
 
