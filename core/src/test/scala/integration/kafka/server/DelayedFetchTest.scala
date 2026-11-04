@@ -36,7 +36,7 @@ import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
 import org.mockito.ArgumentCaptor
-import org.mockito.ArgumentMatchers.{any, anyFloat, anyInt, anyLong}
+import org.mockito.ArgumentMatchers.{any, anyBoolean, anyFloat, anyInt, anyLong, eq => meq}
 import org.mockito.Mockito.{mock, never, times, verify, when}
 
 import java.util.concurrent.CompletableFuture
@@ -87,7 +87,7 @@ class DelayedFetchTest {
         .thenThrow(new FencedLeaderEpochException("Requested epoch has been fenced"))
     when(replicaManager.isAddingReplica(any(), anyInt())).thenReturn(false)
     when(replicaManager.fetchParamsWithNewMaxBytes(any(), any())).thenAnswer(_.getArgument(0))
-    when(replicaManager.fetchDisklessMessages(any(), any())).thenReturn(CompletableFuture.completedFuture(Seq.empty))
+    when(replicaManager.fetchDisklessMessages(any(), any(), anyBoolean())).thenReturn(CompletableFuture.completedFuture(Seq.empty))
 
     expectReadFromReplica(fetchParams, topicIdPartition, fetchStatus.fetchInfo, Errors.FENCED_LEADER_EPOCH)
 
@@ -130,7 +130,7 @@ class DelayedFetchTest {
     expectReadFromReplica(fetchParams, topicIdPartition, fetchStatus.fetchInfo, Errors.NOT_LEADER_OR_FOLLOWER)
     when(replicaManager.isAddingReplica(any(), anyInt())).thenReturn(false)
     when(replicaManager.fetchParamsWithNewMaxBytes(any(), any())).thenAnswer(_.getArgument(0))
-    when(replicaManager.fetchDisklessMessages(any(), any())).thenReturn(CompletableFuture.completedFuture(Seq.empty))
+    when(replicaManager.fetchDisklessMessages(any(), any(), anyBoolean())).thenReturn(CompletableFuture.completedFuture(Seq.empty))
 
     assertTrue(delayedFetch.tryComplete())
     assertTrue(delayedFetch.isCompleted)
@@ -182,7 +182,7 @@ class DelayedFetchTest {
         .setEndOffset(fetchOffset - 1))
     when(replicaManager.isAddingReplica(any(), anyInt())).thenReturn(false)
     when(replicaManager.fetchParamsWithNewMaxBytes(any(), any())).thenAnswer(_.getArgument(0))
-    when(replicaManager.fetchDisklessMessages(any(), any())).thenReturn(CompletableFuture.completedFuture(Seq.empty))
+    when(replicaManager.fetchDisklessMessages(any(), any(), anyBoolean())).thenReturn(CompletableFuture.completedFuture(Seq.empty))
     expectReadFromReplica(fetchParams, topicIdPartition, fetchStatus.fetchInfo, Errors.NONE)
 
     assertTrue(delayedFetch.tryComplete())
@@ -230,7 +230,7 @@ class DelayedFetchTest {
       .thenReturn(new LogOffsetSnapshot(0L, endOffsetMetadata, endOffsetMetadata, endOffsetMetadata))
     when(replicaManager.isAddingReplica(any(), anyInt())).thenReturn(false)
     when(replicaManager.fetchParamsWithNewMaxBytes(any(), any())).thenAnswer(_.getArgument(0))
-    when(replicaManager.fetchDisklessMessages(any(), any())).thenReturn(CompletableFuture.completedFuture(Seq.empty))
+    when(replicaManager.fetchDisklessMessages(any(), any(), anyBoolean())).thenReturn(CompletableFuture.completedFuture(Seq.empty))
     expectReadFromReplica(fetchParams, topicIdPartition, fetchStatus.fetchInfo, Errors.NONE)
 
     // 1. When `endOffset` is 0, it refers to the truncation case
@@ -328,13 +328,13 @@ class DelayedFetchTest {
       when(replicaManager.fetchParamsWithNewMaxBytes(any[FetchParams], anyFloat())).thenAnswer(_.getArgument(0))
       val captor: ArgumentCaptor[Seq[(TopicIdPartition, FetchRequest.PartitionData)]] =
         ArgumentCaptor.forClass(classOf[Seq[(TopicIdPartition, FetchRequest.PartitionData)]])
-      when(replicaManager.fetchDisklessMessages(any[FetchParams], any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]]))
+      when(replicaManager.fetchDisklessMessages(any[FetchParams], any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]], anyBoolean()))
         .thenReturn(CompletableFuture.completedFuture(Seq.empty[(TopicIdPartition, FetchPartitionData)]))
       // No readFromLog stub: classicFetchPartitionStatus is empty, so onComplete never enters that branch.
 
       delayedFetch.onComplete()
 
-      verify(replicaManager).fetchDisklessMessages(any[FetchParams], captor.capture())
+      verify(replicaManager).fetchDisklessMessages(any[FetchParams], captor.capture(), anyBoolean())
       assertEquals(partitions, captor.getValue.map(_._1),
         "the rotated order must reach fetchDisklessMessages; find_batches allocates the shared budget in this order")
     }
@@ -406,7 +406,7 @@ class DelayedFetchTest {
 
       // Mock fetchDisklessMessages for onComplete
       when(replicaManager.fetchParamsWithNewMaxBytes(any[FetchParams], any[Float])).thenAnswer(_.getArgument(0))
-      when(replicaManager.fetchDisklessMessages(any[FetchParams], any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]]))
+      when(replicaManager.fetchDisklessMessages(any[FetchParams], any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]], anyBoolean()))
         .thenReturn(CompletableFuture.completedFuture(Seq((topicIdPartition, mock(classOf[FetchPartitionData])))))
 
       when(replicaManager.readFromLog(
@@ -507,7 +507,7 @@ class DelayedFetchTest {
       assertFalse(fetchResultOpt.isDefined)
 
       // Verify that estimatedByteSize is never called since fetchOffset == endOffset
-      verify(replicaManager, never()).fetchDisklessMessages(any[FetchParams], any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]])
+      verify(replicaManager, never()).fetchDisklessMessages(any[FetchParams], any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]], anyBoolean())
       verify(mockResponse, never()).estimatedByteSize(anyLong())
     }
 
@@ -662,7 +662,7 @@ class DelayedFetchTest {
 
       // Mock fetchDisklessMessages for onComplete
       when(replicaManager.fetchParamsWithNewMaxBytes(any[FetchParams], anyFloat())).thenAnswer(_.getArgument(0))
-      when(replicaManager.fetchDisklessMessages(any[FetchParams], any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]]))
+      when(replicaManager.fetchDisklessMessages(any[FetchParams], any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]], anyBoolean()))
         .thenReturn(CompletableFuture.completedFuture(Seq((topicIdPartition, mock(classOf[FetchPartitionData])))))
 
       when(replicaManager.readFromLog(
@@ -757,7 +757,7 @@ class DelayedFetchTest {
         disklessRecords, Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false)
 
       // Stub fetchDisklessMessages: first call returns supplement, second call returns diskless
-      when(replicaManager.fetchDisklessMessages(any[FetchParams], any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]]))
+      when(replicaManager.fetchDisklessMessages(any[FetchParams], any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]], anyBoolean()))
         .thenReturn(CompletableFuture.completedFuture(Seq((consolidatingTp, supplementData))))
         .thenReturn(CompletableFuture.completedFuture(Seq((disklessTp, disklessData))))
 
@@ -788,6 +788,12 @@ class DelayedFetchTest {
       // Verify mergeConsolidationSupplement was called exactly once
       verify(replicaManager, times(1)).mergeConsolidationSupplement(
         any[TopicIdPartition], any[FetchPartitionData], any[FetchPartitionData])
+
+      // Only the supplement skips the prefix deferral; its errors never reach a consumer
+      verify(replicaManager, times(1)).fetchDisklessMessages(
+        any[FetchParams], any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]], meq(false))
+      verify(replicaManager, times(1)).fetchDisklessMessages(
+        any[FetchParams], any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]], meq(true))
     }
 
     // When the local read for a consolidating partition returns an error, the supplement fetch
@@ -878,7 +884,7 @@ class DelayedFetchTest {
       when(supplementRecords.sizeInBytes).thenReturn(512)
       val supplementData = new FetchPartitionData(Errors.NONE, logEndOffset + 100, logEndOffset,
         supplementRecords, Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false)
-      when(replicaManager.fetchDisklessMessages(any[FetchParams], any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]]))
+      when(replicaManager.fetchDisklessMessages(any[FetchParams], any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]], anyBoolean()))
         .thenReturn(CompletableFuture.completedFuture(Seq((consolidatingTp, supplementData))))
       when(replicaManager.fetchParamsWithNewMaxBytes(any[FetchParams], anyFloat())).thenAnswer(_.getArgument(0))
       when(replicaManager.isAddingReplica(any(), anyInt())).thenReturn(false)
@@ -958,7 +964,7 @@ class DelayedFetchTest {
 
       // Mock fetchDisklessMessages for onComplete
       when(replicaManager.fetchParamsWithNewMaxBytes(any[FetchParams], anyFloat())).thenAnswer(_.getArgument(0))
-      when(replicaManager.fetchDisklessMessages(any[FetchParams], any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]]))
+      when(replicaManager.fetchDisklessMessages(any[FetchParams], any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]], anyBoolean()))
         .thenReturn(CompletableFuture.completedFuture(Seq((topicIdPartition, mock(classOf[FetchPartitionData])))))
 
       when(replicaManager.readFromLog(
@@ -1013,7 +1019,7 @@ class DelayedFetchTest {
       // Diskless fetch fails with an exception
       val failedFuture = new CompletableFuture[Seq[(TopicIdPartition, FetchPartitionData)]]()
       failedFuture.completeExceptionally(new RuntimeException("Object storage unavailable"))
-      when(replicaManager.fetchDisklessMessages(any[FetchParams], any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]]))
+      when(replicaManager.fetchDisklessMessages(any[FetchParams], any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]], anyBoolean()))
         .thenReturn(failedFuture)
 
       delayedFetch.forceComplete()

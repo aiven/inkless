@@ -23,6 +23,7 @@ import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.compress.Compression;
 import org.apache.kafka.common.config.AbstractConfig;
+import org.apache.kafka.common.errors.OffsetOutOfRangeException;
 import org.apache.kafka.common.errors.ReplicaNotAvailableException;
 import org.apache.kafka.common.metrics.KafkaMetric;
 import org.apache.kafka.common.metrics.Metrics;
@@ -3811,6 +3812,54 @@ public class RemoteLogManagerTest {
         cache.truncateFromStartAsyncFlush(startOffset);
         cache.truncateFromEndAsyncFlush(endOffset);
         return myCheckpoint.read().stream().collect(Collectors.toMap(e -> e.epoch, e -> e.startOffset));
+    }
+
+    @Test
+    public void testReadWithoutEpochOrSegmentThrowsOutOfRange() throws RemoteStorageException, IOException {
+        LeaderEpochFileCache cache = mock(LeaderEpochFileCache.class);
+        when(mockLog.leaderEpochCache()).thenReturn(cache);
+
+        FetchRequest.PartitionData partitionData = new FetchRequest.PartitionData(
+                Uuid.randomUuid(), 0, 0, 10, Optional.empty()
+        );
+        RemoteStorageFetchInfo fetchInfo = new RemoteStorageFetchInfo(
+                0, false, tpId, partitionData, FetchIsolation.TXN_COMMITTED
+        );
+
+        try (RemoteLogManager remoteLogManager = new RemoteLogManager(
+                config,
+                brokerId,
+                logDir,
+                clusterId,
+                time,
+                tp -> Optional.of(mockLog),
+                (topicPartition, offset) -> { },
+                brokerTopicStats,
+                metrics,
+                endPoint) {
+            @Override
+            public RemoteStorageManager createRemoteStorageManager() {
+                return remoteStorageManager;
+            }
+            @Override
+            public RemoteLogMetadataManager createRemoteLogMetadataManager() {
+                return remoteLogMetadataManager;
+            }
+
+            @Override
+            public Optional<RemoteLogSegmentMetadata> fetchRemoteLogSegmentMetadata(TopicPartition topicPartition,
+                                                                                    int epochForOffset, long offset) {
+                return Optional.empty();
+            }
+        }) {
+            when(cache.epochForOffset(anyLong())).thenReturn(OptionalInt.empty());
+            assertThrows(LeaderEpochNotAvailableException.class, () -> remoteLogManager.read(fetchInfo));
+
+            when(cache.epochForOffset(anyLong())).thenReturn(OptionalInt.of(1));
+            OffsetOutOfRangeException noSegment =
+                    assertThrows(OffsetOutOfRangeException.class, () -> remoteLogManager.read(fetchInfo));
+            assertEquals(OffsetOutOfRangeException.class, noSegment.getClass());
+        }
     }
 
     @Test
