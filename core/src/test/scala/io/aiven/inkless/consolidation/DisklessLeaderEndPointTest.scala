@@ -45,7 +45,7 @@ import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.Test
 import org.mockito.ArgumentCaptor
 import org.mockito.ArgumentMatchers.{any, anyLong, eq => eqTo}
-import org.mockito.Mockito.{doAnswer, doNothing, mock, verify, when}
+import org.mockito.Mockito.{doAnswer, doNothing, mock, times, verify, when}
 
 import java.util
 import java.nio.ByteBuffer
@@ -146,11 +146,11 @@ class DisklessLeaderEndPointTest {
     localLogStartOffset: Long,
     disklessStart: Long,
     highWatermark: Long,
-    remoteLogEnabled: Boolean
+    remoteLogEnabled: Boolean,
+    replicaManager: ReplicaManager = replicaManagerMock()
   ): DisklessLeaderEndPoint = {
     val fetchHandler = mock(classOf[FetchHandler])
     val fetchOffsetHandler = mock(classOf[FetchOffsetHandler])
-    val replicaManager = replicaManagerMock()
     val partition = mock(classOf[Partition])
     val localLog = mock(classOf[UnifiedLog])
     when(partition.localLogOrException).thenReturn(localLog)
@@ -1103,6 +1103,18 @@ class DisklessLeaderEndPointTest {
     assertEquals(Errors.OFFSET_MOVED_TO_TIERED_STORAGE.code, pd.errorCode)
     // The whole-log start (0) is preserved so the rebuild keeps logStartOffset at 0, not the WAL start.
     assertEquals(0L, pd.logStartOffset)
+  }
+
+  @Test
+  def testFetchCountsEachTierRebuildRequest(): Unit = {
+    val replicaManager = replicaManagerMock()
+    val endPoint = consolidatedPrefixEndPoint(localLogStartOffset = 0L, disklessStart = 100L, highWatermark = 200L,
+      remoteLogEnabled = true, replicaManager = replicaManager)
+
+    endPoint.fetch(fetchBuilderForOffset(requestedOffset = 0L))
+    endPoint.fetch(fetchBuilderForOffset(requestedOffset = 10L))
+
+    verify(replicaManager, times(2)).recordConsolidationTierRebuildRequest(eqTo(topicPartition))
   }
 
   @Test

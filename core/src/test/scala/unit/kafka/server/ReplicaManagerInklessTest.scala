@@ -39,7 +39,7 @@ import org.apache.kafka.common.compress.Compression
 import org.apache.kafka.common.errors.{KafkaStorageException, NotLeaderOrFollowerException, OffsetOutOfRangeException, UnknownTopicOrPartitionException}
 import org.apache.kafka.common.message.ListOffsetsRequestData.{ListOffsetsPartition, ListOffsetsTopic}
 import org.apache.kafka.common.message.ListOffsetsResponseData.{ListOffsetsPartitionResponse, ListOffsetsTopicResponse}
-import org.apache.kafka.common.message.DeleteRecordsResponseData
+import org.apache.kafka.common.message.{DeleteRecordsResponseData, FetchResponseData}
 import org.apache.kafka.common.message.OffsetForLeaderEpochRequestData.{OffsetForLeaderPartition, OffsetForLeaderTopic}
 import org.apache.kafka.common.metadata.{PartitionChangeRecord, PartitionRecord, TopicRecord}
 import org.apache.kafka.common.metrics.Metrics
@@ -57,7 +57,7 @@ import org.apache.kafka.metadata.{InitDisklessLogFields, KRaftMetadataCache, Lea
 import org.apache.kafka.server.HostedPartition
 import org.apache.kafka.server.common.{KRaftVersion, MetadataVersion}
 import org.apache.kafka.server.config.ServerConfigs
-import org.apache.kafka.server.log.remote.storage.{RemoteLogManager, RemoteLogManagerConfig}
+import org.apache.kafka.server.log.remote.storage.{LeaderEpochNotAvailableException, RemoteLogManager, RemoteLogManagerConfig}
 import org.apache.kafka.server.network.BrokerEndPoint
 import org.apache.kafka.server.PartitionFetchState
 import org.apache.kafka.server.purgatory.{DelayedDeleteRecords, DelayedOperationPurgatory, DelayedProduce, DelayedRemoteFetch, DelayedRemoteListOffsets, TopicPartitionOperationKey}
@@ -67,7 +67,7 @@ import org.apache.kafka.server.util.timer.MockTimer
 import org.apache.kafka.server.metrics.KafkaYammerMetrics
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats
 import org.apache.kafka.storage.internals.checkpoint.LazyOffsetCheckpoints
-import org.apache.kafka.storage.internals.log.{AppendOrigin, AsyncOffsetReadFutureHolder, FetchDataInfo, LogConfig, LogDirFailureChannel, LogOffsetMetadata, LogOffsetSnapshot, LogReadInfo, LogReadResult, OffsetResultHolder, UnifiedLog}
+import org.apache.kafka.storage.internals.log.{AppendOrigin, AsyncOffsetReadFutureHolder, FetchDataInfo, LogConfig, LogDirFailureChannel, LogOffsetMetadata, LogOffsetSnapshot, LogReadInfo, LogReadResult, OffsetResultHolder, RemoteLogReadResult, RemoteStorageFetchInfo, UnifiedLog}
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.{AfterEach, BeforeEach, Test}
 import org.junit.jupiter.params.ParameterizedTest
@@ -1818,9 +1818,11 @@ class ReplicaManagerInklessTest {
                                                      localLeo: Long,
                                                      isLeader: Boolean,
                                                      localLogStartOffset: Long,
-                                                     localHighWatermark: Option[Long] = None): Unit = {
+                                                     localHighWatermark: Option[Long] = None,
+                                                     logStartOffset: Long = 0L): Unit = {
     val mockPartition = mock(classOf[Partition])
     val mockLog = mock(classOf[UnifiedLog])
+    when(mockLog.logStartOffset).thenReturn(logStartOffset)
     when(mockLog.logEndOffset).thenReturn(localLeo)
     when(mockLog.highWatermark).thenReturn(localHighWatermark.getOrElse(localLeo))
     when(mockLog.localLogStartOffset).thenReturn(localLogStartOffset)
@@ -9588,7 +9590,7 @@ class ReplicaManagerInklessTest {
           new PartitionData(topicId, 0L, 0L, 1024, Optional.empty())
       }
 
-      replicaManager.fetchDisklessMessages(fetchParams, fetchInfos).get()
+      replicaManager.fetchDisklessMessages(fetchParams, fetchInfos, deferPrefixReads = true).get()
 
       val captor: ArgumentCaptor[util.Map[TopicIdPartition, PartitionData]] =
         ArgumentCaptor.forClass(classOf[util.Map[TopicIdPartition, PartitionData]])
@@ -9600,6 +9602,397 @@ class ReplicaManagerInklessTest {
     } finally {
       replicaManager.shutdown(checkpointHW = false)
       fetchHandlerCtor.close()
+    }
+  }
+
+  private val prefixRateMeter = "ConsolidationDeferredPrefixFetchRate"
+
+  private val prefixTp0 = new TopicIdPartition(Uuid.randomUuid(), 0, "consolidating")
+  private val prefixTp1 = new TopicIdPartition(prefixTp0.topicId(), 1, "consolidating")
+
+  private val prefixCrossTierEarliest = 100L
+  // Diskless WAL start returned by the control plane in the mapped responses.
+  private val prefixWalStart = 500L
+
+  private def prefixResponse(error: Errors, logStartOffset: Long = prefixWalStart): FetchPartitionData =
+    new FetchPartitionData(
+      error, 900L, logStartOffset, MemoryRecords.EMPTY,
+      Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false
+    )
+
+  private def consumerParams: FetchParams =
+    new FetchParams(-1, -1L, 0L, 1, 1024, FetchIsolation.HIGH_WATERMARK, Optional.empty())
+
+  private def followerParams(replicaId: Int = 2): FetchParams =
+    new FetchParams(replicaId, -1L, 0L, 1, 1024, FetchIsolation.LOG_END, Optional.empty())
+
+  private def prefixFetch(tp: TopicIdPartition, offset: Long): (TopicIdPartition, PartitionData) =
+    tp -> new PartitionData(tp.topicId(), offset, 0L, 1024, Optional.empty())
+
+  /**
+   * Runs `body` with a ReplicaManager whose diskless FetchHandler answers every requested partition from
+   * `responses`, in request order. Both partitions of the fixture are diskless; `consolidating` and
+   * `remoteStorage` control whether the topic is consolidating and remote-storage enabled.
+   */
+  private def withPrefixFixture(responses: Map[TopicIdPartition, FetchPartitionData],
+                                consolidating: Boolean = true,
+                                remoteStorage: Boolean = true,
+                                crossTierEarliest: Option[Long] = Some(prefixCrossTierEarliest),
+                                controlPlane: Option[ControlPlane] = None)
+                               (body: ReplicaManager => Unit): Unit = {
+    val fetchHandlerCtor = mockConstruction(classOf[FetchHandler], {
+      case (mock, _) =>
+        when(mock.handle(any(), any())).thenAnswer { invocation =>
+          val requested = invocation.getArgument(1, classOf[util.Map[TopicIdPartition, PartitionData]])
+          val answer = new util.LinkedHashMap[TopicIdPartition, FetchPartitionData]()
+          requested.keySet().forEach(tp => answer.put(tp, responses(tp)))
+          CompletableFuture.completedFuture[util.Map[TopicIdPartition, FetchPartitionData]](answer)
+        }
+    }: MockedConstruction.MockInitializer[FetchHandler])
+    val cache = mock(classOf[CrossTierLogStartCache])
+    when(cache.get(any())).thenReturn(crossTierEarliest.map(java.lang.Long.valueOf).orNull)
+    val topic = prefixTp0.topic()
+    val replicaManager = createReplicaManager(
+      List(topic),
+      disklessManagedReplicasEnabled = true,
+      disklessRemoteStorageConsolidationEnabled = true,
+      consolidatingDisklessTopics = if (consolidating) Set(topic) else Set.empty,
+      topicIdMapping = Map(topic -> prefixTp0.topicId()),
+      crossTierLogStartCache = Some(cache),
+      controlPlane = controlPlane,
+    )
+    try {
+      if (consolidating) {
+        when(replicaManager.inklessMetadataView().isRemoteStorageEnabled(topic)).thenReturn(remoteStorage)
+        when(replicaManager.inklessMetadataView().isConsolidatingDisklessTopic(topic)).thenReturn(remoteStorage)
+      }
+      body(replicaManager)
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+      fetchHandlerCtor.close()
+    }
+  }
+
+  private def fetchPrefix(replicaManager: ReplicaManager,
+                          params: FetchParams,
+                          fetches: (TopicIdPartition, PartitionData)*): Seq[(TopicIdPartition, FetchPartitionData)] =
+    replicaManager.fetchDisklessMessages(params, fetches, deferPrefixReads = true).get()
+
+  private def prefixErrors(results: Seq[(TopicIdPartition, FetchPartitionData)]): Seq[Errors] = results.map(_._2.error)
+
+  @Test
+  def testDisklessConsumerFetchInPrefixRangeIsNotAvailable(): Unit = {
+    withPrefixFixture(Map(prefixTp0 -> prefixResponse(Errors.OFFSET_OUT_OF_RANGE))) { replicaManager =>
+      val deferredBefore = yammerMeterCount(prefixRateMeter)
+      val results = fetchPrefix(replicaManager, consumerParams, prefixFetch(prefixTp0, 250L))
+      assertEquals(Seq(Errors.OFFSET_NOT_AVAILABLE), prefixErrors(results))
+      assertEquals(deferredBefore + 1L, yammerMeterCount(prefixRateMeter))
+    }
+  }
+
+  @Test
+  def testDisklessSupplementFetchInPrefixRangeIsNotDeferred(): Unit = {
+    withPrefixFixture(Map(prefixTp0 -> prefixResponse(Errors.OFFSET_OUT_OF_RANGE))) { replicaManager =>
+      val deferredBefore = yammerMeterCount(prefixRateMeter)
+      val results = replicaManager.fetchDisklessMessages(
+        consumerParams, Seq(prefixFetch(prefixTp0, 250L)), deferPrefixReads = false).get()
+      assertEquals(Seq(Errors.OFFSET_OUT_OF_RANGE), prefixErrors(results))
+      assertEquals(deferredBefore, yammerMeterCount(prefixRateMeter))
+    }
+  }
+
+  @Test
+  def testDisklessPrefixDeferralKeepsOtherResponseFields(): Unit = {
+    val original = new FetchPartitionData(
+      Errors.OFFSET_OUT_OF_RANGE, 900L, prefixWalStart, MemoryRecords.EMPTY,
+      Optional.of(new FetchResponseData.EpochEndOffset().setEpoch(3).setEndOffset(40L)),
+      OptionalLong.of(800L), Optional.empty(), OptionalInt.of(7), true
+    )
+    withPrefixFixture(Map(prefixTp0 -> original)) { replicaManager =>
+      val data = fetchPrefix(replicaManager, consumerParams, prefixFetch(prefixTp0, 250L)).head._2
+      assertEquals(Errors.OFFSET_NOT_AVAILABLE, data.error)
+      assertEquals(original.highWatermark, data.highWatermark)
+      assertEquals(original.logStartOffset, data.logStartOffset)
+      assertEquals(original.records, data.records)
+      assertEquals(original.divergingEpoch, data.divergingEpoch)
+      assertEquals(original.lastStableOffset, data.lastStableOffset)
+      assertEquals(original.abortedTransactions, data.abortedTransactions)
+      assertEquals(original.preferredReadReplica, data.preferredReadReplica)
+      assertEquals(original.isReassignmentFetch, data.isReassignmentFetch)
+    }
+  }
+
+  @Test
+  def testDisklessPrefixDeferralRangeIsInclusiveAtCrossTierEarliestAndExclusiveAtWalStart(): Unit = {
+    withPrefixFixture(Map(prefixTp0 -> prefixResponse(Errors.OFFSET_OUT_OF_RANGE))) { replicaManager =>
+      assertEquals(
+        Seq(Errors.OFFSET_NOT_AVAILABLE),
+        prefixErrors(fetchPrefix(replicaManager, consumerParams, prefixFetch(prefixTp0, prefixCrossTierEarliest))))
+      assertEquals(
+        Seq(Errors.OFFSET_NOT_AVAILABLE),
+        prefixErrors(fetchPrefix(replicaManager, consumerParams, prefixFetch(prefixTp0, prefixWalStart - 1))))
+      assertEquals(
+        Seq(Errors.OFFSET_OUT_OF_RANGE),
+        prefixErrors(fetchPrefix(replicaManager, consumerParams, prefixFetch(prefixTp0, prefixWalStart))))
+    }
+  }
+
+  @Test
+  def testDisklessConsumerFetchBelowCrossTierEarliestStaysOutOfRange(): Unit = {
+    withPrefixFixture(Map(prefixTp0 -> prefixResponse(Errors.OFFSET_OUT_OF_RANGE))) { replicaManager =>
+      val results = fetchPrefix(replicaManager, consumerParams, prefixFetch(prefixTp0, prefixCrossTierEarliest - 1))
+      assertEquals(Seq(Errors.OFFSET_OUT_OF_RANGE), prefixErrors(results))
+    }
+  }
+
+  @Test
+  def testDisklessConsumerFetchWithUnknownCrossTierEarliestIsNotAvailable(): Unit = {
+    val cp = mock(classOf[ControlPlane])
+    withPrefixFixture(Map(prefixTp0 -> prefixResponse(Errors.OFFSET_OUT_OF_RANGE)),
+      crossTierEarliest = None, controlPlane = Some(cp)) { replicaManager =>
+      val results = fetchPrefix(replicaManager, consumerParams, prefixFetch(prefixTp0, 0L))
+      assertEquals(Seq(Errors.OFFSET_NOT_AVAILABLE), prefixErrors(results))
+      verify(cp, never()).listOffsets(anyList())
+    }
+  }
+
+  @Test
+  def testDisklessConsumerFetchAtOrAboveWalStartStaysOutOfRange(): Unit = {
+    withPrefixFixture(Map(prefixTp0 -> prefixResponse(Errors.OFFSET_OUT_OF_RANGE))) { replicaManager =>
+      val results = fetchPrefix(replicaManager, consumerParams, prefixFetch(prefixTp0, prefixWalStart + 1000L))
+      assertEquals(Seq(Errors.OFFSET_OUT_OF_RANGE), prefixErrors(results))
+    }
+  }
+
+  @Test
+  def testDisklessResponseWithUnknownLogStartOffsetStaysOutOfRange(): Unit = {
+    withPrefixFixture(Map(prefixTp0 -> prefixResponse(Errors.OFFSET_OUT_OF_RANGE, UnifiedLog.UNKNOWN_OFFSET))) { replicaManager =>
+      val results = fetchPrefix(replicaManager, consumerParams, prefixFetch(prefixTp0, 250L))
+      assertEquals(Seq(Errors.OFFSET_OUT_OF_RANGE), prefixErrors(results))
+    }
+  }
+
+  // Only a consumer resets its position on OFFSET_OUT_OF_RANGE, so a replica fetch keeps it.
+  @Test
+  def testDisklessFollowerFetchInPrefixRangeStaysOutOfRange(): Unit = {
+    withPrefixFixture(Map(prefixTp0 -> prefixResponse(Errors.OFFSET_OUT_OF_RANGE))) { replicaManager =>
+      val results = fetchPrefix(replicaManager, followerParams(), prefixFetch(prefixTp0, 250L))
+      assertEquals(Seq(Errors.OFFSET_OUT_OF_RANGE), prefixErrors(results))
+    }
+  }
+
+  @Test
+  def testDisklessFutureLocalReplicaFetchInPrefixRangeStaysOutOfRange(): Unit = {
+    withPrefixFixture(Map(prefixTp0 -> prefixResponse(Errors.OFFSET_OUT_OF_RANGE))) { replicaManager =>
+      val results = fetchPrefix(replicaManager, followerParams(FetchRequest.FUTURE_LOCAL_REPLICA_ID), prefixFetch(prefixTp0, 250L))
+      assertEquals(Seq(Errors.OFFSET_OUT_OF_RANGE), prefixErrors(results))
+    }
+  }
+
+  @Test
+  def testNonConsolidatingDisklessConsumerFetchInPrefixRangeStaysOutOfRange(): Unit = {
+    withPrefixFixture(Map(prefixTp0 -> prefixResponse(Errors.OFFSET_OUT_OF_RANGE)), consolidating = false) { replicaManager =>
+      val results = fetchPrefix(replicaManager, consumerParams, prefixFetch(prefixTp0, 250L))
+      assertEquals(Seq(Errors.OFFSET_OUT_OF_RANGE), prefixErrors(results))
+    }
+  }
+
+  @Test
+  def testConsolidatingTopicWithoutRemoteStorageConsumerFetchStaysOutOfRange(): Unit = {
+    withPrefixFixture(Map(prefixTp0 -> prefixResponse(Errors.OFFSET_OUT_OF_RANGE)), remoteStorage = false) { replicaManager =>
+      val results = fetchPrefix(replicaManager, consumerParams, prefixFetch(prefixTp0, 250L))
+      assertEquals(Seq(Errors.OFFSET_OUT_OF_RANGE), prefixErrors(results))
+    }
+  }
+
+  @Test
+  def testDisklessPrefixFetchPassesThroughOtherErrors(): Unit = {
+    Seq(Errors.NONE, Errors.NOT_LEADER_OR_FOLLOWER, Errors.UNKNOWN_TOPIC_OR_PARTITION,
+      Errors.OFFSET_NOT_AVAILABLE, Errors.KAFKA_STORAGE_ERROR).foreach { error =>
+      val response = prefixResponse(error)
+      withPrefixFixture(Map(prefixTp0 -> response)) { replicaManager =>
+        val results = fetchPrefix(replicaManager, consumerParams, prefixFetch(prefixTp0, 250L))
+        assertEquals(1, results.size, error.toString)
+        assertEquals(error, results.head._2.error, error.toString)
+        assertSame(response, results.head._2, error.toString)
+      }
+    }
+  }
+
+  @Test
+  def testDisklessPrefixFetchMapsOnlyMatchingPartitionAndKeepsOrder(): Unit = {
+    val tp2 = new TopicIdPartition(prefixTp0.topicId(), 2, prefixTp0.topic())
+    val tp3 = new TopicIdPartition(prefixTp0.topicId(), 3, prefixTp0.topic())
+    val tp4 = new TopicIdPartition(prefixTp0.topicId(), 4, prefixTp0.topic())
+    val tp5 = new TopicIdPartition(prefixTp0.topicId(), 5, prefixTp0.topic())
+    val responses = Map(
+      prefixTp0 -> prefixResponse(Errors.OFFSET_OUT_OF_RANGE),
+      prefixTp1 -> prefixResponse(Errors.NONE),
+      tp2 -> prefixResponse(Errors.OFFSET_OUT_OF_RANGE),
+      tp3 -> prefixResponse(Errors.OFFSET_OUT_OF_RANGE),
+      tp4 -> prefixResponse(Errors.NOT_LEADER_OR_FOLLOWER),
+      tp5 -> prefixResponse(Errors.OFFSET_OUT_OF_RANGE)
+    )
+    withPrefixFixture(responses) { replicaManager =>
+      // Rotated order, more than four entries so an unordered Map would show.
+      val fetches = Seq(
+        prefixFetch(tp5, 250L),    // in prefix range: mapped
+        prefixFetch(prefixTp1, 0L),
+        prefixFetch(tp3, prefixWalStart + 10L), // above WAL start: stays
+        prefixFetch(tp4, 250L),
+        prefixFetch(prefixTp0, 250L), // in prefix range: mapped
+        prefixFetch(tp2, 1L)       // below cross-tier earliest: stays
+      )
+      val results = fetchPrefix(replicaManager, consumerParams, fetches.toList: _*)
+      assertEquals(fetches.map(_._1), results.map(_._1))
+      assertEquals(
+        Seq(Errors.OFFSET_NOT_AVAILABLE, Errors.NONE, Errors.OFFSET_OUT_OF_RANGE,
+          Errors.NOT_LEADER_OR_FOLLOWER, Errors.OFFSET_NOT_AVAILABLE, Errors.OFFSET_OUT_OF_RANGE),
+        prefixErrors(results))
+    }
+  }
+
+  @Test
+  def testDisklessPrefixDeferralHasNoTimeLimit(): Unit = {
+    withPrefixFixture(Map(prefixTp0 -> prefixResponse(Errors.OFFSET_OUT_OF_RANGE))) { replicaManager =>
+      def fetchErrors = prefixErrors(fetchPrefix(replicaManager, consumerParams, prefixFetch(prefixTp0, 250L)))
+
+      val deferredBefore = yammerMeterCount(prefixRateMeter)
+      val fetches = 20
+      (0 until fetches).foreach { _ =>
+        time.sleep(30000L)
+        assertEquals(Seq(Errors.OFFSET_NOT_AVAILABLE), fetchErrors)
+      }
+      assertEquals(deferredBefore + fetches, yammerMeterCount(prefixRateMeter))
+    }
+  }
+
+  @Test
+  def testDisklessPrefixDeferralCountsEachPartition(): Unit = {
+    withPrefixFixture(Map(
+      prefixTp0 -> prefixResponse(Errors.OFFSET_OUT_OF_RANGE),
+      prefixTp1 -> prefixResponse(Errors.OFFSET_OUT_OF_RANGE)
+    )) { replicaManager =>
+      val deferredBefore = yammerMeterCount(prefixRateMeter)
+      val results = fetchPrefix(replicaManager, consumerParams, prefixFetch(prefixTp0, 250L), prefixFetch(prefixTp1, 250L))
+      assertEquals(Seq(Errors.OFFSET_NOT_AVAILABLE, Errors.OFFSET_NOT_AVAILABLE), prefixErrors(results))
+      assertEquals(deferredBefore + 2L, yammerMeterCount(prefixRateMeter))
+    }
+  }
+
+  @Test
+  def testDisklessFollowerPrefixFetchIsNotCounted(): Unit = {
+    withPrefixFixture(Map(prefixTp0 -> prefixResponse(Errors.OFFSET_OUT_OF_RANGE))) { replicaManager =>
+      val deferredBefore = yammerMeterCount(prefixRateMeter)
+      val results = fetchPrefix(replicaManager, followerParams(), prefixFetch(prefixTp0, 250L))
+      assertEquals(Seq(Errors.OFFSET_OUT_OF_RANGE), prefixErrors(results))
+      assertEquals(deferredBefore, yammerMeterCount(prefixRateMeter))
+    }
+  }
+
+  // Remote-path counterpart of the prefix fixture: the local log starts at remotePrefixLocalLogStart,
+  // so a consumer fetch below it reads from RemoteLogManager, which completes with `remoteError`.
+  // This is the state of a replica that rebuilds its tier state again: the rebuild has cleared the
+  // epoch cache and not yet restored it, so RemoteLogManager.read answers LeaderEpochNotAvailableException.
+  private val remotePrefixLocalLogStart = 200L
+
+  private def withRemotePrefixFixture(remoteError: Throwable,
+                                      consolidating: Boolean = true,
+                                      logStartOffset: Long = prefixCrossTierEarliest)
+                                     (body: ReplicaManager => Unit): Unit = {
+    val fetchHandlerCtor = mockFetchHandler(Map.empty)
+    val remoteLogManager = mock(classOf[RemoteLogManager])
+    when(remoteLogManager.asyncRead(any(), any())).thenAnswer { invocation =>
+      invocation.getArgument(1, classOf[Consumer[RemoteLogReadResult]])
+        .accept(new RemoteLogReadResult(Optional.empty(), Optional.of(remoteError)))
+      CompletableFuture.completedFuture[Void](null)
+    }
+    val topic = disklessTopicPartition.topic()
+    val replicaManager = spy(createReplicaManager(
+      if (consolidating) List(topic) else List.empty,
+      disklessManagedReplicasEnabled = true,
+      disklessRemoteStorageConsolidationEnabled = true,
+      consolidatingDisklessTopics = if (consolidating) Set(topic) else Set.empty,
+      topicIdMapping = Map(topic -> disklessTopicPartition.topicId()),
+      remoteLogManager = Some(remoteLogManager),
+    ))
+    try {
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+      stubConsolidatingPartitionWithLogStart(
+        replicaManager, disklessTopicPartition, localLeo = 500L, isLeader = false,
+        localLogStartOffset = remotePrefixLocalLogStart, localHighWatermark = Some(0L),
+        logStartOffset = logStartOffset)
+      doAnswer { invocation =>
+        val fetches = invocation.getArgument(1, classOf[Seq[(TopicIdPartition, PartitionData)]])
+        val params = invocation.getArgument(0, classOf[FetchParams])
+        fetches.map { case (tp, partitionData) =>
+          val remoteFetch = new RemoteStorageFetchInfo(
+            params.maxBytes, true, tp, partitionData, params.isolation)
+          tp -> new LogReadResult(
+            new FetchDataInfo(LogOffsetMetadata.UNKNOWN_OFFSET_METADATA, MemoryRecords.EMPTY, false,
+              Optional.empty(), Optional.of(remoteFetch)),
+            Optional.empty(), 500L, 0L, 500L, 0L, 0L, OptionalLong.empty(), Errors.NONE)
+        }
+      }.when(replicaManager).readFromLog(any(), any(), any(), any())
+      body(replicaManager)
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+      fetchHandlerCtor.close()
+    }
+  }
+
+  private def fetchRemotePrefix(replicaManager: ReplicaManager, offset: Long): FetchPartitionData =
+    fetchPartitionAsConsumer(replicaManager, disklessTopicPartition,
+      new PartitionData(disklessTopicPartition.topicId(), offset, 0L, 1024, Optional.empty())).assertFired
+
+  @Test
+  def testRemoteConsumerFetchInPrefixRangeIsNotAvailable(): Unit = {
+    withRemotePrefixFixture(new LeaderEpochNotAvailableException("no epoch for offset")) { replicaManager =>
+      val deferredBefore = yammerMeterCount(prefixRateMeter)
+      assertEquals(Errors.OFFSET_NOT_AVAILABLE, fetchRemotePrefix(replicaManager, 150L).error)
+      assertEquals(deferredBefore + 1L, yammerMeterCount(prefixRateMeter))
+    }
+  }
+
+  @Test
+  def testRemotePrefixDeferralRangeIsInclusiveAtLogStart(): Unit = {
+    withRemotePrefixFixture(new LeaderEpochNotAvailableException("no epoch for offset")) { replicaManager =>
+      assertEquals(Errors.OFFSET_NOT_AVAILABLE, fetchRemotePrefix(replicaManager, prefixCrossTierEarliest).error)
+    }
+  }
+
+  @Test
+  def testRemoteConsumerFetchBelowLogStartStaysOutOfRange(): Unit = {
+    withRemotePrefixFixture(new LeaderEpochNotAvailableException("deleted")) { replicaManager =>
+      val deferredBefore = yammerMeterCount(prefixRateMeter)
+      assertEquals(Errors.OFFSET_OUT_OF_RANGE, fetchRemotePrefix(replicaManager, prefixCrossTierEarliest - 1).error)
+      assertEquals(deferredBefore, yammerMeterCount(prefixRateMeter))
+    }
+  }
+
+  @Test
+  def testRemoteFetchWithKnownEpochAndNoSegmentStaysOutOfRange(): Unit = {
+    withRemotePrefixFixture(new OffsetOutOfRangeException("epoch 0 has no remote segment")) { replicaManager =>
+      val deferredBefore = yammerMeterCount(prefixRateMeter)
+      assertEquals(Errors.OFFSET_OUT_OF_RANGE, fetchRemotePrefix(replicaManager, 150L).error)
+      assertEquals(deferredBefore, yammerMeterCount(prefixRateMeter))
+    }
+  }
+
+  @Test
+  def testRemotePrefixFetchPassesThroughOtherErrors(): Unit = {
+    withRemotePrefixFixture(new KafkaStorageException("disk")) { replicaManager =>
+      val deferredBefore = yammerMeterCount(prefixRateMeter)
+      assertEquals(Errors.KAFKA_STORAGE_ERROR, fetchRemotePrefix(replicaManager, 150L).error)
+      assertEquals(deferredBefore, yammerMeterCount(prefixRateMeter))
+    }
+  }
+
+  @Test
+  def testNonConsolidatingRemoteConsumerFetchStaysOutOfRange(): Unit = {
+    withRemotePrefixFixture(new LeaderEpochNotAvailableException("no epoch for offset"), consolidating = false) { replicaManager =>
+      assertEquals(Errors.OFFSET_OUT_OF_RANGE, fetchRemotePrefix(replicaManager, 150L).error)
     }
   }
 
