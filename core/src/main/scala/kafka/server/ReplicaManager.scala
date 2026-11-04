@@ -472,7 +472,7 @@ class ReplicaManager(val config: KafkaConfig,
   metricsGroup.newGauge(DisklessSwitchedPrefixLagMetricName, () => disklessSwitchedPrefixLag)
   private val consolidationDeferredPrefixFetchRate: Meter =
     metricsGroup.newMeter(ConsolidationDeferredPrefixFetchRateMetricName, "fetches", TimeUnit.SECONDS)
-  private val lastPrefixDeferralMs = new AtomicLong(0L)
+  private val lastPrefixDeferralLogMs = new AtomicLong(0L)
   metricsGroup.newGauge(PartitionsWithLateTransactionsCountMetricName, () => lateTransactionsCount)
   metricsGroup.newGauge(ProducerIdCountMetricName, () => producerIdCount)
 
@@ -2546,12 +2546,12 @@ class ReplicaManager(val config: KafkaConfig,
     consolidationActiveFor(tp.topicPartition()) &&
       getPartitionOrError(tp.topicPartition()).toOption.flatMap(_.log).exists(offset >= _.logStartOffset)
 
-  /** Counts a deferred fetch, and logs the first one after a quiet period of [[ReplicaManager.PrefixDeferralLogGapMs]]. */
+  /** Counts a deferred fetch, and logs at most one line per [[ReplicaManager.PrefixDeferralLogGapMs]]. */
   private def recordPrefixDeferral(tp: TopicIdPartition, fetchOffset: Long, disklessStartOffset: Option[Long]): Unit = {
     consolidationDeferredPrefixFetchRate.mark()
     val now = time.milliseconds
-    val lastMs = lastPrefixDeferralMs.getAndSet(now)
-    if (lastMs == 0L || now - lastMs >= PrefixDeferralLogGapMs)
+    val lastMs = lastPrefixDeferralLogMs.get
+    if ((lastMs == 0L || now - lastMs >= PrefixDeferralLogGapMs) && lastPrefixDeferralLogMs.compareAndSet(lastMs, now))
       info(s"Answering consumer fetches of $tp ${disklessStartOffset.fold("from remote storage")(o => s"below the diskless WAL start $o")} with " +
         s"${Errors.OFFSET_NOT_AVAILABLE} until this replica can read the prefix; fetch offset $fetchOffset")
   }
