@@ -67,7 +67,7 @@ import org.apache.kafka.server.util.timer.MockTimer
 import org.apache.kafka.server.metrics.KafkaYammerMetrics
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats
 import org.apache.kafka.storage.internals.checkpoint.LazyOffsetCheckpoints
-import org.apache.kafka.storage.internals.log.{AppendOrigin, AsyncOffsetReadFutureHolder, FetchDataInfo, LogConfig, LogDirFailureChannel, LogOffsetMetadata, LogOffsetSnapshot, LogReadInfo, LogReadResult, OffsetResultHolder, RemoteLogReadResult, RemoteStorageFetchInfo, UnifiedLog}
+import org.apache.kafka.storage.internals.log.{AppendOrigin, AsyncOffsetReadFutureHolder, EpochEntry, FetchDataInfo, LogConfig, LogDirFailureChannel, LogOffsetMetadata, LogOffsetSnapshot, LogReadInfo, LogReadResult, OffsetResultHolder, RemoteLogReadResult, RemoteStorageFetchInfo, UnifiedLog}
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.{AfterEach, BeforeEach, Test}
 import org.junit.jupiter.params.ParameterizedTest
@@ -7834,6 +7834,86 @@ class ReplicaManagerInklessTest {
         assertEquals(sealOffset, log.localLogStartOffset)
         assertEquals(0L, log.logStartOffset)
         assertFalse(replicaManager.isClassicPrefixDeletionDeferred(tp))
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
+    } finally {
+      consolidationCtor.close()
+    }
+  }
+
+  // This replica led epoch 1 and wrote [7, 10), which never committed. In phase 2 the controller can elect
+  // it, so it drops that tail, and consolidation starts below the seal, where the first fetch rebuilds the
+  // classic prefix from remote storage. In phase 1 only ISR members lead, so the leader keeps its log and
+  // advances its stale high watermark.
+  @ParameterizedTest(name = "testSwitchedLeaderWithHighWatermarkBelowSeal with classicPrefixInRemoteStorage: {0}")
+  @ValueSource(booleans = Array(true, false))
+  def testSwitchedLeaderWithHighWatermarkBelowSeal(classicPrefixInRemoteStorage: Boolean): Unit = {
+    val topicName = "switched-consolidating-topic"
+    val topicId = Uuid.randomUuid()
+    val tp = new TopicPartition(topicName, 0)
+    val brokerId = 1
+    val followerId = 2
+    val leaderEpoch = 5
+    val sealOffset = 10L
+    val highWatermark = 7L
+
+    val mockFetcherManager = mock(classOf[ReplicaFetcherManager])
+    when(mockFetcherManager.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    val ctorInit: MockedConstruction.MockInitializer[ConsolidationFetcherManager] = {
+      case (mockCfm, _) =>
+        when(mockCfm.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    }
+    val consolidationCtor = mockConstruction(classOf[ConsolidationFetcherManager], ctorInit)
+    try {
+      val replicaManager = createReplicaManager(
+        Seq(topicName),
+        disklessRemoteStorageConsolidationEnabled = true,
+        consolidatingDisklessTopics = Set(topicName),
+        mockReplicaFetcherManager = Some(mockFetcherManager),
+        defaultLogConfig = Some(LogTestUtils.createLogConfig(remoteLogStorageEnable = true)),
+        initDisklessLogManager = Some(mock(classOf[InitDisklessLogManager])),
+      )
+      try {
+        val mockCfm = consolidationCtor.constructed().get(0)
+        val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+        populateLocalLogAtLeoAndCheckpointedHwm(replicaManager, tp, log, leo = highWatermark, hw = highWatermark)
+        val divergentTail = (highWatermark.toInt until sealOffset.toInt).map(i => new SimpleRecord(s"divergent-$i".getBytes))
+        log.appendAsFollower(TestUtils.records(divergentTail, baseOffset = highWatermark, partitionLeaderEpoch = 1), 1)
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(sealOffset)
+        when(replicaManager.inklessMetadataView().isClassicPrefixInRemoteStorage(tp)).thenReturn(classicPrefixInRemoteStorage)
+
+        val delta = new TopicsDelta(TopicsImage.EMPTY)
+        delta.replay(new TopicRecord().setName(topicName).setTopicId(topicId))
+        val partitionRecord = new PartitionRecord()
+          .setPartitionId(tp.partition)
+          .setTopicId(topicId)
+          .setReplicas(util.Arrays.asList(brokerId, followerId))
+          .setIsr(util.Arrays.asList(brokerId, followerId))
+          .setLeader(brokerId)
+          .setLeaderEpoch(leaderEpoch)
+          .setPartitionEpoch(0)
+        partitionRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicToDisklessStartOffset(sealOffset))
+        if (classicPrefixInRemoteStorage)
+          partitionRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicPrefixInRemoteStorage())
+        delta.replay(partitionRecord)
+        replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))
+
+        assertTrue(replicaManager.onlinePartition(tp).isDefined)
+        if (classicPrefixInRemoteStorage) {
+          assertEquals(highWatermark, log.logEndOffset)
+          assertEquals(highWatermark, log.highWatermark)
+          assertEquals(util.List.of(new EpochEntry(0, 0L)), log.leaderEpochCache.epochEntries)
+          verify(mockCfm).addFetcherForPartitions(Map(tp -> InitialFetchState(
+            topicId = Some(topicId),
+            leader = new BrokerEndPoint(-1, "diskless", -1),
+            currentLeaderEpoch = leaderEpoch,
+            initOffset = highWatermark
+          )))
+        } else {
+          assertEquals(sealOffset, log.logEndOffset)
+          assertEquals(sealOffset, log.highWatermark)
+        }
       } finally {
         replicaManager.shutdown(checkpointHW = false)
       }

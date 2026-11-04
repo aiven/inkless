@@ -4144,7 +4144,10 @@ class ReplicaManager(val config: KafkaConfig,
    *
    *  - LEO > seal: truncate down to the seal unless the local suffix [seal, LEO) is already
    *    materialized consolidated diskless data.
-   *  - LEO == seal and HW < seal: advance HW to the seal so consumers can cross into diskless.
+   *  - LEO == seal and HW < seal: advance HW to the seal so consumers can cross into diskless. In
+   *    phase 2 the controller can elect any live replica, so the records in [HW, seal) may diverge
+   *    from the committed prefix. A consolidating leader truncates to HW instead, which puts it in
+   *    the LEO < seal case.
    *  - LEO < seal: fence offline, unless this is a consolidating diskless topic with remote
    *    storage enabled. In that case the classic prefix [0, seal) lives in the remote tier and
    *    can be rebuilt, so the partition is left online for the ConsolidationReconciler to
@@ -4174,10 +4177,18 @@ class ReplicaManager(val config: KafkaConfig,
             }
             if (partition.isLeader) {
               if (log.logEndOffset >= seal && log.highWatermark < seal) {
-                log.maybeUpdateHighWatermark(seal)
-                stateChangeLogger.info(s"Stale high watermark detected: advanced high watermark to seal offset $seal for " +
-                  s"switched leader partition $tp")
-              } else if (log.logEndOffset < seal) {
+                if (newRegistration.classicPrefixInRemoteStorage && consolidationActiveFor(tp) && log.remoteLogEnabled()) {
+                  stateChangeLogger.info(s"Truncating switched leader partition $tp from LEO ${log.logEndOffset} to its " +
+                    s"high watermark ${log.highWatermark} below the seal $seal: in phase 2 these records may diverge " +
+                    s"from the committed prefix, so consolidation rebuilds the classic prefix from the remote tier.")
+                  partition.truncateTo(log.highWatermark, isFuture = false)
+                } else {
+                  log.maybeUpdateHighWatermark(seal)
+                  stateChangeLogger.info(s"Stale high watermark detected: advanced high watermark to seal offset $seal for " +
+                    s"switched leader partition $tp")
+                }
+              }
+              if (log.logEndOffset < seal) {
                 if (consolidationActiveFor(tp) && log.remoteLogEnabled()) {
                   // The leader's local classic prefix was lost (full local-storage wipe / DR).
                   // [0, seal) lives in the remote tier, so leave the partition online and let the

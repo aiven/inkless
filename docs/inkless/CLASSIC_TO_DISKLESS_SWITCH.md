@@ -196,6 +196,7 @@ Brokers also follow different rules in each phase. The consolidation rows apply 
 | --- | --- | --- |
 | Consolidation | Off. The partition runs like a switched partition that doesn't consolidate. | On, from the seal. |
 | Follower at the seal | Leaves the classic fetcher once it's in the ISR, like a follower that doesn't consolidate. | Consolidates from the seal. If its high watermark is below the seal, it first fetches once at the seal on the classic fetcher. |
+| Leader with a high watermark below the seal | Advances the high watermark to the seal. | Truncates to its high watermark. Consolidation then rebuilds its classic prefix from remote storage. |
 | Local classic prefix | Kept, and serves reads below the seal. | Deleted. Reads below the seal come from remote storage. |
 | Metadata routing | Clients go to alive ISR members only. | Clients go to any replica, by the managed replica rules. |
 
@@ -240,6 +241,7 @@ Any replica can join the ISR or lead in phase 2, including one whose local log c
 The partition committed every record below a replica's high watermark. Only a replica whose high watermark is below the seal needs a check:
 
 * A follower fetches once at the seal on the classic fetcher before it consolidates. The leader checks the follower's last fetched epoch against its own epoch cache. If they diverge, the follower truncates and catches up like any follower below the seal, which rebuilds its log and epoch cache from remote storage.
+* A leader truncates its log to its high watermark. The leader is then below the seal, so consolidation rebuilds its log, epoch cache, and producer state from remote storage, like it does for a leader that lost its local log.
 
 ## Operator override of the seal offset
 
