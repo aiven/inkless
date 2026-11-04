@@ -32,6 +32,7 @@ import org.apache.kafka.common.requests.{FetchRequest, FetchResponse, ListOffset
 import org.apache.kafka.common.{TopicIdPartition, TopicPartition, Uuid}
 import org.apache.kafka.metadata.{LeaderAndIsr, PartitionRegistration}
 import org.apache.kafka.server.common.{MetadataVersion, OffsetAndEpoch}
+import org.apache.kafka.server.log.remote.storage.RemoteLogSegmentState
 import org.apache.kafka.server.network.BrokerEndPoint
 import org.apache.kafka.server.purgatory.TopicPartitionOperationKey
 import org.apache.kafka.server.storage.log.{FetchIsolation, FetchParams, FetchPartitionData}
@@ -505,13 +506,24 @@ class DisklessLeaderEndPoint(
    * otherwise returns `epoch`. The epoch before `E_d` may have ended without records. `TierStateMachine` looks up
    * the segment at `seal - 1` by the epoch that [[fetchEpochEndOffsets]] returns.
    */
-  private def remoteClassicEpochAtOrBelow(tp: TopicPartition, seal: Long, epoch: Int): Int =
+  private def remoteClassicEpochAtOrBelow(tp: TopicPartition, seal: Long, epoch: Int): Int = {
+    val lastClassicOffset = seal - 1
     replicaManager.remoteLogManager
       .filter(rlm => seal > 0 && rlm.isPartitionReady(tp))
       .flatMap { rlm =>
-        Try((epoch to 0 by -1).find(e => rlm.fetchRemoteLogSegmentMetadata(tp, e, seal - 1).isPresent)).toOption.flatten
+        Try {
+          rlm.remoteLogMetadataManager.listRemoteLogSegments(replicaManager.topicIdPartition(tp)).asScala
+            .filter(segment => segment.state == RemoteLogSegmentState.COPY_SEGMENT_FINISHED &&
+              segment.startOffset <= lastClassicOffset && lastClassicOffset <= segment.endOffset)
+            .flatMap(_.segmentLeaderEpochs.asScala.collect {
+              case (segmentEpoch, startOffset) if startOffset.longValue <= lastClassicOffset => segmentEpoch.intValue
+            }.maxOption)
+            .filter(_ <= epoch)
+            .maxOption
+        }.toOption.flatten
       }
       .getOrElse(epoch)
+  }
 
   override def buildFetch(partitions: util.Map[TopicPartition, PartitionFetchState]): ResultWithPartitions[Optional[ReplicaFetch]] = {
     if (quota.isQuotaExceeded) {

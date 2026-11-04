@@ -35,7 +35,7 @@ import org.apache.kafka.common.requests.{FetchRequest, FetchResponse, ListOffset
 import org.apache.kafka.common.{TopicIdPartition, TopicPartition, Uuid}
 import org.apache.kafka.metadata.{LeaderAndIsr, PartitionRegistration}
 import org.apache.kafka.server.common.{MetadataVersion, OffsetAndEpoch}
-import org.apache.kafka.server.log.remote.storage.{RemoteLogManager, RemoteLogSegmentMetadata}
+import org.apache.kafka.server.log.remote.storage.{RemoteLogManager, RemoteLogMetadataManager, RemoteLogSegmentId, RemoteLogSegmentMetadata, RemoteLogSegmentState}
 import org.apache.kafka.server.network.BrokerEndPoint
 import org.apache.kafka.server.purgatory.DelayedOperationPurgatory
 import org.apache.kafka.server.storage.log.FetchPartitionData
@@ -47,8 +47,8 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.CsvSource
 import org.mockito.ArgumentCaptor
-import org.mockito.ArgumentMatchers.{any, anyLong, eq => eqTo}
-import org.mockito.Mockito.{doAnswer, doNothing, mock, times, verify, when}
+import org.mockito.ArgumentMatchers.{any, anyInt, anyLong, eq => eqTo}
+import org.mockito.Mockito.{doAnswer, doNothing, mock, never, times, verify, when}
 
 import java.util
 import java.nio.ByteBuffer
@@ -643,10 +643,15 @@ class DisklessLeaderEndPointTest {
     when(job.mustHandle(topicPartition.topic())).thenReturn(true)
     when(replicaManager.classicToDisklessStartOffset(topicPartition)).thenReturn(100L)
     when(replicaManager.disklessLeaderEpoch(topicPartition)).thenReturn(5)
+    when(replicaManager.topicIdPartition(topicPartition)).thenReturn(topicIdPartition)
+    val rlmm = mock(classOf[RemoteLogMetadataManager])
+    when(rlmm.listRemoteLogSegments(topicIdPartition)).thenAnswer(_ => util.List.of(
+      remoteSegment(0L, 99L, Map(0 -> 0L, 3 -> 60L)),
+      remoteSegment(100L, 199L, Map(5 -> 100L))
+    ).iterator())
     val rlm = mock(classOf[RemoteLogManager])
     when(rlm.isPartitionReady(topicPartition)).thenReturn(true)
-    when(rlm.fetchRemoteLogSegmentMetadata(topicPartition, 3, 99L))
-      .thenReturn(Optional.of(mock(classOf[RemoteLogSegmentMetadata])))
+    when(rlm.remoteLogMetadataManager).thenReturn(rlmm)
     when(replicaManager.remoteLogManager).thenReturn(Some(rlm))
 
     val endPoint = newEndPoint(mock(classOf[FetchHandler]), fetchOffsetHandler, replicaManager)
@@ -665,7 +670,23 @@ class DisklessLeaderEndPointTest {
       .setLeaderEpoch(expectedEpoch)
       .setEndOffset(100L)
     assertEquals(Map(topicPartition -> expected), result)
+    verify(rlmm, times(1)).listRemoteLogSegments(topicIdPartition)
+    verify(rlm, never()).fetchRemoteLogSegmentMetadata(any(), anyInt(), anyLong())
   }
+
+  private def remoteSegment(startOffset: Long, endOffset: Long, leaderEpochs: Map[Int, Long]): RemoteLogSegmentMetadata =
+    new RemoteLogSegmentMetadata(
+      new RemoteLogSegmentId(topicIdPartition, Uuid.randomUuid()),
+      startOffset,
+      endOffset,
+      -1L,
+      0,
+      0L,
+      1024,
+      Optional.empty(),
+      RemoteLogSegmentState.COPY_SEGMENT_FINISHED,
+      leaderEpochs.map { case (epoch, offset) => Int.box(epoch) -> Long.box(offset) }.asJava
+    )
 
   @Test
   def testFetchEpochEndOffsetsAtOrAboveDisklessEpochReturnsDisklessLeo(): Unit = {

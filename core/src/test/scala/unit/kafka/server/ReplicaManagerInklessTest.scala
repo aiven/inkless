@@ -57,7 +57,7 @@ import org.apache.kafka.metadata.{InitDisklessLogFields, KRaftMetadataCache, Lea
 import org.apache.kafka.server.HostedPartition
 import org.apache.kafka.server.common.{KRaftVersion, MetadataVersion, OffsetAndEpoch}
 import org.apache.kafka.server.config.ServerConfigs
-import org.apache.kafka.server.log.remote.storage.{LeaderEpochNotAvailableException, RemoteLogManager, RemoteLogManagerConfig, RemoteLogSegmentMetadata}
+import org.apache.kafka.server.log.remote.storage.{LeaderEpochNotAvailableException, RemoteLogManager, RemoteLogManagerConfig, RemoteLogMetadataManager, RemoteLogSegmentId, RemoteLogSegmentMetadata, RemoteLogSegmentState}
 import org.apache.kafka.server.network.BrokerEndPoint
 import org.apache.kafka.server.PartitionFetchState
 import org.apache.kafka.server.purgatory.{DelayedDeleteRecords, DelayedOperationPurgatory, DelayedProduce, DelayedRemoteFetch, DelayedRemoteListOffsets, TopicPartitionOperationKey}
@@ -7934,14 +7934,22 @@ class ReplicaManagerInklessTest {
     val disklessLeaderEpoch = 5
     val lastClassicEpoch = 3
 
+    val tip = new TopicIdPartition(Uuid.randomUuid(), tp)
+    val lastClassicSegment = new RemoteLogSegmentMetadata(
+      new RemoteLogSegmentId(tip, Uuid.randomUuid()), 0L, sealOffset - 1, -1L, 0, 0L, 1024, Optional.empty(),
+      RemoteLogSegmentState.COPY_SEGMENT_FINISHED, util.Map.of(0, 0L, lastClassicEpoch, 60L))
+    val rlmm = mock(classOf[RemoteLogMetadataManager])
+    when(rlmm.listRemoteLogSegments(tip)).thenAnswer(_ => util.List.of(lastClassicSegment).iterator())
     val rlm = mock(classOf[RemoteLogManager])
     when(rlm.isPartitionReady(tp)).thenReturn(true)
+    when(rlm.remoteLogMetadataManager).thenReturn(rlmm)
     when(rlm.fetchRemoteLogSegmentMetadata(tp, lastClassicEpoch, sealOffset - 1))
-      .thenReturn(Optional.of(mock(classOf[RemoteLogSegmentMetadata])))
+      .thenReturn(Optional.of(lastClassicSegment))
     val log = mock(classOf[UnifiedLog])
     when(log.remoteLogEnabled()).thenReturn(true)
     val replicaManager = mock(classOf[ReplicaManager])
     when(replicaManager.brokerTopicStats).thenReturn(new BrokerTopicStats(true))
+    when(replicaManager.topicIdPartition(tp)).thenReturn(tip)
     when(replicaManager.localLogOrException(tp)).thenReturn(log)
     when(replicaManager.remoteLogManager).thenReturn(Some(rlm))
     when(replicaManager.classicToDisklessStartOffset(tp)).thenReturn(sealOffset)
