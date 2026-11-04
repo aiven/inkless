@@ -20,7 +20,7 @@ package kafka.server
 import io.aiven.inkless.cache.CrossTierLogStartCache
 import io.aiven.inkless.common.SharedState
 import io.aiven.inkless.config.InklessConfig
-import io.aiven.inkless.consolidation.{ConsolidatedDisklessLogPruner, ConsolidationFetcherManager}
+import io.aiven.inkless.consolidation.{ConsolidatedDisklessLogPruner, ConsolidationFetcherManager, DisklessLeaderEndPoint}
 import io.aiven.inkless.consume.{ConcatenatedRecords, FetchHandler, FetchOffsetHandler}
 import io.aiven.inkless.control_plane.{AdvanceCrossTierLogStartOffsetResponse, BatchInfo, BatchMetadata, ControlPlane, ControlPlaneException, FindBatchResponse, RepairDisklessLogRequest, RepairDisklessLogResponse, DeleteRecordsResponse => CpDeleteRecordsResponse, ListOffsetsRequest => CpListOffsetsRequest, ListOffsetsResponse => CpListOffsetsResponse}
 import io.aiven.inkless.produce.AppendHandler
@@ -55,9 +55,9 @@ import org.apache.kafka.common.utils.Time
 import org.apache.kafka.image._
 import org.apache.kafka.metadata.{InitDisklessLogFields, KRaftMetadataCache, LeaderAndIsr, LeaderRecoveryState, PartitionRegistration}
 import org.apache.kafka.server.HostedPartition
-import org.apache.kafka.server.common.{KRaftVersion, MetadataVersion}
+import org.apache.kafka.server.common.{KRaftVersion, MetadataVersion, OffsetAndEpoch}
 import org.apache.kafka.server.config.ServerConfigs
-import org.apache.kafka.server.log.remote.storage.{LeaderEpochNotAvailableException, RemoteLogManager, RemoteLogManagerConfig}
+import org.apache.kafka.server.log.remote.storage.{LeaderEpochNotAvailableException, RemoteLogManager, RemoteLogManagerConfig, RemoteLogSegmentMetadata}
 import org.apache.kafka.server.network.BrokerEndPoint
 import org.apache.kafka.server.PartitionFetchState
 import org.apache.kafka.server.purgatory.{DelayedDeleteRecords, DelayedOperationPurgatory, DelayedProduce, DelayedRemoteFetch, DelayedRemoteListOffsets, TopicPartitionOperationKey}
@@ -7922,6 +7922,53 @@ class ReplicaManagerInklessTest {
     } finally {
       consolidationCtor.close()
     }
+  }
+
+  // Epoch 4 ended without records, so remote storage holds the last classic record, at seal - 1, in epoch 3.
+  // The first tiered fetch of a rebuild looks up that record by the epoch that the diskless leader returns
+  // for the epoch before the diskless epoch.
+  @Test
+  def testTierStateMachineFindsLastClassicSegmentAcrossEmptyEpochBeforeDisklessEpoch(): Unit = {
+    val tp = new TopicPartition("switched-consolidating-topic", 0)
+    val sealOffset = 100L
+    val disklessLeaderEpoch = 5
+    val lastClassicEpoch = 3
+
+    val rlm = mock(classOf[RemoteLogManager])
+    when(rlm.isPartitionReady(tp)).thenReturn(true)
+    when(rlm.fetchRemoteLogSegmentMetadata(tp, lastClassicEpoch, sealOffset - 1))
+      .thenReturn(Optional.of(mock(classOf[RemoteLogSegmentMetadata])))
+    val log = mock(classOf[UnifiedLog])
+    when(log.remoteLogEnabled()).thenReturn(true)
+    val replicaManager = mock(classOf[ReplicaManager])
+    when(replicaManager.brokerTopicStats).thenReturn(new BrokerTopicStats(true))
+    when(replicaManager.localLogOrException(tp)).thenReturn(log)
+    when(replicaManager.remoteLogManager).thenReturn(Some(rlm))
+    when(replicaManager.classicToDisklessStartOffset(tp)).thenReturn(sealOffset)
+    when(replicaManager.disklessLeaderEpoch(tp)).thenReturn(disklessLeaderEpoch)
+    // The test stops at the first step after the remote segment lookup.
+    val lookupSucceeded = new IllegalStateException("remote segment found")
+    when(replicaManager.getPartitionOrException(tp)).thenThrow(lookupSucceeded)
+
+    val fetchOffsetHandler = mock(classOf[FetchOffsetHandler])
+    val job = mock(classOf[FetchOffsetHandler.Job])
+    when(fetchOffsetHandler.createJob()).thenReturn(job)
+    when(job.mustHandle(tp.topic)).thenReturn(true)
+    val endPoint = new DisklessLeaderEndPoint(
+      new BrokerEndPoint(-1, "diskless", -1),
+      mock(classOf[FetchHandler]),
+      fetchOffsetHandler,
+      replicaManager,
+      KafkaConfig.fromProps(TestUtils.createBrokerConfig(1)),
+      QuotaFactory.UNBOUNDED_QUOTA,
+      () => MetadataVersion.LATEST_PRODUCTION,
+      () => 1L
+    )
+
+    val tierStateMachine = new TierStateMachine(endPoint, replicaManager, false)
+    val thrown = assertThrows(classOf[IllegalStateException], () =>
+      tierStateMachine.start(tp, Optional.empty(), disklessLeaderEpoch, new OffsetAndEpoch(sealOffset, disklessLeaderEpoch), 0L))
+    assertSame(lookupSucceeded, thrown)
   }
 
   // The classic fetcher thread deletes the prefix when it evicts a partition. If it took

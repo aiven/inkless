@@ -417,7 +417,8 @@ class DisklessLeaderEndPoint(
    *     runs past the seal truncates back to it. Collapsing every classic epoch to the seal (rather
    *     than the start of the next epoch, as standard OffsetsForLeaderEpoch would) is correct only
    *     because the classic prefix `[logStart, seal)` is committed and identical across all replicas,
-   *     so intra-prefix divergence cannot occur.
+   *     so intra-prefix divergence can't occur. The returned epoch is the epoch of the last classic
+   *     record in remote storage if that epoch is lower than the queried one.
    *   - queried epoch `>= E_d` (or a born-diskless partition with no captured epoch): the end offset is
    *     the current diskless LEO, fetched via a LATEST list-offsets call.
    */
@@ -462,11 +463,12 @@ class DisklessLeaderEndPoint(
           .setPartition(tp.partition)
           .setErrorCode(Errors.NONE.code)
       } else if (sealEndOffsets.contains(tp)) {
+        val seal = sealEndOffsets(tp)
         tp -> new EpochEndOffset()
           .setPartition(tp.partition)
           .setErrorCode(Errors.NONE.code)
-          .setLeaderEpoch(epochData.leaderEpoch)
-          .setEndOffset(sealEndOffsets(tp))
+          .setLeaderEpoch(remoteClassicEpochAtOrBelow(tp, seal, epochData.leaderEpoch))
+          .setEndOffset(seal)
       } else if (!futures.contains(tp)) {
         tp -> new EpochEndOffset()
           .setPartition(tp.partition)
@@ -497,6 +499,19 @@ class DisklessLeaderEndPoint(
       }
     }.toMap.asJava
   }
+
+  /**
+   * Returns the leader epoch of the classic record at `seal - 1` in remote storage if it's at most `epoch`;
+   * otherwise returns `epoch`. The epoch before `E_d` may have ended without records. `TierStateMachine` looks up
+   * the segment at `seal - 1` by the epoch that [[fetchEpochEndOffsets]] returns.
+   */
+  private def remoteClassicEpochAtOrBelow(tp: TopicPartition, seal: Long, epoch: Int): Int =
+    replicaManager.remoteLogManager
+      .filter(rlm => seal > 0 && rlm.isPartitionReady(tp))
+      .flatMap { rlm =>
+        Try((epoch to 0 by -1).find(e => rlm.fetchRemoteLogSegmentMetadata(tp, e, seal - 1).isPresent)).toOption.flatten
+      }
+      .getOrElse(epoch)
 
   override def buildFetch(partitions: util.Map[TopicPartition, PartitionFetchState]): ResultWithPartitions[Optional[ReplicaFetch]] = {
     if (quota.isQuotaExceeded) {
