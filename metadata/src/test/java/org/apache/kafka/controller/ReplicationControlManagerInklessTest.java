@@ -5273,8 +5273,201 @@ public class ReplicationControlManagerInklessTest {
             PartitionResult partitionResult = topicResult.partitionResult().get(0);
             assertEquals(0, partitionResult.partitionId());
             assertEquals(Errors.INVALID_REQUEST.code(), partitionResult.errorCode());
-            assertTrue(partitionResult.errorMessage().contains("pending classic-to-diskless switch"),
-                "Expected pending switch message in: " + partitionResult.errorMessage());
+            assertTrue(partitionResult.errorMessage().contains("classic prefix is not in remote storage yet"),
+                "Expected local classic prefix message in: " + partitionResult.errorMessage());
+        }
+
+        private ReplicationControlTestContext switchedTopicTestContext() {
+            return new ReplicationControlTestContext.Builder()
+                .setStaticConfig(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, true)
+                .setDisklessStorageSystemEnabled(true)
+                .setDisklessManagedReplicasEnabled(true)
+                .build();
+        }
+
+        // Partition 0 of the returned topic has replicas [0, 1, 2], leader 0, ISR [0], and a committed seal.
+        // The ISR shrinks before the seal commits, because a phase-2 unfence would add 1 and 2 back.
+        private Uuid createSwitchedTopicWithLeaderOnlyIsr(
+            ReplicationControlTestContext ctx,
+            boolean classicPrefixInRemoteStorage
+        ) {
+            Uuid topicId = createSwitchingTestTopic(ctx);
+            ctx.fenceBrokers(1, 2);
+            ctx.unfenceBrokers(1, 2);
+            PartitionChangeRecord sealRecord = new PartitionChangeRecord()
+                .setTopicId(topicId)
+                .setPartitionId(0);
+            sealRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicToDisklessStartOffset(100L));
+            if (classicPrefixInRemoteStorage) {
+                sealRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicPrefixInRemoteStorage());
+            }
+            ctx.replay(List.of(new ApiMessageAndVersion(sealRecord, (short) 0)));
+
+            PartitionRegistration partition = ctx.replicationControl.getPartition(topicId, 0);
+            assertEquals(0, partition.leader);
+            assertArrayEquals(new int[] {0}, partition.isr);
+            assertEquals(classicPrefixInRemoteStorage, partition.classicPrefixInRemoteStorage);
+            return topicId;
+        }
+
+        // The topic-level validation doesn't cover the cluster default, so an operator can still
+        // enable unclean leader election for a switching topic this way.
+        private void enableUncleanLeaderElectionForCluster(ReplicationControlTestContext ctx) {
+            ctx.replay(List.of(new ApiMessageAndVersion(new ConfigRecord()
+                .setResourceType(ConfigResource.Type.BROKER.id())
+                .setResourceName("")
+                .setName(TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG)
+                .setValue("true"), (short) 0)));
+            assertTrue(ctx.configurationControl.uncleanLeaderElectionEnabledForTopic("foo"));
+        }
+
+        @ParameterizedTest
+        @ValueSource(booleans = {false, true})
+        public void testBrokerFencingSkipsUncleanElectionUntilClassicPrefixIsInRemoteStorage(
+            boolean classicPrefixInRemoteStorage
+        ) {
+            ReplicationControlTestContext ctx = switchedTopicTestContext();
+            Uuid fooId = createSwitchedTopicWithLeaderOnlyIsr(ctx, classicPrefixInRemoteStorage);
+            enableUncleanLeaderElectionForCluster(ctx);
+
+            ctx.fenceBrokers(0);
+
+            PartitionRegistration partition = ctx.replicationControl.getPartition(fooId, 0);
+            if (classicPrefixInRemoteStorage) {
+                assertEquals(1, partition.leader, "Phase 2 should elect an unclean leader: " + partition);
+                assertArrayEquals(new int[] {1}, partition.isr);
+            } else {
+                assertFalse(partition.hasLeader(), "Phase 1 should skip the unclean election: " + partition);
+                assertArrayEquals(new int[] {0}, partition.isr);
+            }
+        }
+
+        @ParameterizedTest
+        @ValueSource(booleans = {false, true})
+        public void testLeaderlessPartitionSkipsUncleanElectionUntilClassicPrefixIsInRemoteStorage(
+            boolean classicPrefixInRemoteStorage
+        ) {
+            ReplicationControlTestContext ctx = switchedTopicTestContext();
+            Uuid fooId = createSwitchedTopicWithLeaderOnlyIsr(ctx, classicPrefixInRemoteStorage);
+            ctx.fenceBrokers(0);
+            assertFalse(ctx.replicationControl.getPartition(fooId, 0).hasLeader());
+            enableUncleanLeaderElectionForCluster(ctx);
+
+            List<ApiMessageAndVersion> records = new ArrayList<>();
+            ctx.replicationControl.maybeTriggerUncleanLeaderElectionForLeaderlessPartitions(
+                records, Integer.MAX_VALUE);
+
+            if (classicPrefixInRemoteStorage) {
+                assertEquals(1, records.size());
+                ctx.replay(records);
+                assertEquals(1, ctx.replicationControl.getPartition(fooId, 0).leader);
+            } else {
+                assertEquals(List.of(), records);
+            }
+        }
+
+        @ParameterizedTest
+        @ValueSource(booleans = {false, true})
+        public void testElectLeadersRejectsUncleanElectionUntilClassicPrefixIsInRemoteStorage(
+            boolean classicPrefixInRemoteStorage
+        ) {
+            ReplicationControlTestContext ctx = switchedTopicTestContext();
+            Uuid fooId = createSwitchedTopicWithLeaderOnlyIsr(ctx, classicPrefixInRemoteStorage);
+            ctx.fenceBrokers(0);
+            assertFalse(ctx.replicationControl.getPartition(fooId, 0).hasLeader());
+
+            ElectLeadersRequestData request = new ElectLeadersRequestData()
+                .setElectionType(ElectionType.UNCLEAN.value);
+            request.topicPartitions().add(new TopicPartitions()
+                .setTopic("foo")
+                .setPartitions(List.of(0)));
+            ControllerResult<ElectLeadersResponseData> result = ctx.replicationControl.electLeaders(request);
+
+            PartitionResult partitionResult =
+                result.response().replicaElectionResults().get(0).partitionResult().get(0);
+            if (classicPrefixInRemoteStorage) {
+                assertEquals(NONE.code(), partitionResult.errorCode());
+                assertEquals(1, result.records().size());
+            } else {
+                assertEquals(INVALID_REQUEST.code(), partitionResult.errorCode());
+                assertEquals("Cannot perform unclean leader election for partition foo-0 because it is " +
+                    "switching to diskless and its classic prefix is not in remote storage yet.",
+                    partitionResult.errorMessage());
+                assertEquals(List.of(), result.records());
+            }
+        }
+
+        @ParameterizedTest
+        @ValueSource(booleans = {false, true})
+        public void testUncleanLeaderElectionRejectedUntilClassicPrefixIsInRemoteStorage(
+            boolean classicPrefixInRemoteStorage
+        ) {
+            ReplicationControlTestContext ctx = switchedTopicTestContext();
+            createSwitchedTopicWithLeaderOnlyIsr(ctx, classicPrefixInRemoteStorage);
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, "foo");
+            Map<ConfigResource, Map<String, Map.Entry<AlterConfigOp.OpType, String>>> configChanges = Map.of(
+                resource, Map.of(TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG,
+                    new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, "true")));
+            Map<ConfigResource, Map<String, String>> newConfigs = Map.of(resource, Map.of(
+                DISKLESS_ENABLE_CONFIG, "true",
+                TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG, "true"));
+
+            ApiError incrementalError =
+                ctx.replicationControl.validateClassicToDisklessSwitchPrecondition(resource, configChanges);
+            ApiError legacyError =
+                ctx.replicationControl.validateClassicToDisklessSwitchPreconditionForLegacy(resource, newConfigs);
+
+            ApiError expected = classicPrefixInRemoteStorage
+                ? ApiError.NONE
+                : new ApiError(Errors.INVALID_CONFIG, "Cannot enable unclean leader election for topic foo: " +
+                    "topic is switching to diskless and its classic prefix is not in remote storage yet.");
+            assertEquals(expected, incrementalError);
+            assertEquals(expected, legacyError);
+        }
+
+        @ParameterizedTest
+        @ValueSource(booleans = {false, true})
+        public void testCancelReassignmentRejectsUncleanRevertUntilClassicPrefixIsInRemoteStorage(
+            boolean classicPrefixInRemoteStorage
+        ) {
+            ReplicationControlTestContext ctx = switchedTopicTestContext();
+            ctx.registerBrokers(3, 4, 5);
+            ctx.unfenceBrokers(3, 4, 5);
+            Uuid fooId = createSwitchedTopicWithLeaderOnlyIsr(ctx, classicPrefixInRemoteStorage);
+            // Reassignment [0, 1, 2] -> [3, 4, 5] in flight, where only adding replica 3 is in the ISR.
+            // Reverting it puts original replica 0 in the ISR, which is an unclean leader election.
+            ctx.replay(List.of(new ApiMessageAndVersion(new PartitionChangeRecord()
+                .setTopicId(fooId)
+                .setPartitionId(0)
+                .setReplicas(List.of(3, 4, 5, 0, 1, 2))
+                .setDirectories(Collections.nCopies(6, DirectoryId.UNASSIGNED))
+                .setIsr(List.of(3))
+                .setLeader(3)
+                .setRemovingReplicas(List.of(0, 1, 2))
+                .setAddingReplicas(List.of(3, 4, 5)), (short) 1)));
+            enableUncleanLeaderElectionForCluster(ctx);
+
+            ControllerResult<AlterPartitionReassignmentsResponseData> result =
+                ctx.replicationControl.alterPartitionReassignments(
+                    new AlterPartitionReassignmentsRequestData().setTopics(List.of(
+                        new ReassignableTopic().setName("foo").setPartitions(List.of(
+                            new ReassignablePartition().setPartitionIndex(0)
+                                .setReplicas(null))))));
+
+            ReassignablePartitionResponse response = result.response().responses().get(0).partitions().get(0);
+            if (classicPrefixInRemoteStorage) {
+                assertEquals(NONE.code(), response.errorCode());
+                ctx.replay(result.records());
+                PartitionRegistration reverted = ctx.replicationControl.getPartition(fooId, 0);
+                assertEquals(List.of(0, 1, 2), Replicas.toList(reverted.replicas));
+                assertArrayEquals(new int[] {0}, reverted.isr);
+            } else {
+                assertEquals(INVALID_REPLICA_ASSIGNMENT.code(), response.errorCode());
+                assertEquals("Unable to revert partition assignment for foo:0 because it would require an " +
+                    "unclean leader election, and the partition is switching to diskless and its classic " +
+                    "prefix is not in remote storage yet.", response.errorMessage());
+                assertEquals(List.of(), result.records());
+            }
         }
 
         @Test
@@ -5408,7 +5601,8 @@ public class ReplicationControlManagerInklessTest {
 
             assertEquals(Errors.INVALID_CONFIG, error.error());
             assertEquals("Cannot enable unclean leader election for topic foo" +
-                ": topic has a pending classic-to-diskless switch.", error.message());
+                ": topic is switching to diskless and its classic prefix is not in remote storage yet.",
+                error.message());
         }
 
         @Test
@@ -5442,7 +5636,8 @@ public class ReplicationControlManagerInklessTest {
 
             assertEquals(Errors.INVALID_CONFIG, error.error());
             assertEquals("Cannot enable unclean leader election for topic foo" +
-                ": topic has a pending classic-to-diskless switch.", error.message());
+                ": topic is switching to diskless and its classic prefix is not in remote storage yet.",
+                error.message());
         }
 
         @Test
@@ -5480,7 +5675,8 @@ public class ReplicationControlManagerInklessTest {
 
             assertEquals(Errors.INVALID_CONFIG, error.error());
             assertEquals("Cannot enable unclean leader election for topic foo" +
-                ": topic has a pending classic-to-diskless switch.", error.message());
+                ": topic is switching to diskless and its classic prefix is not in remote storage yet.",
+                error.message());
         }
 
         @Test
@@ -5608,7 +5804,8 @@ public class ReplicationControlManagerInklessTest {
 
             assertEquals(Errors.INVALID_CONFIG, error.error());
             assertEquals("Cannot enable unclean leader election for topic foo" +
-                ": topic has a pending classic-to-diskless switch.", error.message());
+                ": topic is switching to diskless and its classic prefix is not in remote storage yet.",
+                error.message());
         }
 
         @Test
@@ -5648,7 +5845,8 @@ public class ReplicationControlManagerInklessTest {
 
             assertEquals(Errors.INVALID_CONFIG, error.error());
             assertEquals("Cannot enable unclean leader election for topic foo" +
-                ": topic has a pending classic-to-diskless switch.", error.message());
+                ": topic is switching to diskless and its classic prefix is not in remote storage yet.",
+                error.message());
         }
 
         @Test
@@ -5683,7 +5881,8 @@ public class ReplicationControlManagerInklessTest {
 
             assertEquals(Errors.INVALID_CONFIG, error.error());
             assertEquals("Cannot enable unclean leader election for topic foo" +
-                ": topic has a pending classic-to-diskless switch.", error.message());
+                ": topic is switching to diskless and its classic prefix is not in remote storage yet.",
+                error.message());
         }
 
         @Test
@@ -5781,7 +5980,8 @@ public class ReplicationControlManagerInklessTest {
 
             assertEquals(Errors.INVALID_CONFIG, error.error());
             assertEquals("Cannot enable unclean leader election for topic foo" +
-                ": topic has a pending classic-to-diskless switch.", error.message());
+                ": topic is switching to diskless and its classic prefix is not in remote storage yet.",
+                error.message());
         }
 
         @Test
