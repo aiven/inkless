@@ -109,6 +109,14 @@ After a batch is consolidated to remote storage and the WAL is pruned, data belo
 
 That redirect only fires when RLMM has a readable (`COPY_SEGMENT_FINISHED`) segment covering `disklessWALStart - 1`, which is the offset the tier-state machine looks up. A born-diskless topic that just started consolidating can already have WAL start `S > 0` from pure-diskless retention while remote storage is still empty, or a switched topic can have a seal and later WAL copies that do not cover `S - 1`. The endpoint leaves `OFFSET_OUT_OF_RANGE` only after RLMM is ready and has no such segment, so the fetcher truncates the empty local log and starts at `S`. If RLMM is not ready, the list fails, or a covering segment is still transitional, the endpoint returns `NOT_LEADER_OR_FOLLOWER` so the fetcher retries with backoff at debug. Fetchers start in `applyLocalLeadersDelta` before `RemoteLogManager.onLeadershipChange`, and `isReady` can stay false until `__remote_log_metadata` catch-up, so that retry is the normal startup path. `ConsolidationRemotePrefixUnknown` is 1 while that wait is in progress; a list failure is logged at warn, unlike the unregistered and not-ready cases. Alert semantics, including why a brief 0 can appear across a re-arm, are in the `ConsolidationRemotePrefixUnknown` row of [Metrics](#metrics).
 
+A replica that hasn't rebuilt its tier state can't serve the prefix yet. This happens with an empty local log (a reassignment target, or a replica that lost its data) and again each time the WAL start moves past the rebuilt range and the fetcher rebuilds, because the rebuild clears the leader epoch cache before it restores it from remote storage. In both cases a consumer fetch of a retained offset gets the retriable `OFFSET_NOT_AVAILABLE`, so the consumer retries and keeps its position instead of resetting. A fetch of a deleted offset, and every replica fetch, still gets `OFFSET_OUT_OF_RANGE`. Watch `ConsolidationDeferredPrefixFetchRate` (see [Metrics](#metrics)) to find a replica that doesn't recover.
+
+The deferral has these limits:
+
+- It has no time limit. A replica that never rebuilds defers every consumer fetch of the prefix.
+- The bound for a deleted offset on the diskless path can lag. It uses the cross-tier earliest offset from a cache with a TTL (`inkless.consume.cross.tier.log.start.cache.ttl.ms`, 10 seconds by default). A deleted offset below a stale bound defers until the bound catches up.
+- The remote path defers only a read whose offset has no leader epoch in the epoch cache. A read with a known epoch and no remote segment keeps `OFFSET_OUT_OF_RANGE`, as on a classic tiered topic.
+
 This is the read-from-remote path that lets a consolidated topic survive losing every local copy.
 
 #### Followers
@@ -317,6 +325,38 @@ When consolidation is enabled, the enforcer reads `isConsolidatingDisklessTopic`
 
 The reconciler sets the prune floor to at least `max(seal, logStartOffset)` when it arms consolidation (`ensureConsolidationPruneFloorAtLeast`), so a switched partition's classic prefix is never pruned from the WAL before it is safely in remote storage.
 
+#### A replica that rebuilds again and again
+
+The pruner doesn't read the fetch position of any replica, including the replica on its own broker. A replica that lags behind the WAL start rebuilds its tier state from the remote segment that covers the offset before the WAL start. It then resumes at the end of that segment. If a prune moves the WAL start past the replica before it catches up, the replica needs another rebuild. Each rebuild downloads the epoch checkpoint and the producer snapshot of one segment and discards the local log of the replica. While the epoch cache is rebuilt, consumer fetches of the prefix get `OFFSET_NOT_AVAILABLE`.
+
+The replicas of a partition read the same WAL objects from the same object storage, and the control plane keeps one WAL start for the partition. The pruner on one broker moves the WAL start when remote storage confirms a segment. The replica on another broker can be slower. A throttled fetcher or a busy broker slows it, and a replica with a new empty disk starts far behind. The loop starts only if that replica is still below the WAL start after each prune.
+
+A replica that copies the WAL as fast as producers write it stays at or after the WAL start, and the loop doesn't start. A slow replica can loop, because the design doesn't bound the time.
+
+The segment size sets how far each prune moves the WAL start. The pruner deletes WAL batches up to the end of the newest uploaded segment, at most `inkless.consolidation.cleanup.max.batches.per.request` batches per partition each run:
+
+- Small segments upload often. The WAL start stays close to the log end. A replica tolerates little lag and rebuilds sooner.
+- Large segments upload rarely. A replica tolerates more lag, but the WAL keeps more data for longer, and each prune moves the WAL start further.
+
+Inkless doesn't change the rebuild, and the pruner doesn't wait for a slow replica. You find the loop with a metric and stop it with settings.
+
+To find the loop, watch `ConsolidationTierRebuildRequests` (see [Metrics](#metrics)). The loop shows as a count that keeps rising for one partition, such as one rebuild per minute for an hour. If the count stops after a few increases, the replica caught up.
+
+The upstream `BuildRemoteLogAuxStateRequestsPerSec` and `BuildRemoteLogAuxStateErrorsPerSec` meters in `kafka.server:type=BrokerTopicMetrics` count the same rebuilds per topic. If the errors meter rises with the requests meter, the rebuild fails. Check the fetcher log before you change the prune settings. If only the requests meter rises, the prune outruns the replica.
+
+Settings 1 and 2 slow the prune. Setting 3 speeds up the fetcher.
+
+> **Caution**
+> A `inkless.consolidation.cleanup.max.batches.per.request` of `0` removes the cap. A cap below the batch creation rate per interval makes the WAL grow until you restore it.
+
+Use the settings to stop the loop:
+
+1. Raise `inkless.consolidation.cleanup.interval.ms`. The pruner then runs less often.
+2. Lower `inkless.consolidation.cleanup.max.batches.per.request` to a positive value. Each prune then moves the WAL start by fewer batches.
+3. Raise or remove `diskless.consolidation.fetch.rate.limit.bytes.per.second`, if a limit throttles the fetcher.
+
+Slowing the prune keeps more batches in the WAL for longer. The WAL then uses more object storage until the replica catches up. Restore the settings afterward.
+
 The `PruneDisklessLogsQueryTime` and `PruneDisklessLogsQueryRate` metrics record one sample per partition, not one sample per scheduled pruner job. `ConsolidationPruneTotalTime` records the whole pruner run. `ConsolidationPruneErrorRate` counts runs that fail with an exception. When the control plane is unavailable, that tick doesn't increment the counter.
 
 ### WAL segment deletion
@@ -477,10 +517,12 @@ The broker registers consolidation metrics under the `io.aiven.inkless.consolida
 |                                                                 | `ConsolidationLocalLag`                                     | `disklessLEO - localLogEndOffset` (first hop: diskless to local).                                                                                                                          |
 |                                                                 | `ConsolidationDeletableMessages`                            | Messages already in remote storage, eligible for WAL pruning (`remoteLogEndOffset - localLogStartOffset`).                                                                                 |
 |                                                                 | `ConsolidationRemotePrefixUnknown`                          | 1 while a WAL-gap fetch is waiting on RLMM to decide `OFFSET_MOVED` vs never-tiered `OFFSET_OUT_OF_RANGE`; 0 once decided. Broker aggregate is the count of waiting partitions. A leadership transition or fetcher re-arm can dip the gauge to 0 while the partition is still waiting; the next backed-off fetch restores 1. Register, fetcher removal, and unregister bump a generation. The counter survives unregister so re-registration cannot reuse an in-flight fetch's token. `buildFetch` captures that generation under the fetcher `partitionMapLock` and `fetch` carries it into overlay processing so a bump after the request is built cannot restore the latch. Alert on a sustained non-zero value after `__remote_log_metadata` catch-up, not on the instantaneous reading. |
+|                                                                 | `ConsolidationTierRebuildRequests`                          | Times the consolidation fetcher on this broker got `OFFSET_MOVED_TO_TIERED_STORAGE`, which starts a tier state rebuild. A WAL prune can move the WAL start past a lagging replica again. The count then rises once per remote segment. A rebuild that fails and retries counts again: check the fetcher log for `Could not build remote log auxiliary state` or `Error building remote log auxiliary state` before you change the prune settings. The count resets when the broker stops the replica. Broker aggregate. Per-partition gauges have `topic` and `partition` tags. |
 | `io.aiven.inkless.consolidation:type=ConsolidationFetchMetrics` | `RecentDataRequestRate` / `LaggingConsumerRequestRate`      | Hot-path (cache-hit) vs cold-path (object-storage) consolidation fetch rates.                                                                                                              |
 | `io.aiven.inkless.delete:type=CrossTierLogStartReporter`        | `PartitionsReported` / `ReportErrors` / `PendingPartitions` | Cross-tier log start offset reporting to the control plane.                                                                                                                                |
 | `io.aiven.inkless.delete:type=ConsolidatedDisklessLogPruner`   | `ConsolidationPruneTotalTime` / `ConsolidationPruneTotalBatchesDeleted` / `ConsolidationPruneTotalBytesDeleted` / `ConsolidationPruneErrorRate` | Whole-run prune duration in milliseconds and cumulative batches and bytes deleted. These totals update only after a run completes without an exception. `ConsolidationPruneErrorRate` counts runs that fail with an exception. When the control plane is unavailable, that tick doesn't increment the counter. |
 | `io.aiven.inkless.cache:type=CrossTierLogStartCache`            | `CacheHits` / `CacheMisses` / `CacheSize`                   | Cross-tier earliest-offset cache.                                                                                                                                                          |
+| `kafka.server:type=ReplicaManager`                              | `ConsolidationDeferredPrefixFetchRate`                      | Consumer fetches answered with `OFFSET_NOT_AVAILABLE` while this replica can't read the prefix yet. A rate over zero for longer than a rebuild takes points at a replica that doesn't recover. The rate drops to zero when consumers stop reading. |
 | controller                                                      | `DisklessWithoutRemoteStorageCount`                         | Diskless topics where `remote.storage.enable` is `false` or unset, including born-diskless topics that never enter the `Failed` reconciler state.                                            |
 
 Consolidation fetchers report first-hop lag through `ConsolidationLocalLag`. They do not contribute to Kafka's generic `kafka.server:type=FetcherLagMetrics,name=ConsumerLag` metric, so replica catch-up dashboards that sum that metric exclude consolidation backlog.

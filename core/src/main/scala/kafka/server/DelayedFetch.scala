@@ -304,7 +304,7 @@ class DelayedFetch(
         replicaManager.recordConsolidationSupplementIssued()
         val supplementParams = replicaManager.fetchParamsWithNewMaxBytes(
           params, supplementFetchInfos.size.toFloat / totalRequestsSize)
-        replicaManager.fetchDisklessMessages(supplementParams, supplementFetchInfos)
+        replicaManager.fetchDisklessMessages(supplementParams, supplementFetchInfos, deferPrefixReads = false)
           .thenApply[Map[TopicIdPartition, FetchPartitionData]] { data =>
             val dataMap = data.toMap
             replicaManager.recordConsolidationSupplementBytes(replicaManager.successfulSupplementBytes(dataMap))
@@ -326,7 +326,7 @@ class DelayedFetch(
         val disklessFetchInfos = disklessFetchPartitionStatus.map { case (tp, status) =>
           tp -> status.fetchInfo
         }
-        replicaManager.fetchDisklessMessages(disklessParams, disklessFetchInfos.toSeq)
+        replicaManager.fetchDisklessMessages(disklessParams, disklessFetchInfos.toSeq, deferPrefixReads = true)
           .exceptionally((e: Throwable) => {
             logger.warn("Failed to fetch diskless data in delayed fetch, returning per-partition errors", e)
             val error = Errors.forException(e)
