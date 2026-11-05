@@ -7553,7 +7553,7 @@ class ReplicaManagerInklessTest {
       val leaderDelta = promoteFollowerToLeaderDelta(followerImage.topics(), topicId, tp.partition(), brokerId)
       val leaderImage = imageFromTopics(leaderDelta.apply())
       replicaManager.applyDelta(leaderDelta, leaderImage)
-      assertTrue(replicaManager.getPartition(tp).asInstanceOf[HostedPartition.Online[Partition]].partition.isLeader)
+      assertTrue(replicaManager.getPartition(tp).asInstanceOf[HostedPartition.Online].partition.isLeader)
 
       check(PromotedSwitchedFollower(
         replicaManager, initDisklessLogManager, tp, topicId, brokerId, log, segmentsBeforePromotion, leaderImage))
@@ -7668,7 +7668,7 @@ class ReplicaManagerInklessTest {
 
         replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))
 
-        assertTrue(replicaManager.getPartition(tp).asInstanceOf[HostedPartition.Online[Partition]].partition.isLeader)
+        assertTrue(replicaManager.getPartition(tp).asInstanceOf[HostedPartition.Online].partition.isLeader)
         assertEquals(leo, log.logEndOffset)
         check(log, segmentsBefore)
       } finally {
@@ -7718,7 +7718,7 @@ class ReplicaManagerInklessTest {
         // so only seal() rolls the active segment. This test creates the partition while the switch is
         // pending, so the seal commit is the first seal().
         val partition = replicaManager.getPartition(tp)
-        assertTrue(partition.isInstanceOf[HostedPartition.Offline[Partition]],
+        assertTrue(partition.isInstanceOf[HostedPartition.Offline],
           s"Consolidating leader below the seal must be fenced in phase 1, but was $partition")
         assertEquals(localLeo, log.logEndOffset)
         assertEquals(segmentsBefore + 1, log.numberOfSegments)
@@ -7767,7 +7767,7 @@ class ReplicaManagerInklessTest {
 
         // The remote tier keeps serving the prefix, so the log start offset and the leader epoch
         // cache stay.
-        assertTrue(replicaManager.getPartition(tp).isInstanceOf[HostedPartition.Online[Partition]])
+        assertTrue(replicaManager.getPartition(tp).isInstanceOf[HostedPartition.Online])
         assertEquals(sealOffset, log.localLogStartOffset)
         assertEquals(0L, log.logStartOffset)
         assertEquals(sealOffset, log.logEndOffset)
@@ -7817,7 +7817,7 @@ class ReplicaManagerInklessTest {
 
         commitClassicPrefixFlagDelta(replicaManager, sealImage, topicId, tp, leaderId = brokerId)
 
-        assertTrue(replicaManager.getPartition(tp).isInstanceOf[HostedPartition.Online[Partition]])
+        assertTrue(replicaManager.getPartition(tp).isInstanceOf[HostedPartition.Online])
         assertTrue(log.localLogStartOffset < sealOffset, "The uncovered tail of the prefix stays local")
         assertTrue(replicaManager.isClassicPrefixDeletionDeferred(tp))
         assertEquals(sealOffset, log.activeSegment().baseOffset(),
@@ -8056,7 +8056,7 @@ class ReplicaManagerInklessTest {
           classicToDisklessStartOffset = sealOffset, classicPrefixInRemoteStorage = true)
         replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))
 
-        assertTrue(replicaManager.getPartition(tp).isInstanceOf[HostedPartition.Offline[Partition]])
+        assertTrue(replicaManager.getPartition(tp).isInstanceOf[HostedPartition.Offline])
         verify(mockFetcherManager, never()).addFetcherForPartitions(any())
         verify(mockCfm, never()).addFetcherForPartitions(any())
       } finally {
@@ -9913,7 +9913,7 @@ class ReplicaManagerInklessTest {
     delta.replay(partitionRecord)
     replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))
 
-    val partition = replicaManager.getPartition(tp).asInstanceOf[HostedPartition.Online[Partition]].partition
+    val partition = replicaManager.getPartition(tp).asInstanceOf[HostedPartition.Online].partition
     assertTrue(partition.isLeader)
     assertTrue(partition.isSealed)
     assertEquals(logEndOffset, partition.localLogOrException.logEndOffset)
@@ -9953,7 +9953,7 @@ class ReplicaManagerInklessTest {
     val image = imageFromTopics(delta.apply())
     replicaManager.applyDelta(delta, image)
 
-    val partition = replicaManager.getPartition(tp).asInstanceOf[HostedPartition.Online[Partition]].partition
+    val partition = replicaManager.getPartition(tp).asInstanceOf[HostedPartition.Online].partition
     assertTrue(partition.isLeader)
     assertTrue(partition.isSealed)
     (partition, image)
