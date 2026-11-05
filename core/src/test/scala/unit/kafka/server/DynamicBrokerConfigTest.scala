@@ -20,7 +20,7 @@ package kafka.server
 import java.{lang, util}
 import java.util.{Optional, Properties, Map => JMap}
 import java.util.concurrent.{CompletionStage, TimeUnit}
-import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.atomic.{AtomicInteger, AtomicReference}
 import kafka.log.LogManager
 import kafka.network.{DataPlaneAcceptor, SocketServer}
 import kafka.utils.TestUtils
@@ -1134,6 +1134,28 @@ class DynamicBrokerConfigTest {
     // Undeclared inkless.* keys are not in nonDynamicProps, so neither gate rejects them.
     assertTrue(DynamicBrokerConfig.AllDynamicConfigs.contains("inkless.control.plane.connection.string"))
     config.dynamicConfig.validate(update, perBrokerConfig = false)
+  }
+
+  @Test
+  def testUnchangedInklessConnectionStringDoesNotReconfigure(): Unit = {
+    val props = TestUtils.createBrokerConfig(0, port = 8181)
+    val config = KafkaConfig.fromProps(props)
+    config.dynamicConfig.initialize(None)
+    val reconfigurations = new AtomicInteger()
+    config.dynamicConfig.addBrokerReconfigurable(new BrokerReconfigurable {
+      override def reconfigurableConfigs: util.Set[String] = DynamicInklessControlPlaneConfig.ReconfigurableConfigs
+      override def validateReconfiguration(newConfig: KafkaConfig): Unit = {}
+      override def reconfigure(oldConfig: KafkaConfig, newConfig: KafkaConfig): Unit = reconfigurations.incrementAndGet()
+    })
+
+    val update = new Properties()
+    update.put("inkless.control.plane.connection.string", "")
+    config.dynamicConfig.updateDefaultConfig(update)
+    assertEquals(1, reconfigurations.get())
+
+    config.dynamicConfig.updateDefaultConfig(update)
+    assertEquals(1, reconfigurations.get(),
+      "re-applying an unchanged value must not reconfigure, so the controller can skip the ConfigRecord")
   }
 }
 
