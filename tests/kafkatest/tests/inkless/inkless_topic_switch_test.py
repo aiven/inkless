@@ -133,27 +133,39 @@ class InklessClassicToDisklessSwitchTest(Test):
     SWITCH_JMX_ATTRIBUTES = ["Value"]
 
     def _create_kafka(self, num_nodes=None, controller_num_nodes=1,
-                      scrape_switch_state_jmx=False):
+                      scrape_switch_state_jmx=False, consolidation=False):
+        """Create the switch test cluster.
+
+        With ``consolidation``, brokers upload the classic prefix of a switched
+        partition to tiered storage on MinIO. The controller then sets
+        ``classicPrefixInRemoteStorage``, which starts phase 2.
+        """
         if num_nodes is None:
             num_nodes = self.num_brokers
         self._switched_topics = set()
         jmx_object_names = self.SWITCH_JMX_OBJECT_NAMES if scrape_switch_state_jmx else \
             self.SWITCH_COMPLETION_JMX_OBJECT_NAMES
+        server_prop_overrides = [
+            ["diskless.managed.rf.enable", "true"],
+            # `_degrade_network()` also throttles the broker's path to object storage, so a WAL
+            # upload outlasts the 2 s default S3 call timeout. The producer then retries the
+            # failed produce, which duplicates records and stalls production.
+            ["inkless.storage.s3.api.call.timeout", "60000"],
+            ["inkless.storage.s3.api.call.attempt.timeout", "30000"],
+        ]
+        if consolidation:
+            # The consolidation template makes new topics diskless by default. The switch
+            # tests create classic topics, so keep the classic default.
+            server_prop_overrides.append(["log.diskless.enable", "false"])
         self.kafka = KafkaService(
             self.test_context,
             num_nodes=num_nodes,
             zk=None,
             controller_num_nodes_override=controller_num_nodes,
-            server_prop_overrides=[
-                ["diskless.managed.rf.enable", "true"],
-                # `_degrade_network()` also throttles the broker's path to object storage, so a WAL
-                # upload outlasts the 2 s default S3 call timeout. The producer then retries the
-                # failed produce, which duplicates records and stalls production.
-                ["inkless.storage.s3.api.call.timeout", "60000"],
-                ["inkless.storage.s3.api.call.attempt.timeout", "30000"],
-            ],
+            server_prop_overrides=server_prop_overrides,
             jmx_object_names=jmx_object_names,
             jmx_attributes=self.SWITCH_JMX_ATTRIBUTES,
+            consolidation=consolidation,
         )
         # Switch configs (diskless.allow.from.classic.enable) require
         # diskless.remote.storage.consolidation.enable, which requires
@@ -310,18 +322,26 @@ class InklessClassicToDisklessSwitchTest(Test):
     # Helpers: switch
     # -----------------------------------------------------------------------
 
-    def _switch_topic_to_diskless(self, topic=None, node=None):
+    def _switch_topic_to_diskless(self, topic=None, node=None, extra_configs=None):
         """Run the switch alter from ``node``, or from the first broker if unset.
 
         While a network partition is active, pass a node outside the isolated
         side: an admin client on the isolated broker can't reach its peers and
         times out describing the topic config.
+
+        ``extra_configs`` go into the same alter as ``diskless.enable``. A switch
+        to a consolidating topic needs ``remote.storage.enable`` in the same alter.
         """
         if topic is None:
             topic = self.topic
         self.logger.info("Switching topic %s to diskless", topic)
         self._switched_topics.add(topic)
-        self.kafka.alter_topic_config(topic, "diskless.enable", "true", node=node)
+        if extra_configs:
+            configs = dict(extra_configs)
+            configs["diskless.enable"] = "true"
+            self.kafka.alter_topic_configs(topic, configs, node=node)
+        else:
+            self.kafka.alter_topic_config(topic, "diskless.enable", "true", node=node)
 
     def _wait_for_switch_config(self, topic=None, timeout_sec=None):
         """Wait until kafka-configs reports diskless.enable=true for the topic."""
@@ -391,6 +411,76 @@ class InklessClassicToDisklessSwitchTest(Test):
                      "(expected at least %d sealed leader partitions and zero in-flight init partitions)" %
                      (topic, timeout_sec, expected_sealed_leader_count))
         )
+
+    def _switch_state(self, topic=None):
+        """Returns the switch state of each partition, read with ``kafka-topic-switch.sh state``.
+
+        Maps each partition index to a dict with the committed seal offset
+        (``seal``, negative before the controller commits it) and the
+        ``classicPrefixInRemoteStorage`` flag (``classic_prefix_in_remote_storage``).
+        """
+        if topic is None:
+            topic = self.topic
+        node = self.kafka.nodes[0]
+        cmd = "%s state --bootstrap-server %s --topic %s" % (
+            self.kafka.path.script("kafka-topic-switch.sh", node),
+            self.kafka.bootstrap_servers(),
+            topic,
+        )
+        states = {}
+        partition = None
+        for line in node.account.ssh_capture(cmd, combine_stderr=False):
+            line = line.decode("utf-8") if isinstance(line, bytes) else line
+            line = line.strip()
+            if line.startswith("Partition ") and line.endswith(":"):
+                partition = int(line[len("Partition "):-1])
+                states[partition] = {}
+            elif partition is None:
+                continue
+            elif line.startswith("classicToDisklessStartOffset="):
+                states[partition]["seal"] = int(line.split("=", 1)[1].split()[0])
+            elif line.startswith("classicPrefixInRemoteStorage="):
+                states[partition]["classic_prefix_in_remote_storage"] = \
+                    line.split("=", 1)[1].startswith("true")
+        return states
+
+    def _wait_for_classic_prefix_in_remote_storage(self, topic=None, timeout_sec=None):
+        """Wait until every partition of the topic is in phase 2 of the switch.
+
+        ``_wait_for_switch_complete`` returns once the controller commits the
+        seal, in phase 1. Phase 2 starts when the controller sets
+        ``classicPrefixInRemoteStorage``, after the leader uploads the classic
+        prefix to remote storage. Returns the committed seal offset of each
+        partition.
+        """
+        if topic is None:
+            topic = self.topic
+        if timeout_sec is None:
+            timeout_sec = self.SWITCH_TIMEOUT_SEC
+        last_states = {}
+
+        def check():
+            try:
+                states = self._switch_state(topic)
+            except (Exception, RemoteCommandError) as e:
+                self.logger.debug("Failed to read the switch state of %s: %s", topic, e)
+                return False
+            last_states.clear()
+            last_states.update(states)
+            self.logger.info("Switch state for %s: %s", topic, states)
+            return bool(states) and all(
+                state.get("seal", -1) >= 0 and state.get("classic_prefix_in_remote_storage", False)
+                for state in states.values()
+            )
+
+        wait_until(
+            check,
+            timeout_sec=timeout_sec,
+            backoff_sec=2,
+            err_msg=lambda: "Topic %s did not reach phase 2 of the switch within %ds (last state: %s)" %
+                    (topic, timeout_sec, last_states)
+        )
+        return {partition: state["seal"] for partition, state in last_states.items()}
 
     def _live_cluster_jmx_sum(self, obj_name):
         """Read and sum one JMX gauge across live broker nodes.
@@ -950,19 +1040,6 @@ class InklessClassicToDisklessSwitchTest(Test):
         # successful redistribution matters here.
         node.account.ssh(cmd, allow_fail=True)
 
-    def _run_unclean_leader_election(self, topic=None, partition=0):
-        if topic is None:
-            topic = self.topic
-        node = self.kafka.nodes[0]
-        cmd = "%s --bootstrap-server %s --election-type unclean --topic %s --partition %d" % (
-            self.kafka.path.script("kafka-leader-election.sh", node),
-            self.kafka.bootstrap_servers(),
-            topic,
-            partition,
-        )
-        self.logger.info("Running unclean leader election: %s", cmd)
-        node.account.ssh(cmd, allow_fail=True)
-
     # -----------------------------------------------------------------------
     # Helpers: Trogdor faults and mid-switch JMX assertions
     # -----------------------------------------------------------------------
@@ -1381,114 +1458,67 @@ class InklessClassicToDisklessSwitchTest(Test):
     @cluster(num_nodes=5)
     @matrix(metadata_quorum=[quorum.isolated_kraft])
     def test_switched_leader_promotion_restores_stale_hw(self, metadata_quorum) -> None:
-        """Promote an already-switched replica whose local HW is stale.
+        """Promote a phase 2 replica whose checkpointed high watermark is below the seal.
 
-        The CI failure this guards against is not missing log data: the promoted
-        replica has the whole classic prefix up to the committed seal, but its
-        cached high-watermark is below the seal. Without the leader-promotion
-        reconcile, consumers are clamped at that stale HW and never reach the
-        diskless tail. This test injects that state directly by rewriting the
-        preferred replica's HW checkpoint while it is stopped, then promoting it
-        after it has come back as an existing follower partition.
+        The replica restarts with a stale high watermark checkpoint while the
+        other replicas are down. The controller elects it as the only live
+        replica. In phase 2, remote storage holds the classic prefix: consumers
+        read the prefix from there and cross the seal into the diskless tail. A
+        leader that keeps the stale high watermark clamps consumers below the
+        seal, and one that drops local records without rebuilding the prefix
+        from remote storage loses records. The replica repairs the high
+        watermark either when its consolidation fetcher starts or when it
+        becomes leader. The test checks what consumers read, not which of those
+        paths ran.
+
+        The test doesn't need unclean leader election. The promoted replica
+        stops last, so it's the last ISR member of this partition and of the
+        internal topics. When it comes back alone, the controller elects it for
+        all of them, including ``__remote_log_metadata``, which it needs to
+        serve the prefix.
         """
         self.num_partitions = 1
-        self._create_kafka()
+        self._create_kafka(consolidation=True)
         self.kafka.start()
 
-        stale_preferred = self.kafka.nodes[0]
-        switch_leader = self.kafka.nodes[1]
+        switch_leader = self.kafka.nodes[0]
+        promoted_replica = self.kafka.nodes[1]
         other_replica = self.kafka.nodes[2]
         replica_assignment = "%d:%d:%d" % (
-            self.kafka.idx(stale_preferred),
             self.kafka.idx(switch_leader),
+            self.kafka.idx(promoted_replica),
             self.kafka.idx(other_replica),
         )
         self._create_classic_topic(
             num_partitions=1,
             replica_assignment=replica_assignment,
         )
-
-        # The preferred replica starts as leader. Move leadership away before
-        # producing/switching so it is a follower with a complete classic prefix.
-        self._wait_for_partition_leader(stale_preferred, partition=0)
-        self._stop_broker(stale_preferred, clean_shutdown=True)
-        self._wait_for_partition_leader(switch_leader, partition=0)
-        self._start_broker(stale_preferred)
-        self._wait_for_all_partitions_isr_full(num_partitions=1)
         self._wait_for_partition_leader(switch_leader, partition=0)
 
         classic_count = self._produce_messages(num_messages=5000)
 
-        self._switch_topic_to_diskless()
+        self._switch_topic_to_diskless(extra_configs={"remote.storage.enable": "true"})
         self._wait_for_switch_complete()
 
         diskless_count = self._produce_messages(num_messages=1000)
         total = classic_count + diskless_count
 
-        stale_hw = classic_count // 2
-        assert stale_hw > 0 and stale_hw < classic_count
+        seal = self._wait_for_classic_prefix_in_remote_storage()[0]
+        stale_hw = seal // 2
+        assert 0 < stale_hw < seal, "Expected a seal above 1 but got %d" % seal
 
-        # Enable unclean election only after the switch has committed. The
-        # switch precondition rejects topics with unclean election enabled, but
-        # the forced promotion below needs it to elect the isolated replica.
-        self.kafka.alter_topic_config(
-            self.topic,
-            "unclean.leader.election.enable",
-            "true",
-        )
+        self._stop_broker(other_replica)
+        self._stop_broker(switch_leader)
+        self._wait_for_partition_leader(promoted_replica, partition=0)
 
-        # Restart the preferred follower with a stale HW checkpoint. Keep it
-        # partitioned from the current ISR so its follower fetcher cannot heal
-        # the HW before we promote it.
-        self._stop_broker(stale_preferred, clean_shutdown=True)
+        self._stop_broker(promoted_replica)
         self._set_replication_checkpoint_offset(
-            stale_preferred,
+            promoted_replica,
             partition=0,
             offset=stale_hw,
         )
-
-        self._start_trogdor()
-        partition_fault = None
-        try:
-            partition_spec = NetworkPartitionFaultSpec(
-                0,
-                5 * 60 * 1000,
-                [[stale_preferred], [switch_leader, other_replica]],
-            )
-            partition_fault = self.trogdor.create_task(
-                "isolate-stale-hw-preferred",
-                partition_spec,
-            )
-            wait_until(
-                lambda: partition_fault.running(),
-                timeout_sec=30,
-                backoff_sec=1,
-                err_msg="Network partition fault did not start before stale broker restart",
-            )
-
-            self._start_broker(stale_preferred)
-
-            # Take down the in-sync replicas so the isolated preferred replica
-            # is the only live replica and the unclean election picks it. This
-            # is deliberately a harness shortcut; the data-loss concern is
-            # avoided because the edited replica's LEO is the committed seal.
-            self.logger.info("Stopping ISR brokers %s and %s to force stale-HW leader promotion",
-                             switch_leader.account.hostname, other_replica.account.hostname)
-            self.kafka.stop_node(switch_leader, clean_shutdown=False,
-                                 timeout_sec=self.BROKER_STARTUP_TIMEOUT_SEC)
-            self.kafka.stop_node(other_replica, clean_shutdown=False,
-                                 timeout_sec=self.BROKER_STARTUP_TIMEOUT_SEC)
-            self._run_unclean_leader_election(partition=0)
-            self._wait_for_partition_leader(stale_preferred, partition=0)
-
-            partition_fault.stop()
-            partition_fault.wait_for_done(timeout_sec=60)
-            partition_fault = None
-        finally:
-            if partition_fault is not None:
-                partition_fault.stop()
-                partition_fault.wait_for_done(timeout_sec=60)
-            self._stop_trogdor()
+        self._start_broker(promoted_replica)
+        self._wait_for_partition_leader(promoted_replica, partition=0)
 
         consumed = self._consume_all_from_beginning(
             expected_count=total,
@@ -1497,8 +1527,8 @@ class InklessClassicToDisklessSwitchTest(Test):
         )
         assert consumed == total, \
             ("Stale-HW switched leader served only %d of %d records "
-             "(classic=%d, diskless=%d, injected stale HW=%d)") % \
-            (consumed, total, classic_count, diskless_count, stale_hw)
+             "(classic=%d, diskless=%d, seal=%d, injected stale HW=%d)") % \
+            (consumed, total, classic_count, diskless_count, seal, stale_hw)
 
     # -----------------------------------------------------------------------
     # Category B: Mid-Switch Fault Tolerance
