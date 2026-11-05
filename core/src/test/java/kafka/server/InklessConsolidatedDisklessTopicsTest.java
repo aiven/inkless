@@ -20,10 +20,12 @@ import org.apache.kafka.clients.CommonClientConfigs;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.AlterConfigOp;
+import org.apache.kafka.clients.admin.AlterDisklessSwitchOptions;
 import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.clients.admin.CreateTopicsResult;
 import org.apache.kafka.clients.admin.DeleteRecordsResult;
 import org.apache.kafka.clients.admin.DeletedRecords;
+import org.apache.kafka.clients.admin.DisklessSwitchReplicaDescription;
 import org.apache.kafka.clients.admin.ListOffsetsResult;
 import org.apache.kafka.clients.admin.NewPartitions;
 import org.apache.kafka.clients.admin.NewTopic;
@@ -51,6 +53,8 @@ import org.apache.kafka.common.serialization.StringSerializer;
 import org.apache.kafka.common.test.KafkaClusterTestKit;
 import org.apache.kafka.common.test.TestKitNodes;
 import org.apache.kafka.coordinator.group.GroupCoordinatorConfig;
+import org.apache.kafka.metadata.PartitionRegistration;
+import org.apache.kafka.metadata.Replicas;
 import org.apache.kafka.server.config.ReplicationConfigs;
 import org.apache.kafka.server.config.ServerConfigs;
 import org.apache.kafka.server.log.remote.metadata.storage.TopicBasedRemoteLogMetadataManager;
@@ -80,6 +84,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -96,6 +101,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.IntFunction;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 import io.aiven.inkless.config.InklessConfig;
@@ -198,7 +204,7 @@ public class InklessConsolidatedDisklessTopicsTest {
             .setConfigProp(RemoteLogManagerConfig.REMOTE_LOG_METADATA_MANAGER_LISTENER_NAME_PROP, "EXTERNAL")
             .setConfigProp(RemoteLogManagerConfig.DEFAULT_REMOTE_LOG_METADATA_MANAGER_CONFIG_PREFIX
                 + TopicBasedRemoteLogMetadataManagerConfig.REMOTE_LOG_METADATA_TOPIC_REPLICATION_FACTOR_PROP, "1")
-            .setConfigProp(RemoteLogManagerConfig.REMOTE_STORAGE_MANAGER_CLASS_NAME_PROP, "io.aiven.kafka.tieredstorage.RemoteStorageManager")
+            .setConfigProp(RemoteLogManagerConfig.REMOTE_STORAGE_MANAGER_CLASS_NAME_PROP, GatedRemoteStorageManager.class.getName())
             .setConfigProp(RSM_CONFIG_PREFIX + "chunk.size", 1048576)
             .setConfigProp(RSM_CONFIG_PREFIX + "fetch.chunk.cache.class", "io.aiven.kafka.tieredstorage.fetch.cache.DiskChunkCache")
             // fetch.chunk.cache.path is set per broker in perServerProps (must be broker-exclusive).
@@ -222,6 +228,7 @@ public class InklessConsolidatedDisklessTopicsTest {
 
     @AfterEach
     public void teardown() throws Exception {
+        GatedRemoteStorageManager.reset();
         cluster.close();
     }
 
@@ -717,6 +724,194 @@ public class InklessConsolidatedDisklessTopicsTest {
         assertTrue(servedFromStart, "The prefix must be readable from offset 0; state=" + localLogState(targetBrokerId, tp));
         assumeTrue(windowHit, "The consumer was never routed to replica " + targetBrokerId
             + " while its local log was empty, so the window was not exercised");
+    }
+
+    /**
+     * A phase 1 leader that lost its local classic prefix fences the partition while it's the only ISR
+     * member. The operator elects the follower outside the ISR that has the whole prefix. The old leader
+     * catches up from it without a restart, and the elected leader starts phase 2 after the upload.
+     */
+    @Test
+    public void testElectReplicaHoldingClassicPrefixOfFencedPhaseOnePartition() throws Exception {
+        numPartitions = 1;
+        topicName = "phase-1-elect";
+        final TopicPartition tp = new TopicPartition(topicName, 0);
+        final int prefixRecords = 30;
+        final long seal = prefixRecords;
+        GatedRemoteStorageManager.blockCopies(topicName, 0L);
+
+        final Map<String, Object> commonConfigs = new HashMap<>();
+        commonConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
+
+        final int leaderId;
+        final int followerId;
+        try (Admin admin = AdminClient.create(commonConfigs)) {
+            createClassicTopic(admin);
+            produceRecords(commonConfigs, prefixRecords, largeValueRecordFactory());
+            switchTopicToConsolidatedDiskless(admin);
+            leaderId = awaitKraftPartition(0, tp, p -> p.classicToDisklessStartOffset == seal, "the seal commit").leader;
+            followerId = leaderId == 0 ? 1 : 0;
+
+            restartBroker(followerId, () -> {
+                awaitKraftPartition(leaderId, tp, p -> Arrays.equals(p.isr, new int[] {leaderId}),
+                    "the follower to leave the ISR");
+                restartBroker(leaderId, () -> wipeLocalPartitionData(leaderId, tp));
+                awaitReplica(admin, tp, leaderId, DisklessSwitchReplicaDescription::offline,
+                    "the wiped leader to fence the partition");
+            });
+            final DisklessSwitchReplicaDescription follower = awaitReplica(admin, tp, followerId,
+                d -> d.highWatermark() == seal, "the follower to report the whole prefix");
+            assertEquals(0L, follower.logStartOffset());
+            final PartitionRegistration fenced = kraftPartition(followerId, tp);
+            assertEquals(leaderId, fenced.leader);
+            assertFalse(Replicas.contains(fenced.isr, followerId), "Expected the follower out of the ISR: " + fenced);
+
+            admin.alterDisklessSwitch(topicName, 0, seal, new AlterDisklessSwitchOptions().leaderId(followerId))
+                .all().get(30, TimeUnit.SECONDS);
+
+            awaitKraftPartition(followerId, tp, p -> p.leader == followerId && p.isr.length == 2,
+                "the old leader to catch up from the elected replica and rejoin the ISR");
+            final DisklessSwitchReplicaDescription oldLeader = awaitReplica(admin, tp, leaderId,
+                d -> !d.offline() && d.logEndOffset() == seal, "the old leader to rebuild its local prefix");
+            assertEquals(0L, oldLeader.logStartOffset());
+        }
+        consumeAndVerify(commonConfigs, prefixRecords);
+
+        GatedRemoteStorageManager.reset();
+        awaitKraftPartition(followerId, tp, p -> p.classicPrefixInRemoteStorage,
+            "the elected leader to start phase 2 once remote storage holds the prefix");
+        consumeAndVerify(commonConfigs, prefixRecords);
+    }
+
+    /**
+     * Every replica of a phase 1 partition lost its local classic prefix, and remote storage has only the
+     * first segment of it. The operator starts phase 2 at the end of that segment and gives up the records
+     * from there to the old seal. A read in that range returns the first diskless records at the old seal.
+     */
+    @Test
+    public void testStartPhaseTwoAtRemoteEndAfterEveryReplicaLostClassicPrefix() throws Exception {
+        numPartitions = 1;
+        topicName = "phase-1-start-phase-2";
+        final TopicPartition tp = new TopicPartition(topicName, 0);
+        final int prefixRecords = 30;
+        final long seal = prefixRecords;
+        // About 10 large records fill a segment. The gate lets the remote log manager copy only the first one.
+        final long blockedFrom = 15L;
+        GatedRemoteStorageManager.blockCopies(topicName, blockedFrom);
+
+        final Map<String, Object> commonConfigs = new HashMap<>();
+        commonConfigs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
+
+        final long remoteEnd;
+        try (Admin admin = AdminClient.create(commonConfigs)) {
+            createClassicTopic(admin);
+            produceRecords(commonConfigs, prefixRecords, largeValueRecordFactory());
+            switchTopicToConsolidatedDiskless(admin);
+            final int leaderId = awaitKraftPartition(0, tp, p -> p.classicToDisklessStartOffset == seal,
+                "the seal commit").leader;
+            final int followerId = leaderId == 0 ? 1 : 0;
+            remoteEnd = awaitReplica(admin, tp, leaderId, d -> d.remoteEndOffset() > 0,
+                "remote storage to hold the first segment of the prefix").remoteEndOffset();
+            assertTrue(remoteEnd < blockedFrom, "Expected only the first segment in remote storage, up to " + remoteEnd);
+
+            restartBroker(followerId, () -> {
+                wipeLocalPartitionData(followerId, tp);
+                restartBroker(leaderId, () -> wipeLocalPartitionData(leaderId, tp));
+                awaitReplica(admin, tp, leaderId, DisklessSwitchReplicaDescription::offline,
+                    "the wiped leader to fence the partition");
+            });
+            awaitReplica(admin, tp, followerId, d -> d.remoteEndOffset() == remoteEnd && d.logEndOffset() == 0,
+                "the wiped follower to report the remote copy");
+
+            admin.alterDisklessSwitch(topicName, 0, remoteEnd,
+                new AlterDisklessSwitchOptions().classicPrefixInRemoteStorage(true)).all().get(30, TimeUnit.SECONDS);
+            GatedRemoteStorageManager.reset();
+
+            final PartitionRegistration phaseTwo = awaitKraftPartition(followerId, tp,
+                p -> p.classicPrefixInRemoteStorage && p.hasLeader(), "phase 2 at the remote end");
+            assertEquals(remoteEnd, phaseTwo.classicToDisklessStartOffset);
+            awaitReplica(admin, tp, leaderId, d -> !d.offline(), "the fenced leader to come back without a restart");
+        }
+
+        final int disklessRecords = 5;
+        produceRecords(commonConfigs, disklessRecords, largeValueRecordFactory());
+        final Set<Long> expectedOffsets = new TreeSet<>();
+        for (long offset = 0; offset < remoteEnd; offset++) {
+            expectedOffsets.add(offset);
+        }
+        for (long offset = seal; offset < seal + disklessRecords; offset++) {
+            expectedOffsets.add(offset);
+        }
+        assertConsumesOffsets(commonConfigs, tp, expectedOffsets);
+    }
+
+    @FunctionalInterface
+    private interface ThrowingRunnable {
+        void run() throws Exception;
+    }
+
+    /** Restarts the broker after {@code whileDown} runs on the stopped broker. */
+    private void restartBroker(int brokerId, ThrowingRunnable whileDown) throws Exception {
+        cluster.brokers().get(brokerId).shutdown();
+        cluster.brokers().get(brokerId).awaitShutdown();
+        whileDown.run();
+        cluster.brokers().get(brokerId).startup();
+    }
+
+    private PartitionRegistration kraftPartition(int brokerId, TopicPartition tp) {
+        return cluster.brokers().get(brokerId).metadataCache().currentImage().topics()
+            .getTopic(tp.topic()).partitions().get(tp.partition());
+    }
+
+    /** Waits until the KRaft image on the broker shows the partition in the expected state, and returns it. */
+    private PartitionRegistration awaitKraftPartition(int brokerId, TopicPartition tp,
+                                                      Predicate<PartitionRegistration> condition,
+                                                      String description) throws InterruptedException {
+        final AtomicReference<PartitionRegistration> partition = new AtomicReference<>();
+        TestUtils.waitForCondition(() -> {
+            partition.set(kraftPartition(brokerId, tp));
+            return condition.test(partition.get());
+        }, 120_000, () -> "Timed out waiting for " + description + "; partition=" + partition.get());
+        return partition.get();
+    }
+
+    /** Waits until the broker describes its replica in the expected state, and returns the description. */
+    private DisklessSwitchReplicaDescription awaitReplica(Admin admin, TopicPartition tp, int brokerId,
+                                                          Predicate<DisklessSwitchReplicaDescription> condition,
+                                                          String description) throws InterruptedException {
+        final AtomicReference<DisklessSwitchReplicaDescription> replica = new AtomicReference<>();
+        final AtomicReference<Throwable> error = new AtomicReference<>();
+        TestUtils.waitForCondition(() -> {
+            try {
+                replica.set(admin.describeDisklessSwitchReplica(tp.topic(), tp.partition(), brokerId)
+                    .description().get(10, TimeUnit.SECONDS));
+                return condition.test(replica.get());
+            } catch (ExecutionException | TimeoutException e) {
+                error.set(e);
+                return false;
+            }
+        }, 120_000, () -> "Timed out waiting for " + description + "; broker " + brokerId + " described "
+            + replica.get() + ", last error " + error.get());
+        return replica.get();
+    }
+
+    private void assertConsumesOffsets(Map<String, Object> commonConfigs, TopicPartition tp,
+                                       Set<Long> expectedOffsets) throws InterruptedException {
+        final Map<String, Object> consumerConfigs = new HashMap<>(commonConfigs);
+        consumerConfigs.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+        consumerConfigs.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+        consumerConfigs.put(ConsumerConfig.GROUP_ID_CONFIG, "offsets-group-" + UUID.randomUUID());
+        consumerConfigs.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+        final NavigableSet<Long> offsets = new TreeSet<>();
+        try (var consumer = new KafkaConsumer<String, String>(consumerConfigs)) {
+            consumer.assign(Collections.singletonList(tp));
+            consumer.seekToBeginning(Collections.singletonList(tp));
+            TestUtils.waitForCondition(() -> {
+                consumer.poll(Duration.ofMillis(1000)).forEach(r -> offsets.add(r.offset()));
+                return offsets.size() >= expectedOffsets.size();
+            }, 120_000, () -> "Consumed offsets " + offsets + ", expected " + expectedOffsets);
+        }
+        assertEquals(expectedOffsets, offsets);
     }
 
     private static boolean isLogEmpty(final LocalLogState state) {
