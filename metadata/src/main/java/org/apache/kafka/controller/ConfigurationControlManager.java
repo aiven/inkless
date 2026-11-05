@@ -35,6 +35,7 @@ import org.apache.kafka.metadata.KafkaConfigSchema;
 import org.apache.kafka.metadata.SupportedConfigChecker;
 import org.apache.kafka.server.common.ApiMessageAndVersion;
 import org.apache.kafka.server.common.EligibleLeaderReplicasVersion;
+import org.apache.kafka.server.config.InklessControlPlaneConfigs;
 import org.apache.kafka.server.config.ServerConfigs;
 import org.apache.kafka.server.mutable.BoundedList;
 import org.apache.kafka.server.policy.AlterConfigPolicy;
@@ -276,6 +277,14 @@ public class ConfigurationControlManager {
         return ControllerResult.atomicOf(outputRecords, apiError);
     }
 
+    /**
+     * Returns true if re-applying an unchanged value of this broker config needs no reload, so the
+     * KAFKA-14136 record can be skipped. Only the Inkless control plane connection string qualifies.
+     */
+    private static boolean isReloadIdempotent(String key) {
+        return InklessControlPlaneConfigs.CONNECTION_STRING_CONFIG.equals(key);
+    }
+
     private ApiError incrementalAlterConfigResource(
         ConfigResource configResource,
         Map<String, Entry<OpType, String>> keysToOps,
@@ -333,7 +342,8 @@ public class ConfigurationControlManager {
                     newValue = String.join(",", oldValueList);
                     break;
             }
-            if (!Objects.equals(currentValue, newValue) || configResource.type().equals(Type.BROKER)) {
+            boolean changed = !Objects.equals(currentValue, newValue);
+            if (changed || (configResource.type().equals(Type.BROKER) && !isReloadIdempotent(key))) {
                 // KAFKA-14136 We need to generate records even if the value is unchanged to trigger reloads on the brokers
                 newRecords.add(new ApiMessageAndVersion(new ConfigRecord().
                     setResourceType(configResource.type().id()).
@@ -568,7 +578,8 @@ public class ConfigurationControlManager {
             String key = entry.getKey();
             String newValue = entry.getValue();
             String currentValue = currentConfigs.get(key);
-            if (!Objects.equals(currentValue, newValue) || configResource.type().equals(Type.BROKER)) {
+            boolean changed = !Objects.equals(currentValue, newValue);
+            if (changed || (configResource.type().equals(Type.BROKER) && !isReloadIdempotent(key))) {
                 // KAFKA-14136 We need to generate records even if the value is unchanged to trigger reloads on the brokers
                 recordsExplicitlyAltered.add(new ApiMessageAndVersion(new ConfigRecord().
                     setResourceType(configResource.type().id()).
