@@ -3673,9 +3673,10 @@ public class RemoteLogManagerTest {
     }
 
     @Test
-    public void testZeroHighWatermarkPromotionKeepsRemotePrefixUntilRebuild() throws Exception {
-        // Inkless: a phase-2 leader of a switched topic (seal 100, cross-tier log start 40) with a checkpointed
-        // high watermark of 0 truncates its whole log before the promotion, so it caches only its new epoch (7).
+    public void testFullTruncationBeforePromotionKeepsRemotePrefixUntilRebuild() throws Exception {
+        // Inkless: a phase-2 leader of a switched topic (seal 100, cross-tier log start 40) whose epoch at
+        // `seal - 1` differs from the recorded one truncates its whole log before the promotion, so it caches
+        // only its new epoch (7).
         // Expiration runs before and after `TierStateMachine` rebuilds the log from the segment holding
         // `seal - 1`. Only the segment below the cross-tier log start is unreferenced.
         File logDirectory = new File(TestUtils.tempDirectory(), leaderTopicIdPartition.topicPartition().toString());
