@@ -477,7 +477,7 @@ public class ControllerMetadataMetricsPublisherTest {
 
     // Replays the records on top of the image, publishes the delta, and returns the new image.
     private static MetadataImage publish(TestEnv env, MetadataImage image, boolean isSnapshot, ApiMessage... records) {
-        MetadataDelta delta = new MetadataDelta(image);
+        MetadataDelta delta = new MetadataDelta.Builder().setImage(image).build();
         for (ApiMessage record : records) {
             delta.replay(record);
         }

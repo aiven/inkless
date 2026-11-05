@@ -1055,7 +1055,7 @@ class ControllerApisTest {
       singletonList(new CreatableTopic().setName("foo").setNumPartitions(1).setReplicationFactor(1)).iterator()))
 
     val response = controllerApis.createTopics(ANONYMOUS_CONTEXT, request,
-      hasClusterAuth = true, _ => Set("foo"), _ => Set("foo")).get()
+      hasClusterAuth = true, _ => Set("foo"), _ => Set("foo"), forwarded = false).get()
 
     assertEquals(NONE.code(), response.topics().find("foo").errorCode())
     verifyNoInteractions(controlPlane)
@@ -1076,14 +1076,14 @@ class ControllerApisTest {
     result.setConfigs(singletonList(new CreateTopicsResponseData.CreatableTopicConfigs()
       .setName(TopicConfig.DISKLESS_ENABLE_CONFIG).setValue(disklessEnable)))
     response.topics().add(result)
-    when(controller.createTopics(any(), any(), any()))
+    when(controller.createTopics(any(), any(), any(), anyBoolean()))
       .thenReturn(CompletableFuture.completedFuture(response))
     controllerApis = createControllerApis(None, controller, inklessControlPlane = Some(controlPlane))
     val request = new CreateTopicsRequestData().setTopics(new CreatableTopicCollection(
       singletonList(new CreatableTopic().setName(topicName).setNumPartitions(2).setReplicationFactor(1)).iterator()))
 
     controllerApis.createTopics(ANONYMOUS_CONTEXT, request,
-      hasClusterAuth = true, _ => Set(topicName), _ => Set(topicName)).get()
+      hasClusterAuth = true, _ => Set(topicName), _ => Set(topicName), forwarded = false).get()
 
     verify(controlPlane).createTopicAndPartitions(ArgumentMatchers.eq(singleton(
       new CreateTopicAndPartitionsRequest(topicId, topicName, 2))))
@@ -1437,7 +1437,7 @@ class ControllerApisTest {
       .setErrorCode(NONE.code()).setNumPartitions(2)
     result.setConfigs(singletonList(new CreateTopicsResponseData.CreatableTopicConfigs()
       .setName(TopicConfig.DISKLESS_ENABLE_CONFIG).setValue("true")))
-    when(controller.createTopics(any(), any(), any())).thenAnswer { _ =>
+    when(controller.createTopics(any(), any(), any(), anyBoolean())).thenAnswer { _ =>
       setDisklessTopicImage(topicName, topicId, 2)
       CompletableFuture.completedFuture(new CreateTopicsResponseData().setTopics(
         new CreateTopicsResponseData.CreatableTopicResultCollection(singletonList(result).iterator())))
@@ -1447,7 +1447,7 @@ class ControllerApisTest {
       singletonList(new CreatableTopic().setName(topicName).setNumPartitions(2).setReplicationFactor(1)).iterator()))
 
     val response = controllerApis.createTopics(ANONYMOUS_CONTEXT, request,
-      hasClusterAuth = true, _ => Set(topicName), _ => Set(topicName)).get()
+      hasClusterAuth = true, _ => Set(topicName), _ => Set(topicName), forwarded = false).get()
 
     val topic = response.topics().find(topicName)
     assertEquals(KAFKA_STORAGE_ERROR.code(), topic.errorCode())
@@ -1463,7 +1463,7 @@ class ControllerApisTest {
     val controller = mock(classOf[Controller])
     val controlPlane = mock(classOf[ControlPlane])
     setDisklessTopicImage(topicName, topicId, 3, Map(0 -> 100L))
-    when(controller.createTopics(any(), any(), any())).thenReturn(CompletableFuture.completedFuture(
+    when(controller.createTopics(any(), any(), any(), anyBoolean())).thenReturn(CompletableFuture.completedFuture(
       new CreateTopicsResponseData().setTopics(new CreateTopicsResponseData.CreatableTopicResultCollection(
         singletonList(new CreatableTopicResult().setName(topicName)
           .setErrorCode(TOPIC_ALREADY_EXISTS.code()).setErrorMessage(s"Topic '$topicName' already exists.")).iterator()))))
@@ -1472,7 +1472,7 @@ class ControllerApisTest {
       singletonList(new CreatableTopic().setName(topicName).setNumPartitions(3).setReplicationFactor(1)).iterator()))
 
     val response = controllerApis.createTopics(ANONYMOUS_CONTEXT, request,
-      hasClusterAuth = true, _ => Set(topicName), _ => Set(topicName)).get()
+      hasClusterAuth = true, _ => Set(topicName), _ => Set(topicName), forwarded = false).get()
 
     assertEquals(TOPIC_ALREADY_EXISTS.code(), response.topics().find(topicName).errorCode())
     verify(controlPlane).createTopicAndPartitions(singleton(
@@ -1488,7 +1488,7 @@ class ControllerApisTest {
     doThrow(new ControlPlaneUnavailableException("Diskless control plane is not ready"))
       .when(controlPlane).createTopicAndPartitions(any())
     setDisklessTopicImage(topicName, topicId, 2)
-    when(controller.createTopics(any(), any(), any())).thenReturn(CompletableFuture.completedFuture(
+    when(controller.createTopics(any(), any(), any(), anyBoolean())).thenReturn(CompletableFuture.completedFuture(
       new CreateTopicsResponseData().setTopics(new CreateTopicsResponseData.CreatableTopicResultCollection(
         singletonList(new CreatableTopicResult().setName(topicName)
           .setErrorCode(TOPIC_ALREADY_EXISTS.code()).setErrorMessage(s"Topic '$topicName' already exists.")).iterator()))))
@@ -1497,7 +1497,7 @@ class ControllerApisTest {
       singletonList(new CreatableTopic().setName(topicName).setNumPartitions(2).setReplicationFactor(1)).iterator()))
 
     val response = controllerApis.createTopics(ANONYMOUS_CONTEXT, request,
-      hasClusterAuth = true, _ => Set(topicName), _ => Set(topicName)).get()
+      hasClusterAuth = true, _ => Set(topicName), _ => Set(topicName), forwarded = false).get()
 
     val topic = response.topics().find(topicName)
     assertEquals(KAFKA_STORAGE_ERROR.code(), topic.errorCode())
@@ -1510,7 +1510,7 @@ class ControllerApisTest {
     val controller = mock(classOf[Controller])
     val controlPlane = mock(classOf[ControlPlane])
     setDisklessTopicImage(topicName, Uuid.randomUuid(), 2)
-    when(controller.createTopics(any(), any(), any())).thenReturn(CompletableFuture.completedFuture(
+    when(controller.createTopics(any(), any(), any(), anyBoolean())).thenReturn(CompletableFuture.completedFuture(
       new CreateTopicsResponseData().setTopics(new CreateTopicsResponseData.CreatableTopicResultCollection(
         singletonList(new CreatableTopicResult().setName(topicName)
           .setErrorCode(TOPIC_ALREADY_EXISTS.code()).setErrorMessage(s"Topic '$topicName' already exists.")).iterator()))))
@@ -1519,7 +1519,7 @@ class ControllerApisTest {
       singletonList(new CreatableTopic().setName(topicName).setNumPartitions(2).setReplicationFactor(1)).iterator()))
 
     val response = controllerApis.createTopics(ANONYMOUS_CONTEXT, request,
-      hasClusterAuth = true, _ => Set(topicName), _ => Set(topicName)).get()
+      hasClusterAuth = true, _ => Set(topicName), _ => Set(topicName), forwarded = false).get()
 
     assertEquals(TOPIC_ALREADY_EXISTS.code(), response.topics().find(topicName).errorCode())
     verifyNoInteractions(controlPlane)
@@ -1531,7 +1531,7 @@ class ControllerApisTest {
     val controller = mock(classOf[Controller])
     val controlPlane = mock(classOf[ControlPlane])
     // KRaft reports the topic, but the published image hasn't caught up with it yet.
-    when(controller.createTopics(any(), any(), any())).thenReturn(CompletableFuture.completedFuture(
+    when(controller.createTopics(any(), any(), any(), anyBoolean())).thenReturn(CompletableFuture.completedFuture(
       new CreateTopicsResponseData().setTopics(new CreateTopicsResponseData.CreatableTopicResultCollection(
         singletonList(new CreatableTopicResult().setName(topicName)
           .setErrorCode(TOPIC_ALREADY_EXISTS.code()).setErrorMessage(s"Topic '$topicName' already exists.")).iterator()))))
@@ -1540,7 +1540,7 @@ class ControllerApisTest {
       singletonList(new CreatableTopic().setName(topicName).setNumPartitions(2).setReplicationFactor(1)).iterator()))
 
     val response = controllerApis.createTopics(ANONYMOUS_CONTEXT, request,
-      hasClusterAuth = true, _ => Set(topicName), _ => Set(topicName)).get()
+      hasClusterAuth = true, _ => Set(topicName), _ => Set(topicName), forwarded = false).get()
 
     assertEquals(TOPIC_ALREADY_EXISTS.code(), response.topics().find(topicName).errorCode())
     verifyNoInteractions(controlPlane)
@@ -1555,7 +1555,7 @@ class ControllerApisTest {
       singletonList(new CreatableTopic().setName("foo").setNumPartitions(1).setReplicationFactor(1)).iterator()))
 
     val response = controllerApis.createTopics(ANONYMOUS_CONTEXT, request,
-      hasClusterAuth = true, _ => Set("foo"), _ => Set("foo")).get()
+      hasClusterAuth = true, _ => Set("foo"), _ => Set("foo"), forwarded = false).get()
 
     assertEquals(TOPIC_ALREADY_EXISTS.code(), response.topics().find("foo").errorCode())
     verifyNoInteractions(controlPlane)

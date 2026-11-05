@@ -3468,7 +3468,7 @@ public class ReplicationControlManagerInklessTest {
                 .setConfigs(configs));
 
             final ControllerResult<CreateTopicsResponseData> result = ctx.replicationControl.createTopics(
-                anonymousContextFor(ApiKeys.CREATE_TOPICS), request, Set.of("foo"));
+                anonymousContextFor(ApiKeys.CREATE_TOPICS), request, Set.of("foo"), false);
             assertEquals(Errors.INVALID_CONFIG.code(), result.response().topics().find("foo").errorCode());
             assertEquals(RecordingConfigurationValidator.REJECTION, result.response().topics().find("foo").errorMessage());
             assertTrue(result.records().isEmpty());

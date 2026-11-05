@@ -614,20 +614,20 @@ public class ConfigurationControlManagerTest {
         Map<String, Entry<AlterConfigOp.OpType, String>> keyToOps = toMap(entry(key, entry(SET, value)));
 
         ControllerResult<ApiError> first = manager.incrementalAlterConfig(
-            ConfigurationControlManager.DEFAULT_NODE, keyToOps, false);
+            ConfigurationControlManager.DEFAULT_NODE, keyToOps, false, false);
         assertEquals(List.of(new ConfigRecord().setResourceType(BROKER.id()).setResourceName("").
                 setName(key).setValue(value)),
             first.records().stream().map(ApiMessageAndVersion::message).toList());
         RecordTestUtils.replayAll(manager, first.records());
 
         ControllerResult<ApiError> second = manager.incrementalAlterConfig(
-            ConfigurationControlManager.DEFAULT_NODE, keyToOps, false);
+            ConfigurationControlManager.DEFAULT_NODE, keyToOps, false, false);
         assertEquals(ApiError.NONE, second.response());
         assertEquals(List.of(), second.records());
         assertEquals(Map.of(key, value), manager.getConfigs(ConfigurationControlManager.DEFAULT_NODE));
 
         ControllerResult<ApiError> changed = manager.incrementalAlterConfig(
-            ConfigurationControlManager.DEFAULT_NODE, toMap(entry(key, entry(SET, ""))), false);
+            ConfigurationControlManager.DEFAULT_NODE, toMap(entry(key, entry(SET, ""))), false, false);
         assertEquals(1, changed.records().size());
     }
 
@@ -640,11 +640,11 @@ public class ConfigurationControlManagerTest {
         for (String key : List.of("abc", InklessControlPlaneConfigs.READ_CONNECTION_STRING_CONFIG)) {
             Map<String, Entry<AlterConfigOp.OpType, String>> keyToOps = toMap(entry(key, entry(SET, "x")));
             ControllerResult<ApiError> first = manager.incrementalAlterConfig(
-                ConfigurationControlManager.DEFAULT_NODE, keyToOps, false);
+                ConfigurationControlManager.DEFAULT_NODE, keyToOps, false, false);
             RecordTestUtils.replayAll(manager, first.records());
 
             ControllerResult<ApiError> second = manager.incrementalAlterConfig(
-                ConfigurationControlManager.DEFAULT_NODE, keyToOps, false);
+                ConfigurationControlManager.DEFAULT_NODE, keyToOps, false, false);
             assertEquals(ApiError.NONE, second.response());
             assertEquals(1, second.records().size(), "KAFKA-14136: unchanged " + key);
         }
@@ -662,11 +662,11 @@ public class ConfigurationControlManagerTest {
         Map<ConfigResource, Map<String, String>> configs = toMap(entry(cluster, toMap(
             entry(key, value), entry("abc", "x"))));
 
-        ControllerResult<Map<ConfigResource, ApiError>> first = manager.legacyAlterConfigs(configs, false);
+        ControllerResult<Map<ConfigResource, ApiError>> first = manager.legacyAlterConfigs(configs, false, false);
         assertEquals(2, first.records().size());
         RecordTestUtils.replayAll(manager, first.records());
 
-        ControllerResult<Map<ConfigResource, ApiError>> second = manager.legacyAlterConfigs(configs, false);
+        ControllerResult<Map<ConfigResource, ApiError>> second = manager.legacyAlterConfigs(configs, false, false);
         assertEquals(Map.of(cluster, ApiError.NONE), second.response());
         assertEquals(List.of(new ConfigRecord().setResourceType(BROKER.id()).setResourceName("").
                 setName("abc").setValue("x")),
@@ -674,7 +674,7 @@ public class ConfigurationControlManagerTest {
             "KAFKA-14136: only the unchanged non-connection-string config still emits");
 
         ControllerResult<Map<ConfigResource, ApiError>> omitted = manager.legacyAlterConfigs(
-            toMap(entry(cluster, toMap(entry("abc", "x")))), false);
+            toMap(entry(cluster, toMap(entry("abc", "x")))), false, false);
         assertEquals(List.of(
                 new ConfigRecord().setResourceType(BROKER.id()).setResourceName("").
                     setName("abc").setValue("x"),
@@ -691,11 +691,11 @@ public class ConfigurationControlManagerTest {
             build();
         Map<String, Entry<AlterConfigOp.OpType, String>> keyToOps = toMap(entry("def", entry(SET, "x")));
 
-        ControllerResult<ApiError> first = manager.incrementalAlterConfig(MYTOPIC, keyToOps, true);
+        ControllerResult<ApiError> first = manager.incrementalAlterConfig(MYTOPIC, keyToOps, true, false);
         assertEquals(1, first.records().size());
         RecordTestUtils.replayAll(manager, first.records());
 
-        ControllerResult<ApiError> second = manager.incrementalAlterConfig(MYTOPIC, keyToOps, false);
+        ControllerResult<ApiError> second = manager.incrementalAlterConfig(MYTOPIC, keyToOps, false, false);
         assertEquals(ApiError.NONE, second.response());
         assertEquals(List.of(), second.records());
     }
