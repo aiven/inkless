@@ -336,7 +336,7 @@ class ConsolidationFetcherThreadTest {
     // Committed metadata for the switched partition: seal at 100, captured diskless epoch E_d=5.
     when(replicaManager.classicToDisklessStartOffset(topicPartition)).thenReturn(seal)
     when(replicaManager.disklessLeaderEpoch(topicPartition)).thenReturn(disklessLeaderEpoch)
-    when(replicaManager.remoteLogManager).thenReturn(None)
+    when(replicaManager.lastClassicLeaderEpoch(topicPartition)).thenReturn(staleClassicEpoch)
 
     // Real diskless leader endpoint backing OffsetsForLeaderEpoch for the consolidating follower.
     val fetchHandler = mock(classOf[FetchHandler])

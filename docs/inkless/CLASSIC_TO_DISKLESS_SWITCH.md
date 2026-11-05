@@ -31,6 +31,7 @@ The Kafka controller participates in the switch to fence stale leaders. The brok
 The switch state lives in the KRaft metadata log, but `classicToDisklessStartOffset` is **not** part of the upstream Apache Kafka record schemas (`PartitionRecord`, `PartitionChangeRecord`). To avoid forking those schemas, it is carried as an **unknown tagged field** (`RawTaggedField`) attached to the standard records:
 
 * **High tag numbers (100+).** `classicToDisklessStartOffset` uses tag `100` (`CLASSIC_TO_DISKLESS_START_OFFSET_TAG`). The 100+ range is reserved to avoid colliding with upstream tagged fields. Because the tag is unknown to vanilla Kafka, it is **silently skipped** when read by an upstream broker, which keeps the on-disk metadata format compatible in both directions. Two sibling fields ride along on the same record using the same mechanism: producer states (tag `101`) and the diskless leader epoch (tag `102`).
+* **Phase 2 fields.** The record that starts phase 2 sets `classicPrefixInRemoteStorage` (tag `103`) and `lastClassicLeaderEpoch` (tag `104`). The second field is the leader epoch of the record at `classicToDisklessStartOffset - 1`.
 * **Custom serde in `InitDisklessLogFields`.** The value is encoded by hand into the tagged field's raw byte payload: a single big-endian `int64` (8 bytes) written via `ByteBuffer.putLong`, and read back via `ByteBuffer.getLong`. There is no generated message class for it.
 * **Sentinel is normally not serialized.** When `classicToDisklessStartOffset == -1`, automatic paths (`toRecord()` snapshots and ordinary change records) omit the tag entirely to save space; on read, an absent tag decodes back to `-1` (`NO_CLASSIC_TO_DISKLESS_START_OFFSET`). The one exception is the operator seal/abort path, which encodes an explicit `-1` to actively reset a sealed partition back to classic (see [Operator override](#operator-override-of-the-seal-offset)).
 * **Replay and merge.** On load, `PartitionRegistration` decodes the tag from `PartitionRecord.unknownTaggedFields()`; `merge(PartitionChangeRecord)` applies updates from change records and carries the existing value forward when a change record **omits** the tag; `toRecord()` re-encodes it. Crucially, "tag omitted" and "tag explicitly set to `-1`" are distinguished at decode time (`decodeClassicToDisklessStartOffsetIfPresent` returns an empty `OptionalLong` only when the tag is absent): an omitted tag keeps the existing value, while a present tag — including an explicit `-1` — is applied verbatim. This is how the value survives metadata-log replay and propagates to brokers via metadata deltas, and how an operator can abort a switch.
@@ -70,8 +71,8 @@ sequenceDiagram
 
     InitManager->>Leader: Wait until the classic prefix is in remote storage
     Leader-->>InitManager: logStartOffset >= seal or<br/>highestOffsetInRemoteStorage >= seal - 1
-    InitManager->>Controller: SetClassicPrefixInRemoteStorage(seal, leaderEpoch)
-    Controller->>MetadataLog: PartitionChangeRecord<br/>classicPrefixInRemoteStorage = true
+    InitManager->>Controller: SetClassicPrefixInRemoteStorage(seal, leaderEpoch,<br/>lastClassicLeaderEpoch)
+    Controller->>MetadataLog: PartitionChangeRecord<br/>classicPrefixInRemoteStorage = true<br/>lastClassicLeaderEpoch
 ```
 
 ### Step 1: mark the switch as pending
@@ -142,7 +143,13 @@ In phase 1, the leader tracks the partition in the `WaitingForUpload` state unti
 * `logStartOffset >= classicToDisklessStartOffset`: the prefix is empty, or retention or `DeleteRecords` already removed it.
 * `highestOffsetInRemoteStorage >= classicToDisklessStartOffset - 1`: the remote log manager copied the whole prefix.
 
-When the check passes, the partition moves to `SendingFlagToController`. The broker batches ready partitions and sends `SetClassicPrefixInRemoteStorage` to the controller with the seal offset and the current leader epoch. The controller sets `classicPrefixInRemoteStorage`, which starts phase 2, and `InitDisklessLogManager` removes the partition from tracking.
+When the check passes, the partition moves to `SendingFlagToController`. The broker batches ready partitions and sends `SetClassicPrefixInRemoteStorage` to the controller with these values:
+
+* The seal offset.
+* The current leader epoch.
+* The leader epoch of the record at `seal - 1`, from the leader epoch cache. The value is `-1` if the log doesn't contain a record below the seal.
+
+The controller sets `classicPrefixInRemoteStorage`, which starts phase 2, and stores the last value as `lastClassicLeaderEpoch`. `InitDisklessLogManager` removes the partition from tracking. For more information about how brokers use the epoch, see [Divergent classic tails in phase 2](#divergent-classic-tails-in-phase-2).
 
 The broker handles the controller response per partition:
 
@@ -195,8 +202,8 @@ Brokers also follow different rules in each phase. The consolidation rows apply 
 | Broker behavior | Phase 1 | Phase 2 |
 | --- | --- | --- |
 | Consolidation | Off. The partition runs like a switched partition that doesn't consolidate. | On, from the seal. |
-| Follower at the seal | Leaves the classic fetcher once it's in the ISR, like a follower that doesn't consolidate. | Consolidates from the seal. If its high watermark is below the seal, it first fetches once at the seal on the classic fetcher. |
-| Leader with a high watermark below the seal | Advances the high watermark to the seal. | Truncates to its high watermark before it becomes the leader. Consolidation then rebuilds its classic prefix from remote storage. |
+| Follower at the seal | Leaves the classic fetcher once it's in the ISR, like a follower that doesn't consolidate. | Leaves the classic fetcher and consolidates from the seal. |
+| Replica with a divergent classic prefix | Truncates on the classic fetcher. Only an ISR member can lead. | Truncates its log fully before it leads or fetches, and rebuilds the prefix from remote storage. See [Divergent classic tails in phase 2](#divergent-classic-tails-in-phase-2). |
 | Local classic prefix | Kept, and serves reads below the seal. | Deleted. Reads below the seal come from remote storage. |
 | Metadata routing | Clients go to alive ISR members only. | Clients go to any replica, by the managed replica rules. |
 
@@ -236,12 +243,18 @@ Forced deletion skips a segment that starts below the seal and ends past it, lik
 
 ### Divergent classic tails in phase 2
 
-Any replica can join the ISR or lead in phase 2, including one whose local log contains records below the seal that the partition never committed. Such a replica may have led an older leader epoch and written records that no follower replicated. Forced deletion keeps the leader epoch cache, and the remote log manager uses that cache to pick remote segments. With a divergent cache, a tiered read fails with `OFFSET_OUT_OF_RANGE` and the consumer resets its offset. On an idle topic, the highest offset in remote storage also stays below the seal, so forced deletion never completes.
+Any replica can join the ISR or lead in phase 2, including one whose local log contains records below the seal that the partition doesn't hold. Such a replica led an older leader epoch and wrote records that the next leader didn't have. An unclean leader election before the switch can also discard records below the replica's high watermark, so the high watermark doesn't identify the replica. Forced deletion keeps the leader epoch cache, and the remote log manager uses that cache to pick remote segments. With a divergent cache, a tiered read fails with `OFFSET_OUT_OF_RANGE` and the consumer resets its offset. On an idle topic, the highest offset in remote storage also stays below the seal, so forced deletion never completes.
 
-The partition committed every record below a replica's high watermark. Only a replica whose high watermark is below the seal needs a check:
+The leader that requests the phase 2 flag records the leader epoch of its record at `seal - 1` as `lastClassicLeaderEpoch`. Each leader epoch has one leader, and a follower truncates to the leader's log before it appends. If a replica's leader epoch cache has `lastClassicLeaderEpoch` at `seal - 1`, its records below the seal match the records in remote storage.
 
-* A follower fetches once at the seal on the classic fetcher before it consolidates. The leader checks the follower's last fetched epoch against its own epoch cache. If they diverge, the follower truncates and catches up like any follower below the seal, which rebuilds its log and epoch cache from remote storage.
-* A replica that becomes the leader first truncates its log to its high watermark. The truncation runs before the promotion, which can raise the high watermark to the log end offset when the replica is the only ISR member. The leader is then below the seal, so consolidation rebuilds its log, epoch cache, and producer state from remote storage, like it does for a leader that lost its local log. While the rebuild runs, the epoch cache lacks the older epochs, and remote retention still keeps their segments from the cross-tier log start.
+If consolidation is on, a replica checks its leader epoch cache when it becomes the leader, and when it becomes a follower of a new leader epoch. The check runs before any fetcher runs for the partition. If the cache maps `seal - 1` to another epoch, or to no epoch, the replica truncates its log fully at the log start offset. The log then ends below the seal. The replica rebuilds its log, leader epoch cache, and producer state from remote storage, like a replica that lost its local log:
+
+* A leader rebuilds through consolidation. The tier-state machine looks up the remote segment at `seal - 1` by `lastClassicLeaderEpoch`, so it doesn't pick a segment from a discarded epoch that also covers that offset.
+* A follower catches up on the classic fetcher like any follower below the seal. For more information, see [Forced deletion of the local classic prefix](#forced-deletion-of-the-local-classic-prefix).
+
+A follower that keeps its leader epoch when phase 2 starts doesn't run the check. It was an ISR member or ran the classic fetcher in phase 1, so the leader's divergence check on the classic fetcher covers it.
+
+For a replica whose log ends below the seal, the check compares the latest epoch in its leader epoch cache. Such a replica can truncate even when its records match, which costs only the rebuild. Replicas skip the check if `lastClassicLeaderEpoch` is `-1`. That value means the prefix was empty when the leader requested the flag, or retention had already removed it.
 
 ## Operator override of the seal offset
 

@@ -1839,7 +1839,7 @@ public class ReplicationControlManager {
                     featureControl.isElrFeatureEnabled()
                 )
                     .setTargetIsr(targetIsr)
-                    .setClassicPrefixInRemoteStorage()
+                    .setClassicPrefixInRemoteStorage(partitionData.lastClassicLeaderEpoch())
                     .setDefaultDirProvider(clusterDescriber)
                     .build();
                 if (partitionChange.isEmpty()) {

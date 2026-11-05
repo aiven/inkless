@@ -4136,30 +4136,38 @@ class ReplicaManager(val config: KafkaConfig,
   }
 
   /**
-   * Truncates a switched replica that becomes the leader in phase 2 to its high watermark if that's below the seal.
-   * The controller can elect any live replica in phase 2, so the records between the high watermark and the seal
-   * may diverge from the committed prefix. The log end offset is then below the seal, so
-   * `maybeReconcileSwitchedLeader` keeps the partition online, and consolidation rebuilds the classic prefix from
-   * remote storage. Must run before makeLeader, which can raise the high watermark to the log end offset, for
-   * example when this replica is the only ISR member.
+   * Truncates a switched replica fully in phase 2 if its leader epoch cache doesn't map `seal - 1` to the epoch
+   * that the phase-1 leader recorded with `classicPrefixInRemoteStorage`.
+   *
+   * The controller can elect any live replica in phase 2 and adds every live replica to the ISR without checking
+   * its copy of the classic prefix. A replica that led an older epoch can hold records below the seal that the next
+   * leader didn't have, and an unclean election can discard records below its high watermark. Each epoch has one leader,
+   * so a matching epoch at `seal - 1` proves that the history below the seal is the committed one. After the
+   * truncation, the log ends below the seal, and the existing recovery rebuilds the prefix and the epoch cache
+   * from remote storage. A replica below the seal can also truncate when its records are committed, which costs
+   * only the rebuild. Only a consolidating partition runs the check, because only consolidation rebuilds the
+   * prefix of a switched leader from remote storage.
+   *
+   * Must run while no fetcher runs for the partition.
    */
-  private def maybeTruncateBelowSealBeforePromotion(partition: Partition,
-                                                    registration: PartitionRegistration,
-                                                    offsetCheckpoints: OffsetCheckpoints): Unit = {
+  private def maybeTruncateDivergentClassicPrefix(partition: Partition): Unit = {
     val tp = partition.topicPartition
-    val seal = registration.classicToDisklessStartOffset
-    if (seal < 0 || !registration.classicPrefixInRemoteStorage) return
+    if (!consolidationActiveFor(tp)) return
+    val lastClassicLeaderEpoch = _inklessMetadataView.getLastClassicLeaderEpoch(tp)
+    if (lastClassicLeaderEpoch == PartitionRegistration.NO_LAST_CLASSIC_LEADER_EPOCH) return
 
-    partition.log.orElse(logManager.getLog(tp)).filter(_.remoteLogEnabled()).foreach { log =>
-      val highWatermark = partition.log.map(_.highWatermark).getOrElse(
-        offsetCheckpoints.fetch(log.parentDir, tp).toScala.map(_.longValue).getOrElse(0L))
-      if (log.logEndOffset >= seal && highWatermark < seal) {
-        stateChangeLogger.info(s"Truncating switched partition $tp from LEO ${log.logEndOffset} to its high " +
-          s"watermark $highWatermark below the seal $seal before it becomes the leader: in phase 2 these records " +
-          s"may diverge from the committed prefix, so consolidation rebuilds the classic prefix from the remote tier.")
-        partition.truncateTo(highWatermark, isFuture = false)
+    val seal = _inklessMetadataView.getClassicToDisklessStartOffset(tp)
+    partition.log.orElse(logManager.getLog(tp))
+      .filter(log => log.remoteLogEnabled() && log.logStartOffset < math.min(seal, log.logEndOffset))
+      .foreach { log =>
+        val localEpoch = log.leaderEpochCache.epochForOffset(seal - 1)
+        if (!localEpoch.isPresent || localEpoch.getAsInt != lastClassicLeaderEpoch) {
+          stateChangeLogger.warn(s"Truncating switched partition $tp fully at log start offset ${log.logStartOffset}: " +
+            s"its leader epoch cache maps ${seal - 1} to $localEpoch, but the classic prefix ends in leader epoch " +
+            s"$lastClassicLeaderEpoch. The prefix is rebuilt from the remote tier.")
+          partition.truncateFullyAndStartAt(log.logStartOffset, isFuture = false)
+        }
       }
-    }
   }
 
   /**
@@ -4515,6 +4523,9 @@ class ReplicaManager(val config: KafkaConfig,
   def disklessLeaderEpoch(topicPartition: TopicPartition): Int =
     _inklessMetadataView.getDisklessLeaderEpoch(topicPartition)
 
+  def lastClassicLeaderEpoch(topicPartition: TopicPartition): Int =
+    _inklessMetadataView.getLastClassicLeaderEpoch(topicPartition)
+
   /**
    * Whether a follower of a consolidating diskless topic is ready to be handed to the consolidation
    * fetcher rather than the classic ReplicaFetcher:
@@ -4523,20 +4534,11 @@ class ReplicaManager(val config: KafkaConfig,
    *  - switch pending (seal == -2): keep replicating the frozen classic prefix on the classic
    *    fetcher until the controller commits the seal;
    *  - switched (seal >= 0): only consolidate in phase 2 of the classic-to-diskless switch
-   *    (`classicPrefixInRemoteStorage` set) and once both the local LEO and the high watermark have
-   *    reached the committed seal. In phase 1 the follower runs like a switched partition that
-   *    doesn't consolidate. Below the seal it stays on the classic fetcher, which rebuilds the prefix
-   *    from remote storage if the leader has tiered it, self-evicts at the seal, and hands off to
-   *    consolidation in phase 2.
+   *    (`classicPrefixInRemoteStorage` set) and once the local LEO has reached the committed seal.
+   *    In phase 1 the follower runs like a switched partition that doesn't consolidate. Below the
+   *    seal it stays on the classic fetcher, which rebuilds the prefix from remote storage if the
+   *    leader has tiered it, self-evicts at the seal, and hands off to consolidation in phase 2.
    * Non-consolidating topics are never routed to the consolidation fetcher.
-   *
-   * The controller adds every live replica to the ISR in phase 2 without checking its local copy of the
-   * prefix, and the consolidation fetcher can't detect a divergent classic tail. A follower whose high
-   * watermark is below the seal may hold records between its high watermark and the seal that the
-   * partition never committed, for example from an older leader epoch in which it led. One classic fetch
-   * at the seal lets the leader return the diverging epoch from the epoch cache that forced deletion keeps.
-   * The follower then truncates and rebuilds its log and epoch cache from remote storage. A high watermark
-   * at the seal means every local record below it is committed.
    */
   private def isReadyForConsolidation(tp: TopicPartition, partition: Partition): Boolean = {
     if (!_inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)) return false
@@ -4544,9 +4546,8 @@ class ReplicaManager(val config: KafkaConfig,
       case PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET => true
       case PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING => false
       case committedSeal =>
-        val log = partition.localLogOrException
         _inklessMetadataView.isClassicPrefixInRemoteStorage(tp) &&
-          log.logEndOffset >= committedSeal && log.highWatermark >= committedSeal
+          partition.localLogOrException.logEndOffset >= committedSeal
     }
   }
 
@@ -4682,7 +4683,7 @@ class ReplicaManager(val config: KafkaConfig,
           try {
             val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
             if (isConsolidatingDisklessTopic) {
-              maybeTruncateBelowSealBeforePromotion(partition, info.partition, offsetCheckpoints)
+              maybeTruncateDivergentClassicPrefix(partition)
             }
             partition.makeLeader(info.partition, isNew, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
 
@@ -4932,22 +4933,35 @@ class ReplicaManager(val config: KafkaConfig,
     if (partitionsToStartFetching.nonEmpty) {
       // Stopping the fetchers must be done first in order to initialize the fetch
       // position correctly.
-      // A consolidating diskless follower only joins the consolidation fetcher in phase 2 of the
-      // classic-to-diskless switch, once its local log and high watermark have reached the committed
-      // seal. While the switch is pending, in phase 1, or while either is below the seal, it must stay
-      // on the classic ReplicaFetcher so it can catch up from the leader; that fetcher self-evicts at
-      // the seal and, in phase 2, hands the partition off to the consolidation reconciler
-      // (startConsolidationFetchersForCaughtUpClassicPartitions).
-      // Routing a below-seal/pending partition straight to the reconciler would strand it: the
-      // reconciler returns Retry and no classic fetcher would ever bring it up to the seal.
-      val (consolidatingDisklessPartitionsToStartFetching, classicPartitionsToStartFetching) = partitionsToStartFetching.partition { case (tp, partition) =>
-        isReadyForConsolidation(tp, partition)
-      }
       // A follower outside the ISR can still be on its phase 1 classic fetcher when phase 2 of the
       // classic-to-diskless switch starts, so remove it from both fetchers.
       replicaFetcherManager.removeFetcherForPartitions(partitionsToStartFetching.keySet)
       consolidationFetcherManager.foreach(_.removeFetcherForPartitions(partitionsToStartFetching.keySet))
       stateChangeLogger.info(s"Stopped fetchers as part of become-follower for ${partitionsToStartFetching.size} partitions")
+
+      partitionsToStartFetching.foreachEntry { (tp, partition) =>
+        try {
+          maybeTruncateDivergentClassicPrefix(partition)
+        } catch {
+          case e: KafkaStorageException =>
+            stateChangeLogger.error(s"Unable to check the classic prefix of switched follower partition $tp " +
+              s"due to a storage error ${e.getMessage}", e)
+            markPartitionOffline(tp)
+        }
+      }
+      partitionsToStartFetching.filterInPlace { case (tp, _) => onlinePartition(tp).isDefined }
+
+      // A consolidating diskless follower only joins the consolidation fetcher in phase 2 of the
+      // classic-to-diskless switch, once its local log has reached the committed seal. While the
+      // switch is pending, in phase 1, or while the log is below the seal, it must stay on the
+      // classic ReplicaFetcher so it can catch up
+      // from the leader; that fetcher self-evicts at the seal and, in phase 2, hands the partition off
+      // to the consolidation reconciler (startConsolidationFetchersForCaughtUpClassicPartitions).
+      // Routing a below-seal/pending partition straight to the reconciler would strand it: the
+      // reconciler returns Retry and no classic fetcher would ever bring it up to the seal.
+      val (consolidatingDisklessPartitionsToStartFetching, classicPartitionsToStartFetching) = partitionsToStartFetching.partition { case (tp, partition) =>
+        isReadyForConsolidation(tp, partition)
+      }
 
       val listenerName = config.interBrokerListenerName.value
       val partitionAndOffsets = new mutable.HashMap[TopicPartition, InitialFetchState]

@@ -35,7 +35,6 @@ import org.apache.kafka.common.requests.{FetchRequest, FetchResponse, ListOffset
 import org.apache.kafka.common.{TopicIdPartition, TopicPartition, Uuid}
 import org.apache.kafka.metadata.{LeaderAndIsr, PartitionRegistration}
 import org.apache.kafka.server.common.{MetadataVersion, OffsetAndEpoch}
-import org.apache.kafka.server.log.remote.storage.{RemoteLogManager, RemoteLogMetadataManager, RemoteLogSegmentId, RemoteLogSegmentMetadata, RemoteLogSegmentState}
 import org.apache.kafka.server.network.BrokerEndPoint
 import org.apache.kafka.server.purgatory.DelayedOperationPurgatory
 import org.apache.kafka.server.storage.log.FetchPartitionData
@@ -47,7 +46,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.CsvSource
 import org.mockito.ArgumentCaptor
-import org.mockito.ArgumentMatchers.{any, anyInt, anyLong, eq => eqTo}
+import org.mockito.ArgumentMatchers.{any, anyLong, eq => eqTo}
 import org.mockito.Mockito.{doAnswer, doNothing, mock, never, times, verify, when}
 
 import java.util
@@ -92,7 +91,7 @@ class DisklessLeaderEndPointTest {
     when(replicaManager.hasReadableRemoteLogCoverage(any(), anyLong()))
       .thenReturn(Optional.of(java.lang.Boolean.FALSE))
     when(replicaManager.consolidationRemotePrefixGeneration(any())).thenReturn(0L)
-    when(replicaManager.remoteLogManager).thenReturn(None)
+    when(replicaManager.lastClassicLeaderEpoch(any())).thenReturn(PartitionRegistration.NO_LAST_CLASSIC_LEADER_EPOCH)
     replicaManager
   }
 
@@ -639,11 +638,15 @@ class DisklessLeaderEndPointTest {
     verify(job, org.mockito.Mockito.never()).add(eqTo(topicPartition), any())
   }
 
-  // Epoch 4 ended without records, so remote storage holds the last classic record, at 99, in epoch 3.
-  // No epoch at or below 2 covers offset 99, so a query for epoch 2 keeps that epoch.
+  // Epoch 4 ended without records, so the last classic record, at 99, is in epoch 3. A query for an epoch
+  // below the recorded one keeps the queried epoch, and so does a partition without a recorded epoch.
   @ParameterizedTest
-  @CsvSource(Array("4, 3", "3, 3", "2, 2"))
-  def testFetchEpochEndOffsetsBelowDisklessEpochReturnsRemoteEpochOfLastClassicRecord(queriedEpoch: Int, expectedEpoch: Int): Unit = {
+  @CsvSource(Array("4, 3, 3", "3, 3, 3", "2, 3, 2", "4, -1, 4"))
+  def testFetchEpochEndOffsetsBelowDisklessEpochReturnsLastClassicLeaderEpoch(
+    queriedEpoch: Int,
+    lastClassicLeaderEpoch: Int,
+    expectedEpoch: Int
+  ): Unit = {
     val fetchOffsetHandler = mock(classOf[FetchOffsetHandler])
     val replicaManager = replicaManagerMock()
     val job = mock(classOf[FetchOffsetHandler.Job])
@@ -651,16 +654,7 @@ class DisklessLeaderEndPointTest {
     when(job.mustHandle(topicPartition.topic())).thenReturn(true)
     when(replicaManager.classicToDisklessStartOffset(topicPartition)).thenReturn(100L)
     when(replicaManager.disklessLeaderEpoch(topicPartition)).thenReturn(5)
-    when(replicaManager.topicIdPartition(topicPartition)).thenReturn(topicIdPartition)
-    val rlmm = mock(classOf[RemoteLogMetadataManager])
-    when(rlmm.listRemoteLogSegments(topicIdPartition)).thenAnswer(_ => util.List.of(
-      remoteSegment(0L, 99L, Map(0 -> 0L, 3 -> 60L)),
-      remoteSegment(100L, 199L, Map(5 -> 100L))
-    ).iterator())
-    val rlm = mock(classOf[RemoteLogManager])
-    when(rlm.isPartitionReady(topicPartition)).thenReturn(true)
-    when(rlm.remoteLogMetadataManager).thenReturn(rlmm)
-    when(replicaManager.remoteLogManager).thenReturn(Some(rlm))
+    when(replicaManager.lastClassicLeaderEpoch(topicPartition)).thenReturn(lastClassicLeaderEpoch)
 
     val endPoint = newEndPoint(mock(classOf[FetchHandler]), fetchOffsetHandler, replicaManager)
     val result = endPoint.fetchEpochEndOffsets(
@@ -678,23 +672,8 @@ class DisklessLeaderEndPointTest {
       .setLeaderEpoch(expectedEpoch)
       .setEndOffset(100L)
     assertEquals(Map(topicPartition -> expected), result)
-    verify(rlmm, times(1)).listRemoteLogSegments(topicIdPartition)
-    verify(rlm, never()).fetchRemoteLogSegmentMetadata(any(), anyInt(), anyLong())
+    verify(job, never()).add(eqTo(topicPartition), any())
   }
-
-  private def remoteSegment(startOffset: Long, endOffset: Long, leaderEpochs: Map[Int, Long]): RemoteLogSegmentMetadata =
-    new RemoteLogSegmentMetadata(
-      new RemoteLogSegmentId(topicIdPartition, Uuid.randomUuid()),
-      startOffset,
-      endOffset,
-      -1L,
-      0,
-      0L,
-      1024,
-      Optional.empty(),
-      RemoteLogSegmentState.COPY_SEGMENT_FINISHED,
-      leaderEpochs.map { case (epoch, offset) => Int.box(epoch) -> Long.box(offset) }.asJava
-    )
 
   @Test
   def testFetchEpochEndOffsetsAtOrAboveDisklessEpochReturnsDisklessLeo(): Unit = {

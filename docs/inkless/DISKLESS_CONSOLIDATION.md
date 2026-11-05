@@ -276,6 +276,8 @@ The controller captures a frozen diskless leader epoch (`disklessLeaderEpoch`) a
 - `ConsolidationFetcherThread.maybeStampDisklessLeaderEpoch` stamps the diskless leader epoch onto each materialized batch in place (the partition leader epoch is outside the batch CRC, so no checksum recompute is needed). Born-diskless partitions with no diskless leader epoch are left at epoch 0.
 - `DisklessLeaderEndPoint.fetchEpochEndOffsets` answers `OffsetsForLeaderEpoch` for followers:
   - A queried epoch below the diskless leader epoch returns the seal, so a stale classic tail past the seal truncates back to it. Collapsing every classic epoch to the seal is correct because the classic prefix `[0, seal)` is committed and identical across replicas.
+  - A replica with a divergent prefix truncates its log fully before it consolidates. For more information, see [Divergent classic tails in phase 2](CLASSIC_TO_DISKLESS_SWITCH.md#divergent-classic-tails-in-phase-2).
+  - The returned epoch is `lastClassicLeaderEpoch` if it's at most the queried epoch. The tier-state machine looks up the remote segment at `seal - 1` by that epoch, and the epoch before the diskless leader epoch has no records.
   - A queried epoch equal to or greater than the diskless leader epoch (or a born-diskless partition without one) returns the current diskless LEO.
 
 `DisklessLeaderEndPoint.resolveLeaderEpoch` applies the same region logic to list-offsets results, because `FetchOffsetHandler` stamps a placeholder epoch of 0 that cannot be trusted.

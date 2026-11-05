@@ -32,7 +32,6 @@ import org.apache.kafka.common.requests.{FetchRequest, FetchResponse, ListOffset
 import org.apache.kafka.common.{TopicIdPartition, TopicPartition, Uuid}
 import org.apache.kafka.metadata.{LeaderAndIsr, PartitionRegistration}
 import org.apache.kafka.server.common.{MetadataVersion, OffsetAndEpoch}
-import org.apache.kafka.server.log.remote.storage.RemoteLogSegmentState
 import org.apache.kafka.server.network.BrokerEndPoint
 import org.apache.kafka.server.purgatory.TopicPartitionOperationKey
 import org.apache.kafka.server.storage.log.{FetchIsolation, FetchParams, FetchPartitionData}
@@ -434,8 +433,8 @@ class DisklessLeaderEndPoint(
    *     runs past the seal truncates back to it. Collapsing every classic epoch to the seal (rather
    *     than the start of the next epoch, as standard OffsetsForLeaderEpoch would) is correct only
    *     because the classic prefix `[logStart, seal)` is committed and identical across all replicas,
-   *     so intra-prefix divergence can't occur. The returned epoch is the epoch of the last classic
-   *     record in remote storage if that epoch is lower than the queried one.
+   *     so intra-prefix divergence can't occur. The returned epoch is the recorded epoch of the last
+   *     classic record if that epoch is at most the queried one.
    *   - queried epoch `>= E_d` (or a born-diskless partition with no captured epoch): the end offset is
    *     the current diskless LEO, fetched via a LATEST list-offsets call.
    */
@@ -484,7 +483,7 @@ class DisklessLeaderEndPoint(
         tp -> new EpochEndOffset()
           .setPartition(tp.partition)
           .setErrorCode(Errors.NONE.code)
-          .setLeaderEpoch(remoteClassicEpochAtOrBelow(tp, seal, epochData.leaderEpoch))
+          .setLeaderEpoch(lastClassicLeaderEpochAtOrBelow(tp, epochData.leaderEpoch))
           .setEndOffset(seal)
       } else if (!futures.contains(tp)) {
         tp -> new EpochEndOffset()
@@ -518,27 +517,17 @@ class DisklessLeaderEndPoint(
   }
 
   /**
-   * Returns the leader epoch of the classic record at `seal - 1` in remote storage if it's at most `epoch`;
-   * otherwise returns `epoch`. The epoch before `E_d` may have ended without records. `TierStateMachine` looks up
-   * the segment at `seal - 1` by the epoch that [[fetchEpochEndOffsets]] returns.
+   * Returns the leader epoch of the record at `seal - 1` that the phase-1 leader recorded if it's at most `epoch`;
+   * otherwise returns `epoch`. The epoch before `E_d` ends without records, and `TierStateMachine` looks up the
+   * segment at `seal - 1` by the epoch that [[fetchEpochEndOffsets]] returns. Remote storage can also hold a
+   * segment at `seal - 1` from an epoch that an unclean election discarded, so the epoch can't come from there.
    */
-  private def remoteClassicEpochAtOrBelow(tp: TopicPartition, seal: Long, epoch: Int): Int = {
-    val lastClassicOffset = seal - 1
-    replicaManager.remoteLogManager
-      .filter(rlm => seal > 0 && rlm.isPartitionReady(tp))
-      .flatMap { rlm =>
-        Try {
-          rlm.remoteLogMetadataManager.listRemoteLogSegments(replicaManager.topicIdPartition(tp)).asScala
-            .filter(segment => segment.state == RemoteLogSegmentState.COPY_SEGMENT_FINISHED &&
-              segment.startOffset <= lastClassicOffset && lastClassicOffset <= segment.endOffset)
-            .flatMap(_.segmentLeaderEpochs.asScala.collect {
-              case (segmentEpoch, startOffset) if startOffset.longValue <= lastClassicOffset => segmentEpoch.intValue
-            }.maxOption)
-            .filter(_ <= epoch)
-            .maxOption
-        }.toOption.flatten
-      }
-      .getOrElse(epoch)
+  private def lastClassicLeaderEpochAtOrBelow(tp: TopicPartition, epoch: Int): Int = {
+    val lastClassicLeaderEpoch = replicaManager.lastClassicLeaderEpoch(tp)
+    if (lastClassicLeaderEpoch != PartitionRegistration.NO_LAST_CLASSIC_LEADER_EPOCH && lastClassicLeaderEpoch <= epoch)
+      lastClassicLeaderEpoch
+    else
+      epoch
   }
 
   override def buildFetch(partitions: util.Map[TopicPartition, PartitionFetchState]): ResultWithPartitions[Optional[ReplicaFetch]] = {
