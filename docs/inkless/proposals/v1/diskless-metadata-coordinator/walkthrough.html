@@ -1,0 +1,1580 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How the diskless metadata coordinator works: an interactive walkthrough</title>
+<style>
+:root{
+  --bg:#f8f7f3; --panel:#fff; --ink:#1b2130; --muted:#5b6476; --faint:#8b93a3; --line:#e2dfd6; --soft:#f1efe8; --code:#ece9e0;
+  --accent:#3b5bdb; --accent-soft:#e8edfd;
+  --cp0:#3b5bdb; --cp1:#0c8599; --cp2:#7048e8; --cp3:#d9480f;
+  --ok:#2b8a3e; --ok-soft:#e7f5ea; --err:#c92a2a; --err-soft:#fcebeb; --meta:#862e9c; --meta-soft:#f6e9fa;
+  --store:#a85d00; --store-soft:#fff3e0; --warn:#b35c00;
+  --r:10px;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.62 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,Helvetica,Arial,sans-serif}
+code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.86em}
+code{background:var(--code);padding:1px 5px;border-radius:4px}
+a{color:var(--accent)}
+h1,h2,h3,h4{line-height:1.25}
+h1{font-size:2.3rem;margin:.1em 0 .3em;letter-spacing:-.01em}
+h2{font-size:1.65rem;margin:2.6em 0 .5em;padding-top:.9em;border-top:1px solid var(--line)}
+h3{font-size:1.2rem;margin:1.9em 0 .4em}
+h4{font-size:1rem;margin:1.2em 0 .3em}
+p{margin:.6em 0}
+ul,ol{padding-left:1.35em}
+li{margin:.3em 0}
+table{border-collapse:collapse;width:100%;font-size:.9rem;background:var(--panel);margin:12px 0}
+th,td{border:1px solid var(--line);padding:6px 9px;text-align:left;vertical-align:top}
+th{background:var(--soft);font-weight:600}
+.layout{display:grid;grid-template-columns:250px minmax(0,1fr);max-width:1500px;margin:0 auto}
+nav.toc{position:sticky;top:0;align-self:start;height:100vh;overflow:auto;padding:28px 14px 40px 20px;border-right:1px solid var(--line);font-size:.88rem}
+nav.toc .brand{font-weight:700;font-size:.95rem;margin-bottom:14px;line-height:1.3}
+nav.toc ol{list-style:none;padding:0;margin:0}
+nav.toc li{margin:0}
+nav.toc a{display:block;padding:4px 8px;border-radius:6px;color:var(--muted);text-decoration:none}
+nav.toc a:hover{background:var(--soft);color:var(--ink)}
+nav.toc a.on{background:var(--accent-soft);color:var(--accent);font-weight:600}
+nav.toc .grp{margin:14px 0 4px 8px;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--faint)}
+main{padding:36px 44px 160px;min-width:0}
+.prose{max-width:800px}
+.lede{font-size:1.12rem;color:var(--muted);max-width:800px}
+.meta{font-size:.85rem;color:var(--faint)}
+.callout{border-left:4px solid var(--accent);background:var(--accent-soft);padding:10px 14px;border-radius:0 8px 8px 0;margin:14px 0;max-width:800px}
+.callout.warn{border-color:var(--warn);background:var(--store-soft)}
+.callout.ok{border-color:var(--ok);background:var(--ok-soft)}
+.callout b:first-child{display:block;margin-bottom:2px}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px;margin:16px 0}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;font-size:.92rem}
+.card h4{margin:0 0 4px;font-size:.98rem}
+.card .num{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:50%;background:var(--ink);color:#fff;font-size:.75rem;margin-right:6px}
+details{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:8px 14px;margin:10px 0;max-width:800px}
+details>summary{cursor:pointer;font-weight:600;padding:4px 0}
+details[open]>summary{margin-bottom:6px}
+.cpb{display:inline-block;padding:0 6px;border-radius:4px;color:#fff;font-size:.78em;font-weight:700;font-family:ui-monospace,Menlo,monospace;line-height:1.55}
+.cpb.c0{background:var(--cp0)} .cpb.c1{background:var(--cp1)} .cpb.c2{background:var(--cp2)} .cpb.c3{background:var(--cp3)}
+.cpb.cx{background:#868e96}
+/* term tooltips */
+.t{border-bottom:1.5px dotted #8b93a3;cursor:help}
+.t:hover,.t:focus{border-bottom-color:var(--accent);outline:none;color:var(--accent)}
+.tip{position:absolute;z-index:1000;max-width:360px;background:#1b2130;color:#f1f3f7;padding:10px 12px;border-radius:8px;font-size:.84rem;line-height:1.5;box-shadow:0 8px 28px rgba(0,0,0,.25);pointer-events:none;opacity:0;transition:opacity .12s}
+.tip.on{opacity:1}
+.tip b{color:#fff;display:block;margin-bottom:2px}
+.tip code{background:#2e3647;color:#fff}
+.tip .hint{color:#9aa3b5;font-size:.75rem;margin-top:6px}
+/* widgets */
+.widget{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:22px 0;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+.widget>.wtitle{font-weight:700;font-size:1.02rem;margin:0 0 2px}
+.widget>.wsub{color:var(--muted);font-size:.9rem;margin:0 0 12px}
+.btn{font:inherit;font-size:.86rem;border:1px solid #cfcbc0;background:#fff;border-radius:7px;padding:5px 11px;cursor:pointer;color:var(--ink)}
+.btn:hover{background:var(--soft)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn.pri{background:var(--ink);color:#fff;border-color:var(--ink)}
+.btn.pri:hover{background:#333b4d}
+.btn.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.btnrow{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:8px 0}
+.btnrow .sep{width:1px;height:22px;background:var(--line);margin:0 4px}
+.tabs{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 10px}
+.tabs .btn{border-radius:20px}
+.scen-desc{font-size:.9rem;color:var(--muted);margin:-2px 0 10px}
+.evlog{font-size:.82rem;background:var(--soft);border-radius:8px;padding:8px 10px;max-height:170px;overflow:auto;margin-top:10px}
+.evlog div{padding:2px 0;border-bottom:1px dashed #e0ddd3}
+.evlog div:first-child{font-weight:600}
+.evlog div:last-child{border:0}
+input[type=text],input[type=number],select{font:inherit;font-size:.88rem;padding:4px 8px;border:1px solid #cfcbc0;border-radius:6px;background:#fff}
+label.inl{font-size:.86rem;color:var(--muted);display:inline-flex;gap:6px;align-items:center}
+
+/* ---------- stage ---------- */
+.stagewrap{outline:none}
+.stagescroll{overflow-x:auto;border-radius:10px}
+.stage{position:relative;min-width:1000px;background:var(--soft);border-radius:10px;padding:16px 16px 96px;display:grid;gap:50px}
+.stage .row{display:grid;gap:14px;align-items:stretch}
+.stage .r1{grid-template-columns:repeat(5,1fr)}
+.stage .r2{grid-template-columns:repeat(3,1fr);padding:0 6%}
+.stage .r3{grid-template-columns:repeat(4,1fr)}
+.node{position:relative;z-index:1;background:#fff;border:1.5px solid #d4cfc2;border-radius:9px;padding:7px 9px;font-size:12px;line-height:1.4;transition:box-shadow .25s,border-color .25s,opacity .25s}
+.node .nm{font-weight:700;font-size:12.5px;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.node .nm .muted{font-weight:400;color:var(--faint)}
+.node .note{color:var(--muted);margin-top:3px;font-size:11.5px}
+.node .note code{font-size:10.5px;padding:0 3px}
+.node.hl{border-color:#1b2130;box-shadow:0 0 0 3px rgba(59,91,219,.22)}
+.node.down{background:repeating-linear-gradient(45deg,#fff,#fff 7px,#f7e4e4 7px,#f7e4e4 14px);border-color:#e0a3a3}
+.node .badge{font-size:10px;font-weight:700;padding:0 5px;border-radius:4px;background:var(--err-soft);color:var(--err)}
+.node .badge.gate{background:var(--store-soft);color:var(--warn)}
+.node.cp{padding:0;overflow:hidden;min-height:226px}
+.node.cp .cph{padding:6px 9px;color:#fff;display:flex;justify-content:space-between;align-items:center;font-size:12px}
+.node.cp .cph b{font-size:13px}
+.node.cp .sec{padding:4px 9px 2px;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--faint);display:flex;justify-content:space-between}
+.lgbox{padding:0 6px;min-height:92px}
+.lg{display:grid;grid-template-columns:28px 24px 1fr;gap:4px;align-items:center;font-size:10.5px;padding:2px 3px;border-radius:4px;margin:1px 0;font-family:ui-monospace,Menlo,monospace;color:#333}
+.lg .off{color:var(--faint);text-align:right}
+.lg .kd{font-weight:700;color:#fff;background:var(--kc,#666);border-radius:3px;text-align:center;font-size:9.5px;padding:0 2px}
+.lg .tx{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lg.pend{background:repeating-linear-gradient(135deg,#fff,#fff 4px,#eef1fb 4px,#eef1fb 8px);outline:1px dashed #9fb0e8}
+.lg.more{color:var(--faint);display:block;padding-left:8px}
+.hwl{display:flex;align-items:center;gap:6px;font-size:9.5px;font-weight:700;color:var(--err);margin:1px 0}
+.hwl:before,.hwl:after{content:"";flex:1;border-top:1.5px solid var(--err)}
+.sqlbox{padding:0 9px 8px;min-height:74px}
+.sq{display:grid;grid-template-columns:52px 1fr;gap:6px;font-size:10.5px;font-family:ui-monospace,Menlo,monospace;padding:1px 0;border-bottom:1px dotted #eee}
+.sq .tb{color:var(--faint)}
+.sq .v{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sq.new{background:#fff9db}
+.empty{color:var(--faint);font-size:10.5px;font-style:italic;padding:2px 0}
+.k-pc{--kc:#2b8a3e}.k-td{--kc:#c92a2a}.k-in{--kc:#862e9c}.k-fc{--kc:#3b5bdb}.k-ps{--kc:#0c8599}.k-oa{--kc:#0b7285}.k-ff{--kc:#a61e4d}.k-dm{--kc:#b35c00}.k-fd{--kc:#7a4100}.k-ra{--kc:#5c6577}.k-dp{--kc:#495057}.k-ke{--kc:#868e96}.k-od{--kc:#e64980}
+.objs{display:flex;flex-direction:column;gap:3px;margin-top:4px}
+.obj{font-family:ui-monospace,Menlo,monospace;font-size:10.5px;border:1px solid #e6c48e;background:var(--store-soft);border-radius:4px;padding:1px 5px}
+.obj.marked{border-style:dashed;background:#fff}
+.obj.deleted{text-decoration:line-through;color:var(--faint);background:#f4f4f4;border-color:#ddd}
+.obj.uploading{border-style:dotted}
+.ctl-lines div{font-family:ui-monospace,Menlo,monospace;font-size:10.5px;color:var(--meta)}
+svg.wires{position:absolute;left:0;top:0;pointer-events:none;z-index:2;overflow:visible}
+svg.wires .lbl{font:600 10.5px -apple-system,Segoe UI,sans-serif}
+svg.wires path{fill:none;stroke-width:1.8}
+svg.wires .fade{animation:fadein .35s ease}
+@keyframes fadein{from{opacity:0}to{opacity:1}}
+.cap{display:grid;grid-template-columns:minmax(0,1fr);margin-top:12px;min-height:170px}
+.cap .capn{font-size:.78rem;color:var(--faint);text-transform:uppercase;letter-spacing:.06em}
+.cap h4{margin:.1em 0 .3em;font-size:1.08rem}
+.cap .capd{max-width:860px;font-size:.95rem}
+.ctrls{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:10px}
+.dots{display:flex;gap:5px;margin-left:8px;flex-wrap:wrap}
+.dots button{width:12px;height:12px;border-radius:50%;border:1.5px solid #9aa1ad;background:#fff;padding:0;cursor:pointer}
+.dots button.done{background:#9aa1ad}
+.dots button.cur{background:var(--accent);border-color:var(--accent);transform:scale(1.2)}
+.kbd{font-size:.75rem;color:var(--faint);margin-left:auto}
+.legend{display:flex;flex-wrap:wrap;gap:10px 16px;font-size:.78rem;color:var(--muted);margin:8px 0 0}
+.legend span{display:inline-flex;align-items:center;gap:5px}
+.legend i{display:inline-block;width:18px;height:3px;border-radius:2px}
+.legend .kd{font-style:normal;font-weight:700;color:#fff;background:var(--kc);border-radius:3px;padding:0 3px;font-size:9.5px;font-family:ui-monospace,Menlo,monospace}
+
+/* mapping calculator */
+.calc{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:18px}
+@media (max-width:1100px){.calc{grid-template-columns:1fr}}
+.calc .inputs{display:grid;grid-template-columns:110px 1fr;gap:8px 10px;align-items:center;font-size:.9rem}
+.calc .inputs input[type=text]{width:100%;font-family:ui-monospace,Menlo,monospace}
+.bytes{font-family:ui-monospace,Menlo,monospace;font-size:.78rem;display:flex;flex-wrap:wrap;gap:3px;margin:6px 0}
+.bytes span{padding:1px 4px;border-radius:3px;background:#e8edfd}
+.bytes span.p{background:#fff1d6}
+.pipeline{display:flex;flex-direction:column;gap:6px;font-size:.88rem}
+.pipeline .st{display:grid;grid-template-columns:150px 1fr;gap:8px;align-items:baseline;border-bottom:1px dashed var(--line);padding-bottom:4px}
+.pipeline .st .v{font-family:ui-monospace,Menlo,monospace;font-weight:600}
+.spread{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+.spread div{font-size:.72rem;font-family:ui-monospace,Menlo,monospace;padding:2px 5px;border-radius:4px;color:#fff}
+.split{display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:.86rem;margin-top:6px}
+.cpgrid{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+.cpgrid div{min-width:44px;text-align:center;font-size:.75rem;font-family:ui-monospace,Menlo,monospace;padding:3px 4px;border-radius:5px;border:1px solid var(--line);background:#fff}
+.cpgrid div.hit{color:#fff;font-weight:700}
+.chk{display:inline-flex;gap:4px;align-items:center;margin-right:10px;font-size:.86rem}
+
+/* commit queue sim */
+.gantt{position:relative;margin-top:10px;overflow-x:auto}
+.gantt .inner{position:relative;min-width:820px;margin-right:12px}
+.gl{display:grid;grid-template-columns:70px 1fr;align-items:center;height:34px}
+.gl .lab{font-size:.8rem;font-weight:700}
+.gl .lane{position:relative;height:28px;background:var(--soft);border-radius:5px}
+.gb{position:absolute;top:3px;height:22px;border-radius:4px;color:#fff;font-size:.72rem;font-weight:700;display:flex;align-items:center;justify-content:center;white-space:nowrap;overflow:hidden}
+.gb.fail{background:repeating-linear-gradient(135deg,#c92a2a,#c92a2a 5px,#e35d5d 5px,#e35d5d 10px)!important}
+.gl .lane{height:30px}
+.gb{top:2px;height:20px}
+.gb.wait{top:auto;bottom:2px;height:4px;border-radius:2px;opacity:.55}
+.qkey{font-size:.78rem;color:var(--faint);height:22px;padding-left:70px}
+.qkey i{display:inline-block;width:26px;height:4px;border-radius:2px;background:var(--faint);opacity:.55;vertical-align:middle;margin-right:5px}
+.gaxis{display:grid;grid-template-columns:70px 1fr;height:22px;font-size:.72rem;color:var(--faint)}
+.gaxis .ticks{position:relative}
+.gaxis .ticks span{position:absolute;transform:translateX(-50%)}
+.gmark{position:absolute;top:0;bottom:44px;border-left:1px dashed #c8c3b6;pointer-events:none}
+.qres{width:auto;font-size:.82rem}
+.qres td,.qres th{padding:3px 8px}
+.qres .bad{color:var(--err);font-weight:600}
+.qres .good{color:var(--ok);font-weight:600}
+
+/* overlay lab */
+.rep{display:grid;grid-template-columns:150px 1fr;align-items:center;gap:8px;margin:6px 0}
+.rep .who{font-size:.82rem}
+.rep .who b{display:block;font-size:.9rem}
+.cells{display:flex;gap:3px;align-items:center;position:relative;min-height:34px;flex-wrap:nowrap}
+.cell{width:42px;height:30px;border-radius:5px;border:1.5px solid #c5c0b3;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:.66rem;font-family:ui-monospace,Menlo,monospace;line-height:1.1;flex:none}
+.cell .o{color:var(--faint);font-size:.6rem}
+.cell.ap{background:#d3f0da;border-color:#5fb36f}
+.cell.res{border-style:dashed;background:repeating-linear-gradient(135deg,#fff,#fff 4px,#eef1fb 4px,#eef1fb 8px);border-color:#7d93e0}
+.cell.ep2{box-shadow:inset 0 -3px 0 #f59f00}
+.hwm{width:3px;height:36px;background:var(--err);border-radius:2px;flex:none;position:relative}
+.hwm:after{content:"HW";position:absolute;top:-14px;left:-6px;font-size:.6rem;font-weight:700;color:var(--err)}
+.rep.down .cells{opacity:.35}
+.olpanel{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:10px;font-size:.84rem}
+.olpanel>div{background:var(--soft);border-radius:8px;padding:8px 10px}
+.olpanel b{display:block;font-size:.78rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+
+/* owner lab */
+.olab{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:16px}
+@media (max-width:1100px){.olab{grid-template-columns:1fr}}
+.clockbar{position:relative;height:38px;margin:8px 0 18px}
+.clockbar .bar{position:absolute;left:0;right:0;top:14px;height:8px;background:var(--soft);border-radius:4px}
+.clockbar .fill{position:absolute;left:0;top:14px;height:8px;background:var(--accent);border-radius:4px}
+.clockbar .mk{position:absolute;top:6px;height:24px;border-left:2px solid #868e96}
+.clockbar .mk span{position:absolute;top:24px;left:-14px;font-size:.7rem;color:var(--muted);white-space:nowrap}
+.parts{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.pcard{border:1.5px solid var(--line);border-radius:9px;padding:8px 10px;font-size:.82rem;background:#fff}
+.pcard .h{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
+.pill{display:inline-block;font-size:.7rem;font-weight:700;padding:1px 7px;border-radius:10px}
+.pill.silent{background:#eceef2;color:#495057}
+.pill.referenced{background:var(--accent-soft);color:var(--accent)}
+.pill.released{background:var(--ok-soft);color:var(--ok)}
+.pill.owner{background:var(--ink);color:#fff}
+.conds{font-size:.86rem;margin:6px 0}
+.conds div{padding:2px 0}
+.conds .y{color:var(--ok)} .conds .n{color:var(--faint)}
+.objstate{font-family:ui-monospace,Menlo,monospace;font-size:.84rem;padding:6px 10px;border-radius:7px;background:var(--store-soft);border:1px solid #e6c48e;display:inline-block}
+.objstate.deleted{background:#f1f3f5;border-color:#ccc;text-decoration:line-through;color:var(--muted)}
+
+/* snapshot lab */
+.snapaxis{position:relative;height:30px;margin:4px 0 4px 200px}
+.snaprow{display:grid;grid-template-columns:200px 1fr;align-items:center;min-height:46px}
+.snaprow .who{font-size:.82rem}
+.snaprow .track{position:relative;height:26px;background:var(--soft);border-radius:5px}
+.snaprow .pruned{position:absolute;left:0;top:0;bottom:0;background:repeating-linear-gradient(135deg,#e9ecef,#e9ecef 5px,#dee2e6 5px,#dee2e6 10px);border-radius:5px 0 0 5px}
+.snap{position:absolute;top:3px;width:20px;height:20px;margin-left:-10px;border-radius:4px;color:#fff;font-size:.62rem;font-weight:700;display:flex;align-items:center;justify-content:center}
+.snap.new{background:var(--cp1)} .snap.old{background:#74b9c4}
+.rpt{position:absolute;top:-2px;bottom:-2px;border-left:2px dashed var(--accent)}
+.lsline{position:absolute;top:-8px;bottom:-8px;border-left:3px solid var(--err);z-index:2}
+.lsline span{position:absolute;top:-14px;left:-20px;font-size:.66rem;font-weight:700;color:var(--err);white-space:nowrap}
+.formula{font-family:ui-monospace,Menlo,monospace;font-size:.84rem;background:var(--soft);padding:8px 10px;border-radius:7px;margin-top:8px}
+
+/* failure explorer */
+.fx{display:grid;grid-template-columns:320px minmax(0,1fr);gap:14px}
+@media (max-width:1000px){.fx{grid-template-columns:1fr}}
+.fx .list{display:flex;flex-direction:column;gap:3px;max-height:560px;overflow:auto;padding-right:4px}
+.fx .list .g{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--faint);margin:10px 0 2px}
+.fx .list button{text-align:left;font:inherit;font-size:.86rem;background:#fff;border:1px solid var(--line);border-radius:7px;padding:6px 9px;cursor:pointer}
+.fx .list button.on{border-color:var(--accent);background:var(--accent-soft)}
+.fx .detail{background:var(--soft);border-radius:10px;padding:14px 18px}
+.fx .detail h4{margin-top:0}
+.fx .detail .lbl{font-size:.74rem;text-transform:uppercase;letter-spacing:.06em;color:var(--faint);margin-top:10px}
+#glsearch{width:100%;max-width:420px;margin:8px 0 12px}
+dl.gloss{display:grid;grid-template-columns:230px minmax(0,1fr);gap:0;max-width:1000px;background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+dl.gloss dt,dl.gloss dd{margin:0;padding:8px 12px;border-bottom:1px solid var(--line);font-size:.9rem}
+dl.gloss dt{font-weight:700;background:var(--soft)}
+dl.gloss dt:target,dl.gloss dt.flash{background:#fff3bf}
+@media (max-width:900px){.layout{grid-template-columns:1fr}nav.toc{display:none}main{padding:20px}}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+</style>
+</head>
+<body>
+<div class="layout">
+<nav class="toc" id="toc">
+  <div class="brand">Diskless metadata coordinator<br><span style="font-weight:400;color:var(--faint)">interactive walkthrough</span></div>
+  <ol>
+    <li class="grp">Context</li>
+    <li><a href="#why">Why this exists</a></li>
+    <li><a href="#ideas">Five ideas</a></li>
+    <li><a href="#kafka">Kafka in five minutes</a></li>
+    <li><a href="#cluster">The example cluster</a></li>
+    <li><a href="#mapping">Who owns a partition</a></li>
+    <li class="grp">Lifecycle</li>
+    <li><a href="#create">1. Create a topic</a></li>
+    <li><a href="#produce">2. Produce</a></li>
+    <li><a href="#queues">&nbsp;&nbsp;Commit queues</a></li>
+    <li><a href="#overlay">&nbsp;&nbsp;Overlay and HW</a></li>
+    <li><a href="#consume">3. Consume</a></li>
+    <li><a href="#cleanup">4. Clean up data</a></li>
+    <li><a href="#owner">&nbsp;&nbsp;Owner lab</a></li>
+    <li><a href="#snapshots">&nbsp;&nbsp;Trim the coordinator log</a></li>
+    <li><a href="#deletion">5. Delete a topic</a></li>
+    <li class="grp">Going deeper</li>
+    <li><a href="#failures">When things fail</a></li>
+    <li><a href="#alternatives">Roads not taken</a></li>
+    <li><a href="#limits">Limits and open risks</a></li>
+    <li><a href="#reference">Reference tables</a></li>
+    <li><a href="#glossary">Glossary</a></li>
+  </ol>
+</nav>
+<main id="main">
+
+<header>
+  <div class="meta">Inkless · design walkthrough · based on <code>.scratch/diskless-metadata-coordinator/design.md</code> (draft for handoff)</div>
+  <h1>How the diskless metadata coordinator works</h1>
+  <p class="lede">Inkless diskless topics need a service that orders their data and remembers where it is. This page walks through a proposed design that keeps that state inside Kafka itself, in an internal topic, instead of in an external Postgres database. You follow one topic from creation to deletion, and you can poke at each mechanism along the way.</p>
+  <div class="callout">
+    <b>How to read this page</b>
+    Terms with a dotted underline, like [[hw]], show a definition when you hover or focus them; click one to jump to the glossary. Each lifecycle chapter has a stepped diagram: use <b>Next</b> and <b>Back</b>, or focus the diagram and press the arrow keys. The labs let you change things and watch what the system does. No background in the design is assumed, but some familiarity with Kafka helps; if you don't have it, read <a href="#kafka">Kafka in five minutes</a> first.
+  </div>
+</header>
+
+<section id="why">
+<h2>Why this exists</h2>
+<div class="prose">
+<p>A [[diskless-topic]] stores its records in object storage, such as S3, instead of on broker disks. Any broker accepts produce requests for any partition. Each broker collects the [[batch|batches]] it receives, from many partitions and often from many topics, into one file, and every 250&nbsp;ms (or once 8&nbsp;MiB accumulates) uploads that file as one [[wal-object]].</p>
+<p>That raises two questions that a classic Kafka partition answers with its local log:</p>
+<ul>
+  <li><b>Which offsets does each batch get?</b> Many brokers write to the same partition at the same time, so something must put their batches in one order.</li>
+  <li><b>Where is each batch?</b> A consumer asking for <code>orders-0</code> at offset 42 needs the object and the byte range that hold it.</li>
+</ul>
+<p>The [[batch-coordinator]] answers both. Brokers talk to it through the [[control-plane]] interface. Today's production implementation stores the state in Postgres, a separate database that every cluster has to run and scale.</p>
+<p>The design on this page adds a third implementation, <code>DisklessMetadataControlPlane</code>. It stores the coordinator's state in an internal Kafka topic, [[dmt]], split into several [[cp|coordinator partitions]]. Every replica of a coordinator partition rebuilds that state into a local [[sqlite]] database, so lookups are local queries. It's a scoped-down version of <a href="https://cwiki.apache.org/confluence/spaces/KAFKA/pages/350783984/KIP-1164+Diskless+Coordinator">KIP-1164: Diskless Coordinator</a>.</p>
+<div class="callout warn"><b>Scope</b>The design targets new clusters only: there's no migration from Postgres and no rollback onto it. It adds no public Kafka protocol; the new inter-broker requests use private API keys numbered 504 and up. Transactions, follower reads, and changing the coordinator partition count after creation are out of scope.</div>
+</div>
+</section>
+
+<section id="ideas">
+<h2>Five ideas carry the design</h2>
+<p class="prose">If you remember nothing else, remember these. Every chapter that follows is one of them in action.</p>
+<div class="cards">
+  <div class="card"><h4><span class="num">1</span>Split by user partition</h4>Each [[user-partition]] belongs to exactly one coordinator partition, chosen by a hash. That coordinator partition's [[leader]] is its single writer, so offsets for a user partition always come from one place.</div>
+  <div class="card"><h4><span class="num">2</span>The log is the truth</h4>Every state change is a [[record]] in the coordinator partition's log. Replicas [[apply]] records to SQLite in log order, only up to the [[hw|high watermark]]. The same log produces the same database on every replica.</div>
+  <div class="card"><h4><span class="num">3</span>Commits split into parts</h4>A WAL object holds batches for several coordinator partitions, so the broker sends one commit [[part]] to each. Each part succeeds or fails on its own; there's no [[two-pc|two-phase commit]].</div>
+  <div class="card"><h4><span class="num">4</span>Every object has one owner</h4>No single coordinator partition sees all of an object's batches, so one of them, the [[owner]], records the object before upload and decides when it can be deleted. The others report to it.</div>
+  <div class="card"><h4><span class="num">5</span>Snapshots bound the log</h4>The coordinator log has no time-based retention. Each replica takes [[snapshot|snapshots]] of its database, and the leader trims the log only behind snapshots that enough replicas hold.</div>
+</div>
+</section>
+
+<section id="kafka">
+<h2>Kafka in five minutes</h2>
+<div class="prose">
+<p>The design reuses ordinary Kafka machinery for the coordinator topic. If these terms are familiar, skip ahead to <a href="#cluster">the example cluster</a>.</p>
+<ul>
+  <li>A topic has <b>partitions</b>. Each partition is an append-only log, and every record in it has an increasing <b>offset</b>.</li>
+  <li>Each partition has [[replica|replicas]] on several brokers. One replica is the [[leader]] and takes all writes. The others are [[follower|followers]] that copy the leader's log by fetching from it.</li>
+  <li>The [[isr|in-sync replica set (ISR)]] is the set of replicas that are caught up. The leader counts itself.</li>
+  <li>Each replica's [[leo|log end offset]] is the offset its next record will get. The [[hw|high watermark]] is the point below which every ISR member holds the record. A record below it is <b>committed</b>: it survives losing any one replica.</li>
+  <li>With [[acks|<code>acks=-1</code>]] and [[min-isr|<code>min.insync.replicas=2</code>]], a write succeeds only once the whole ISR has it, and the leader refuses writes while fewer than two replicas are in sync.</li>
+  <li>When a leader fails, the controller picks a new one from the ISR, and the [[leader-epoch]] goes up. With unclean leader election off, a replica outside the ISR never becomes leader, so committed records never disappear.</li>
+  <li>[[kraft|KRaft]] is Kafka's metadata quorum. It decides which topics and partitions exist and who leads them. Each broker keeps a [[metadata-image]] of that state.</li>
+</ul>
+<p>You can watch the high watermark move, and see a leader failure truncate uncommitted records, in the <a href="#overlay">overlay lab</a>.</p>
+</div>
+</section>
+
+<section id="cluster">
+<h2>The example cluster</h2>
+<div class="prose">
+<p>Every diagram on this page uses the same small cluster, so you can build a mental map once:</p>
+<ul>
+  <li>Three brokers, <b>B1</b>, <b>B2</b>, and <b>B3</b>, one per rack.</li>
+  <li><code>__diskless_metadata</code> with <b>four</b> coordinator partitions, <span class="cpb c0">CP0</span> to <span class="cpb c3">CP3</span>. The default is 8; four fits the screen. Each has three replicas, one on every broker. The leaders are spread out: B1 leads CP0 and CP3, B2 leads CP1, and B3 leads CP2.</li>
+  <li>A diskless topic <code>orders</code> with four partitions and topic ID <code>qruke9klPV8gd1JdINt4eA</code>. An older topic, <code>clicks</code>, already exists, and its partition <code>clicks-0</code> lives on CP2.</li>
+  <li>Object storage, a producer, a consumer, an admin client, and the KRaft controller.</li>
+</ul>
+<p>Each coordinator partition card shows the leader, the tail of its log, and a few rows of its SQLite state. Records above the red <b>HW</b> line are appended but not yet committed; they live in the leader's [[overlay]].</p>
+</div>
+<div class="widget">
+  <div class="wtitle">The cluster at rest</div>
+  <div class="wsub">This is the map. The chapters below animate requests across it.</div>
+  <div id="stage-map"></div>
+</div>
+</section>
+
+<section id="mapping">
+<h2>Who owns a partition: the mapping</h2>
+<div class="prose">
+<p>Every broker must agree, without asking anyone, which coordinator partition owns a user partition. If two brokers disagreed, one user partition would get two writers and duplicate offsets. So the mapping is a fixed function, part of the protocol, pinned by a test with fixed expected values:</p>
+<ol>
+  <li>Build the [[log-key]]: the 16 bytes of the topic ID, then the partition index as 4 big-endian bytes.</li>
+  <li>Hash it with Kafka's [[murmur2]] and make it positive: <code>slot = toPositive(murmur2(logKey)) % 4096</code>.</li>
+  <li>Map the [[slot]] to a coordinator partition: <code>slot % N</code>, where [[N]] is the partition count of <code>__diskless_metadata</code>.</li>
+</ol>
+<p>Because <code>N</code> must be a power of two, <code>slot % N</code> equals <code>toPositive(murmur2(logKey)) % N</code>. The slot layer costs nothing at runtime and stores nothing. It exists for a future change: if <code>N</code> doubles, coordinator partition <code>p</code> keeps half of its slots and hands the other half to the new partition <code>p + N</code>, instead of every user partition moving. Growing <code>N</code> still needs a state handoff, so for now the controller rejects <code>CreatePartitions</code> on the topic.</p>
+<p>The partition index is part of the key, so one busy topic spreads across coordinator partitions instead of loading one leader. Each leader also re-checks the mapping on every request and rejects a user partition that isn't its own with <code>INVALID_REQUEST</code>.</p>
+</div>
+<div class="widget" id="calc">
+  <div class="wtitle">Mapping calculator</div>
+  <div class="wsub">This runs the same <code>murmur2</code> as Kafka's <code>Utils</code> class, so the results are the ones a broker computes. Try changing N and see which partitions move.</div>
+  <div class="calc">
+    <div>
+      <div class="inputs">
+        <label for="m-topic">Topic ID</label>
+        <div style="display:flex;gap:6px"><input type="text" id="m-topic" spellcheck="false" maxlength="22"><button class="btn" id="m-rand">Random</button></div>
+        <label>Presets</label>
+        <div class="btnrow" style="margin:0"><button class="btn" data-preset="qruke9klPV8gd1JdINt4eA">orders</button><button class="btn" data-preset="lSqKAnujpeYyhpsR1neDtg">clicks</button></div>
+        <label for="m-part">Partition</label>
+        <input type="number" id="m-part" min="0" max="9999" value="2" style="width:90px">
+        <label for="m-n">N</label>
+        <select id="m-n"></select>
+      </div>
+      <div style="margin-top:10px;font-size:.85rem;color:var(--muted)">Log key (20 bytes): <span style="background:#e8edfd;padding:0 4px;border-radius:3px">topic ID</span> <span style="background:#fff1d6;padding:0 4px;border-radius:3px">partition</span></div>
+      <div class="bytes" id="m-bytes"></div>
+      <div id="m-err" style="color:var(--err);font-size:.85rem"></div>
+    </div>
+    <div>
+      <div class="pipeline" id="m-pipe"></div>
+      <div style="margin-top:10px;font-size:.86rem"><b>Where this topic's partitions land</b> at the selected N:</div>
+      <div class="spread" id="m-spread"></div>
+      <div class="split" id="m-split"></div>
+    </div>
+  </div>
+  <hr style="border:0;border-top:1px solid var(--line);margin:16px 0">
+  <div class="wtitle" style="font-size:.95rem">Preferred owner of an object</div>
+  <div class="wsub" style="margin-bottom:6px">The same hash picks an object's [[preferred-owner]] among its participants, over the UTF-8 bytes of the [[object-key]].</div>
+  <div class="calc">
+    <div class="inputs">
+      <label for="o-key">Object key</label>
+      <div style="display:flex;gap:6px"><input type="text" id="o-key" spellcheck="false" value="gIbaIOBupgjfpMPahmRfQw"><button class="btn" id="o-rand">Random</button></div>
+      <label>Participants</label>
+      <div id="o-parts"></div>
+    </div>
+    <div class="pipeline" id="o-pipe"></div>
+  </div>
+</div>
+</section>
+
+<section id="create">
+<h2>1. Create a topic</h2>
+<div class="prose">
+<p>Creating a diskless topic is mostly ordinary Kafka. What changes is who tells the coordinator. Today the controller calls the control plane while handling the request. In this design the controller never calls the coordinator: each coordinator leader notices the new topic in its metadata image and records it in its own log. That pattern, called [[reconciliation]], also handles deletion and outages.</p>
+</div>
+<div class="widget">
+  <div class="wtitle">Creating <code>orders</code></div>
+  <div class="wsub">An admin creates a diskless topic with four partitions.</div>
+  <div id="stage-create"></div>
+</div>
+</section>
+
+<section id="produce">
+<h2>2. Produce</h2>
+<div class="prose">
+<p>Producing is where most of the design lives. A broker closes a WAL file holding batches for several coordinator partitions. It has to get offsets from each one, make sure the object can never be forgotten, and survive crashes and retries at every step. The order of operations is the key:</p>
+<ol>
+  <li>Close the file, find its [[participant|participants]], and generate the object key.</li>
+  <li>Store an [[intent]] at the object's owner. Nothing is uploaded until this succeeds.</li>
+  <li>Upload the object.</li>
+  <li>Send one commit part to each participant, in parallel. Each leader assigns offsets and appends a record.</li>
+  <li>Reply to the producer once every part has an answer.</li>
+</ol>
+<p>Start with the happy path, then try the scenarios where something goes wrong.</p>
+</div>
+<div class="widget">
+  <div class="wtitle">Producing to <code>orders</code></div>
+  <div class="wsub">Pick a scenario. Each one starts from a freshly created topic.</div>
+  <div id="stage-produce"></div>
+</div>
+
+<h3 id="checks">What a leader checks before it commits a part</h3>
+<div class="prose">
+<p>Each coordinator leader runs every part through the same checks, in this order, on its single writer thread:</p>
+<ol>
+  <li><b>Age and identity.</b> Reject the part if its [[first-send|first-send time]] is older than the [[max-age|maximum commit age]] (5&nbsp;minutes by default), or if the metadata image holds a newer [[broker-epoch]] for the uploader, which means the uploader has restarted since. A newer epoch than the image's is fine, because the image can lag.</li>
+  <li><b>Predecessor fences.</b> [[fence|Fence]] any earlier keys the part lists as unconfirmed, unless they did commit. See the "one coordinator partition is down" scenario.</li>
+  <li><b>Is this a retry?</b> Look up the object key in the overlay and SQLite. If a commit for it is pending or applied, append nothing and return the stored result of every batch. If the key is fenced or has a [[tombstone]], reject the part.</li>
+  <li><b>Producer rules.</b> Check [[idempotent|idempotent producer]] epochs and sequence numbers against SQLite plus the overlay, as the Postgres functions do against committed state.</li>
+  <li><b>Reserve and append.</b> Assign offsets in the overlay and add one <em>file-committed</em> record to the current batch. The record stores the committed batches and the outcome of every batch that didn't commit, so a retry gets identical answers.</li>
+  <li><b>Apply and reply.</b> When the high watermark passes the record, apply it to SQLite together with the applied offset, drop the overlay entry, and send the reply.</li>
+</ol>
+</div>
+
+<h3 id="queues">Why each coordinator partition gets its own commit queue</h3>
+<div class="prose">
+<p>Today <code>FileCommitter</code> commits a broker's files on one thread, which keeps them in order. Ordering only matters within a user partition, which on this backend means within a coordinator partition. With one thread, a part stuck on one slow coordinator partition holds back every later file of the broker. Most files touch most coordinator partitions, so one sick coordinator partition would stall all diskless produce on every broker.</p>
+<p>The design gives <code>FileCommitter</code> one ordered [[commit-queue]] per coordinator partition. A part runs once its file is uploaded and the previous file's part on the same queue has finished. Every part of a file shares the file's [[commit-deadline]], measured from when the file closed. Postgres and in-memory map everything to one queue, so their behavior doesn't change.</p>
+</div>
+<div class="widget" id="qsim">
+  <div class="wtitle">Commit queue simulator</div>
+  <div class="wsub">Six files close one commit interval apart. Each block is one commit part. A part takes one interval when healthy; the deadline is four intervals after the file closes.</div>
+  <div class="btnrow"><b style="font-size:.85rem">Commit path:</b><button class="btn" data-q-mode="single">One thread per broker (rejected)</button><button class="btn" data-q-mode="queues">One queue per coordinator partition (design)</button></div>
+  <div class="btnrow"><b style="font-size:.85rem">CP2 is:</b><button class="btn" data-q-cp2="ok">healthy</button><button class="btn" data-q-cp2="slow">slow (2.5 intervals per part)</button><button class="btn" data-q-cp2="down">unavailable</button></div>
+  <div class="gantt"><div class="inner" id="q-gantt"></div></div>
+  <div id="q-summary" style="margin-top:8px"></div>
+</div>
+
+<h3 id="overlay">The overlay and the high watermark</h3>
+<div class="prose">
+<p>A leader can't apply a record to SQLite until the record is committed, because a leader change could still truncate it. But it can't wait for each commit to replicate before starting the next, or throughput would collapse, and the next commit needs to know which offsets the previous one took. The answer is the [[overlay]]: an in-memory list of records the leader has reserved or appended but not yet applied. A new commit reads SQLite <em>plus</em> the overlay, so two commits never get the same offsets.</p>
+<p>The leader runs this loop on Kafka's [[coordinator-runtime]], the framework behind the group and share coordinators, with one shard per coordinator partition. The runtime supplies the single writer thread, the [[linger|append linger]], [[parked-reply|parked replies]], and revert after a failed append. It writes through an Inkless <code>PartitionWriter</code> with <code>acks=-1</code>, so an append fails at once when the ISR is too small, instead of hanging until a timeout.</p>
+</div>
+<div class="widget" id="ollab">
+  <div class="wtitle">Overlay lab: one coordinator partition, three replicas</div>
+  <div class="wsub">Green cells are applied to SQLite. White cells are in the log but not yet committed. Striped cells exist only in the leader's overlay. Try: two commits, an append, one fetch. Then fail the leader before the second follower fetches.</div>
+  <div class="btnrow" id="ol-btns"></div>
+  <div id="ol-reps"></div>
+  <div class="olpanel" id="ol-panel"></div>
+  <div class="evlog" id="ol-log"></div>
+  <div class="meta" style="margin-top:6px">Simplified: in Kafka the leader learns a follower's position from that follower's next fetch, so the high watermark moves one fetch later than shown here.</div>
+</div>
+</section>
+
+<section id="consume">
+<h2>3. Consume</h2>
+<div class="prose">
+<p>Reading is simpler than writing. A consumer fetches from any broker. The broker needs [[batch-coordinates]] (which object, which bytes) for the offsets the consumer asked for. Most of the time its [[cache|batch coordinate cache]] has them. On a miss, it asks the coordinator leaders, then reads the bytes from object storage.</p>
+</div>
+<div class="widget">
+  <div class="wtitle">Fetching <code>orders-0</code> and <code>orders-2</code></div>
+  <div class="wsub">Starts from the end of the produce happy path.</div>
+  <div id="stage-consume"></div>
+</div>
+</section>
+
+<section id="cleanup">
+<h2>4. Clean up data</h2>
+<div class="prose">
+<p>Data leaves a diskless partition in four ways: retention, <code>DeleteRecords</code>, [[consolidation]] pruning, and topic purge. Each one removes batch rows from one coordinator partition. The hard part is the object: it holds batches for several coordinator partitions, and none of them knows when the others are done with it.</p>
+<p>The design solves this with ownership. Each participant tells the owner when it holds no batch of the object anymore; that's a [[release]]. The owner deletes the object once everyone has released it. Participants that never speak up get a [[fence]], which forces a final answer.</p>
+</div>
+<div class="widget">
+  <div class="wtitle">Retention releases an object</div>
+  <div class="wsub">Seven days after the happy-path produce, retention removes the batches of <code>gIbaIO…</code> one coordinator partition at a time.</div>
+  <div id="stage-cleanup"></div>
+</div>
+
+<h3 id="owner">Owner lab: when is it safe to delete?</h3>
+<div class="prose">
+<p>The owner deletes an object only when two things are true: every participant is released, and the intent is older than the [[max-age|maximum commit age]], <i>T</i>. The age matters because a delayed commit part can arrive until <i>T</i> has passed; after that, every leader rejects it.</p>
+<p>A participant the owner hasn't heard from is [[silent]]. It either still holds batches, or its part never committed, and only a fence can tell which. The owner fences only when a fence can unblock deletion: once <i>T</i> has passed and the owner itself, plus every participant it has heard from, are released. A fenced participant answers [[referenced]] if it holds a commit; otherwise it records the fence, rejects any later commit for the key, and counts as [[released]].</p>
+</div>
+<div class="widget" id="olab">
+  <div class="wtitle">Owner lab: object <code>gIbaIO…</code>, owner <span class="cpb c1">CP1</span></div>
+  <div class="wsub">Pick what happened during the produce, then move the clock and remove batches. The owner acts on its own whenever its conditions hold. Watch when it fences, and what a delayed commit part runs into.</div>
+  <div class="tabs" id="ow-scen"></div>
+  <div class="scen-desc" id="ow-desc"></div>
+  <div class="olab">
+    <div>
+      <div class="clockbar" id="ow-clock"></div>
+      <div class="parts" id="ow-parts"></div>
+      <div class="btnrow" id="ow-btns" style="margin-top:12px"></div>
+    </div>
+    <div>
+      <div style="font-weight:700;font-size:.9rem">Owner CP1's view</div>
+      <div class="conds" id="ow-conds"></div>
+      <div style="font-weight:700;font-size:.9rem;margin-top:10px">Object in storage</div>
+      <div id="ow-obj" style="margin-top:4px"></div>
+      <div class="evlog" id="ow-log"></div>
+    </div>
+  </div>
+</div>
+<div class="prose">
+<p>Two details keep the deletion state small and correct:</p>
+<ul>
+  <li><b>Tombstones.</b> If a participant releases an object less than <i>T</i> after the part was first sent, it keeps a [[tombstone]] for the key. Otherwise a delayed retry of the commit could put back batches that retention had removed. Tombstones and fences expire after 2<i>T</i> through a [[keys-expired]], so SQLite only holds keys for objects released in the last 10 minutes.</li>
+  <li><b>Stale owners.</b> If an intent is stored but its reply is lost, the broker falls back to another owner. The first partition now holds a [[stale-owner|stale]] intent. When it eventually fences, an answer names the real owner, so it drops its entry and never deletes the object.</li>
+</ul>
+<div class="callout"><b>Why not scan the bucket instead?</b>A scanner that deletes objects no coordinator partition knows about is simpler, but it fails toward data loss: a stale snapshot, a restore, or a shared bucket prefix makes live objects look unknown. Owner-based deletion fails toward a leak. See <a href="#alternatives">Roads not taken</a>.</div>
+</div>
+
+<h3 id="snapshots">Trim the coordinator's own log</h3>
+<div class="prose">
+<p>The coordinator topic has <code>retention.ms=-1</code> and <code>retention.bytes=-1</code>, so Kafka never deletes its segments by time or size. That's on purpose: the log is the source of truth, and a replica that loses its database rebuilds by replaying it. Without trimming, though, the log grows forever.</p>
+<p>So every replica takes its own [[snapshot|snapshots]] of SQLite, every hour or every 1&nbsp;GiB of applied log, whichever comes first, and keeps exactly two. The leader moves the [[log-start|log start offset]] forward only to a point that at least <code>min.insync.replicas</code> in-sync replicas, the leader included, hold a [[covering-snapshot|covering snapshot]] for. It uses its <em>older</em> snapshot, so the one it keeps after the next rotation still covers the log start.</p>
+</div>
+<div class="widget" id="snlab">
+  <div class="wtitle">Snapshot lab: how far can the leader trim?</div>
+  <div class="wsub">B1 leads. Append records, take snapshots on each replica, and watch the log start. Then take B3 out of the ISR, or replace its disk.</div>
+  <div class="btnrow" id="sn-btns"></div>
+  <div class="snapaxis" id="sn-axis"></div>
+  <div id="sn-rows"></div>
+  <div class="formula" id="sn-formula"></div>
+  <div class="evlog" id="sn-log"></div>
+</div>
+<div class="prose">
+<p>A replica that needs records below the log start, because it's new or its database is gone, fetches a covering snapshot from an in-sync follower if one has it, and from the leader only as a last resort. The leader is already busy with every commit. Transfers are resumable, 8&nbsp;MiB chunks are sent zero-copy from the file, and each broker serves one transfer at a time by default. Before the log start first moves, nothing needs a snapshot: a rebuild replays from offset 0.</p>
+</div>
+</section>
+
+<section id="deletion">
+<h2>5. Delete a topic</h2>
+<div class="prose">
+<p>Deletion runs the creation flow in reverse, and then hands off to cleanup. KRaft decides the topic is gone, each coordinator leader notices on its own, purges the partition's batches, and the purge releases objects through the same owner path as retention.</p>
+</div>
+<div class="widget">
+  <div class="wtitle">Deleting <code>orders</code></div>
+  <div class="wsub">Two objects exist: <code>gIbaIO…</code> holds only <code>orders</code> data, and <code>GFerPM…</code> also holds a <code>clicks-0</code> batch.</div>
+  <div id="stage-delete"></div>
+</div>
+<div class="prose">
+<h3>Other calls in a partition's life</h3>
+<ul>
+  <li><b>Classic-to-diskless switch.</b> After the controller commits the seal, the partition leader calls <code>initDisklessLog</code> from <code>InitDisklessLogManager</code>, and the coordinator appends a <em>diskless-log-initialized</em> record. <code>repairDisklessLog</code> follows the same pattern from <code>ReplicaManager</code>.</li>
+  <li><b>Consolidation and cross-tier offsets.</b> The broker that hosts a partition's local log decides the safe prune offset, from <code>highestOffsetInRemoteStorage</code> and the seal. It sends <code>pruneDisklessLogs</code> or <code>advanceCrossTierLogStartOffset</code> to the leader, which records the outcome. The leader never needs a local copy of the user partition's log.</li>
+  <li><b>Ordering.</b> A user partition's creation, deletion, initialization, repair, and commits all go to the same coordinator partition, so they're ordered in one log. Nothing depends on ordering across user partitions.</li>
+</ul>
+</div>
+</section>
+
+<section id="failures">
+<h2>When things fail</h2>
+<div class="prose">
+<p>A design like this is mostly defined by its failure behavior. Pick a failure to see what the system does and which mechanism keeps it safe. The produce scenarios and the labs already show several of these in motion.</p>
+</div>
+<div class="widget">
+  <div class="fx"><div class="list" id="fx-list"></div><div class="detail" id="fx-detail"></div></div>
+</div>
+</section>
+
+<section id="alternatives">
+<h2>Roads not taken</h2>
+<div class="prose"><p>Each of these alternatives was considered and rejected. The reasons explain a lot about the shape of the design.</p></div>
+<div id="alts"></div>
+</section>
+
+<section id="limits">
+<h2>Limits and open risks</h2>
+<div class="prose">
+<p>The design is a draft, and it's explicit about what isn't settled:</p>
+<ul>
+  <li><b>Capacity is the open risk.</b> Each coordinator leader handles every commit part, intent, release report, and cache-miss lookup for its user partitions, on top of its broker's own partitions. Splitting into <code>N</code> partitions reduces the work per batch, not the number of calls: an object usually touches most coordinator partitions, so each leader still gets about one part per broker per commit interval. A produce waits for its intent and then its slowest part, so tail latency grows with <code>N</code>. SQLite also shares the broker's heap, page cache, disk, and garbage collector. Benchmarks against Postgres, at <code>N=1</code> and <code>N=8</code>, decide how serious this is.</li>
+  <li><b>Clocks.</b> Deletion safety depends on broker clocks differing by less than one maximum commit age (5 minutes). With larger skew, a late part can pass the age check after its fence expired and point into a deleted object. The broker epoch check covers restarted brokers, not a live broker with a wrong clock. A metric for age-check rejections shows skew before it gets that large.</li>
+  <li><b>Durability cost.</b> <code>flush.messages=1</code> fsyncs every batch on every replica, because a correlated power loss would otherwise lose acknowledged commits. Benchmarks measure the cost; the fallback is Kafka's default flush with that exposure accepted.</li>
+  <li><b>Losing every covering snapshot.</b> If the leader's database is gone and no replica holds a covering snapshot, that coordinator partition can't serve. How the leader gives up leadership of one partition is an open item.</li>
+  <li><b>Provisional defaults.</b> <code>N=8</code>, the 5-minute maximum commit age, and the 1-hour and 1&nbsp;GiB snapshot triggers all wait on benchmarks.</li>
+</ul>
+</div>
+</section>
+
+<section id="reference">
+<h2>Reference tables</h2>
+<h3>Records in a coordinator partition's log</h3>
+<div class="prose"><p>Every change to coordinator state is one of these records. The badge is the label the diagrams use. Each record names its log with a <code>Log</code> struct (topic ID and partition index), so a future log key encoding adds a tagged field rather than a new record version.</p></div>
+<div id="rec-table"></div>
+<h3>Private RPCs</h3>
+<table>
+<tr><th>Request</th><th>Sent by</th><th>Handled by</th></tr>
+<tr><td>Register intent</td><td>Broker, before the upload: preferred owner first, then fallbacks</td><td>Owner's leader</td></tr>
+<tr><td>Commit file</td><td>Broker, one request per participant</td><td>Leader</td></tr>
+<tr><td>Find batches, list offsets</td><td>Broker, on cache miss</td><td>Leader</td></tr>
+<tr><td>Delete records</td><td>Broker, from the delete-records path</td><td>Leader</td></tr>
+<tr><td>Init diskless log, repair diskless log</td><td>User partition's leader</td><td>Leader</td></tr>
+<tr><td>Prune diskless logs, advance cross-tier log start</td><td>Broker that hosts the local log</td><td>Leader</td></tr>
+<tr><td>Report release</td><td>Participant leader's scheduler</td><td>Owner's leader</td></tr>
+<tr><td>Fence file</td><td>Owner's leader, for a silent participant</td><td>Participant's leader</td></tr>
+<tr><td>Fetch snapshot</td><td>Replica that needs records below the log start</td><td>In-sync follower with a covering snapshot, else the leader</td></tr>
+<tr><td>Report snapshot offset</td><td>Replica's scheduler</td><td>Leader</td></tr>
+</table>
+<p class="meta">Retention isn't an RPC: it runs locally on each leader. API key numbers are assigned in the 504+ range at implementation time.</p>
+<h3>Configuration</h3>
+<table>
+<tr><th>Setting</th><th>Value</th><th>Why</th></tr>
+<tr><td><code>inkless.control.plane.class</code></td><td><code>DisklessMetadataControlPlane</code></td><td>Selects this backend. A conflicting class with the feature finalized fails startup.</td></tr>
+<tr><td><code>diskless.metadata.topic.num.partitions</code></td><td>8, power of two from 1 to 4096</td><td>Sets N once, at creation. Later changes have no effect.</td></tr>
+<tr><td><code>diskless.metadata.topic.replication.factor</code></td><td>3</td><td>With <code>min.insync.replicas=2</code>, one replica can fail without stopping writes.</td></tr>
+<tr><td><code>diskless.metadata.commit.max.age.ms</code></td><td>5 minutes</td><td>Bounds late commits, owner fencing, and, doubled, tombstone expiry.</td></tr>
+<tr><td><code>diskless.metadata.snapshot.interval.ms</code></td><td>1 hour</td><td>Time trigger for each replica's snapshot.</td></tr>
+<tr><td><code>diskless.metadata.snapshot.max.bytes.between.snapshots</code></td><td>1 GiB</td><td>Byte trigger; replay time follows bytes, not records.</td></tr>
+<tr><td><code>diskless.metadata.snapshot.transfer.idle.timeout.ms</code></td><td>60 seconds</td><td>Rotation keeps a snapshot file while a transfer is active.</td></tr>
+<tr><td><code>diskless.metadata.snapshot.max.concurrent.transfers</code></td><td>1</td><td>Per broker, so a rebuild doesn't starve the source's own partitions.</td></tr>
+<tr><td>Topic: <code>flush.messages</code></td><td>1</td><td>Every replica fsyncs every batch.</td></tr>
+<tr><td>Topic: <code>retention.ms</code>, <code>retention.bytes</code></td><td>-1</td><td>Only the snapshot rule moves the log start.</td></tr>
+<tr><td>Topic: <code>unclean.leader.election.enable</code></td><td>false</td><td>Acknowledged records are never truncated.</td></tr>
+</table>
+</section>
+
+<section id="glossary">
+<h2>Glossary</h2>
+<input type="text" id="glsearch" placeholder="Filter terms…" aria-label="Filter glossary terms">
+<dl class="gloss" id="gloss"></dl>
+</section>
+
+</main>
+</div>
+<div class="tip" id="tip" role="tooltip"></div>
+<script>
+'use strict';
+const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
+const REDUCED=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/* ------------------------------------------------------------------ glossary */
+const GLOSSARY=[
+ ['diskless-topic','Diskless topic','A topic with <code>diskless.enable=true</code>. Its records live in object storage instead of on broker disks, and any broker accepts produce and fetch requests for any of its partitions.'],
+ ['user-partition','User partition','A partition of a diskless topic that clients produce to and consume from, such as <code>orders-0</code>. "User" tells it apart from the partitions of the internal coordinator topic.'],
+ ['batch','Batch','A group of records for one user partition that a producer sends together. A WAL object holds many batches.'],
+ ['wal-object','WAL object','One file in object storage that holds batches for many user partitions, often from several topics. A broker closes one every <code>produce.commit.interval.ms</code> (250 ms) or when its buffer reaches 8 MiB. The design also calls it a file.'],
+ ['object-key','Object key','The name of a WAL object in storage. The broker generates a fresh key for every upload, so the key identifies one upload. Coordinator leaders use it to recognize a retried commit.'],
+ ['batch-coordinates','Batch coordinates','Where a batch is: its user partition, offset range, object key, byte range in the object, and timestamps. <code>findBatches</code> returns coordinates, not data.'],
+ ['batch-coordinator','Batch coordinator','The service that orders diskless data. It assigns offsets to committed batches and answers where each batch is stored.'],
+ ['control-plane','<code>ControlPlane</code>','The Java interface between the broker and the batch coordinator. The in-memory and Postgres backends implement it today; this design adds <code>DisklessMetadataControlPlane</code>, selected with <code>inkless.control.plane.class</code>.'],
+ ['dmt','<code>__diskless_metadata</code>','The internal Kafka topic that holds the coordinator\'s state. N partitions (8 by default), replication factor 3, <code>min.insync.replicas=2</code>, unclean leader election off, <code>flush.messages=1</code>, and unlimited retention.'],
+ ['cp','Coordinator partition','One partition of <code>__diskless_metadata</code>. Each is an independent coordinator for the user partitions that map to it, with its own log, leader, SQLite database on each replica, snapshots, and overlay.'],
+ ['N','N','The partition count of <code>__diskless_metadata</code>: a power of two from 1 to 4096, 8 by default. Fixed when the controller creates the topic.'],
+ ['slot','Slot','A bucket between a user partition and a coordinator partition: <code>toPositive(murmur2(logKey)) % 4096</code>. Slot <i>s</i> belongs to coordinator partition <code>s % N</code>. Slots let N grow later by splitting partitions.'],
+ ['log-key','Log key','The 20 bytes the mapping hashes for a user partition: the 16-byte topic ID, most significant bits first, then the partition index as 4 big-endian bytes. In records it appears as the <code>Log</code> struct.'],
+ ['murmur2','murmur2','The 32-bit hash in Kafka\'s <code>Utils</code> class, the same one the default producer partitioner uses. <code>toPositive(x)</code> is <code>x &amp; 0x7fffffff</code>.'],
+ ['leader','Leader','The replica of a partition that accepts writes. On this page, "the leader" usually means a coordinator partition\'s leader: the single writer for every user partition that maps there.'],
+ ['follower','Follower','A replica that copies the leader\'s log by fetching. Coordinator followers apply records to their own SQLite but keep no overlay and answer no requests.'],
+ ['replica','Replica','A copy of a partition on one broker. Each coordinator partition has three by default.'],
+ ['isr','ISR','The in-sync replica set: the replicas that are caught up with the leader, the leader included.'],
+ ['hw','High watermark (HW)','The offset below which every in-sync replica holds the record. Records below it are committed and survive the loss of any one replica. Coordinator replicas apply records only up to the high watermark.'],
+ ['leo','Log end offset (LEO)','The offset the next appended record gets on a replica.'],
+ ['log-start','Log start offset','The first offset still stored in a partition\'s log. For <code>__diskless_metadata</code>, only the leader moves it, and only behind snapshots that enough replicas hold.'],
+ ['min-isr','<code>min.insync.replicas</code>','How many in-sync replicas, the leader included, must hold a record before an <code>acks=-1</code> write succeeds. 2 for <code>__diskless_metadata</code>.'],
+ ['acks','<code>acks=-1</code>','A write mode where the leader acknowledges only once every in-sync replica holds the record. If the ISR is below <code>min.insync.replicas</code>, the leader rejects the write at once with <code>NOT_ENOUGH_REPLICAS</code>.'],
+ ['leader-epoch','Leader epoch','A number that grows with each new leader of a partition. An offset plus an epoch identifies a log position even if a later leader truncates and rewrites the log.'],
+ ['fsync','fsync','A system call that forces written data from the operating system\'s page cache to disk. <code>flush.messages=1</code> makes every replica fsync every batch it appends.'],
+ ['kraft','KRaft','Kafka\'s Raft-based metadata quorum, run by the controllers. It decides which topics and partitions exist. In this design it never calls the coordinator.'],
+ ['metadata-image','Metadata image','Each broker\'s in-memory copy of cluster metadata: topics, partitions, leaders, ISRs, and broker registrations. <code>BrokerMetadataPublisher</code> delivers each update.'],
+ ['broker-epoch','Broker epoch','A number the controller assigns each time a broker registers, so it grows on every restart. Leaders reject intents and commit parts that carry an epoch older than the one in their metadata image.'],
+ ['delegate','Delegate','The <code>DisklessMetadataControlPlane</code> instance on each broker. It splits each call by coordinator partition, runs a part locally when this broker leads that partition or sends a private RPC otherwise, retries, and merges the results in request order.'],
+ ['part','Part','The piece of a call that targets one coordinator partition. Each commit part succeeds or fails on its own.'],
+ ['private-rpc','Private RPC','An inter-broker request with a private API key numbered 504 or higher. Not part of the public Kafka protocol.'],
+ ['record','Record','An entry in a coordinator partition\'s log. It describes one state change together with every value the leader decided, such as assigned offsets, so replicas never recompute anything.'],
+ ['apply','Apply','Writing a record\'s change into a replica\'s SQLite, in the same transaction as the applied offset. Apply never reads a clock or anything outside its own coordinator partition\'s log, so every replica reaches the same state.'],
+ ['applied-offset','Applied offset','The offset of the last record a replica applied, stored in SQLite with its leader epoch. Always at or below the high watermark.'],
+ ['sqlite','SQLite','An embedded SQL database that runs inside the broker process. Each replica keeps one database per coordinator partition it hosts. The database is a cache; the log is the source of truth.'],
+ ['overlay','Overlay','The leader\'s in-memory list of records it has reserved or appended but not yet applied. New commits read SQLite plus the overlay, so two commits never get the same offsets. Also called speculative state.'],
+ ['linger','Append linger','A short interval during which the leader collects reservations and then appends them as one log batch, so one replication round trip and one fsync cover many commits.'],
+ ['parked-reply','Parked reply','A reply the leader holds until the high watermark passes its record. If the record is dropped, the reply fails with a retriable error.'],
+ ['coordinator-runtime','<code>CoordinatorRuntime</code>','The Kafka framework that runs the group and share coordinators. It supplies the single writer thread, append linger, revert after a failed append, parked replies, and resignation handling. Each coordinator partition is one shard.'],
+ ['hw-gate','High-watermark gate','After an election, the new leader rejects requests with a retriable error until its high watermark reaches the log end offset it saw at election.'],
+ ['participant','Participant','A coordinator partition that a WAL object\'s batches map to. The broker sends one commit part to each participant.'],
+ ['owner','Owner','The one participant that stored an object\'s intent. It tracks every participant\'s state and is the only one that deletes the object. It never changes after the commit.'],
+ ['preferred-owner','Preferred owner','The participant at index <code>toPositive(murmur2(objectKey)) % participants</code> in the sorted participant list. The broker tries it first, then the next participants in sorted order.'],
+ ['intent','Intent','A record in the owner\'s log, written before the upload, naming the object key, the participants, the owner, and the uploader\'s broker ID and epoch. Every object in storage has one, so its owner can always resolve it.'],
+ ['owner-entry','Owner entry','The owner\'s state for one object: its participant set and each participant\'s state, silent, referenced, or released. The intent creates it.'],
+ ['silent','Silent','A participant the owner hasn\'t heard from yet, through either a release report or a fence answer.'],
+ ['referenced','Referenced','A participant that answered a fence by saying it holds a commit for the object. The owner waits for its release report.'],
+ ['released','Released','A participant that holds no batch of the object anymore, or that never committed and was fenced.'],
+ ['release','Release','A participant removing its last batch of an object, through retention, <code>DeleteRecords</code>, topic purge, or consolidation pruning. It reports the release to the owner.'],
+ ['fence','Fence','A request that forces a participant to decide about an object key. If it holds a commit for the key, it answers referenced. Otherwise it records the fence, rejects any later commit for the key, and counts as released. A fence is final.'],
+ ['predecessor-fence','Predecessor fence','A fence that rides on a broker\'s next commit part to the same coordinator partition, for an earlier part that reached its deadline unconfirmed. It stops the late part from landing after newer batches.'],
+ ['tombstone','Tombstone','A closed marker for an object key, kept by a participant that releases an object less than one maximum commit age after the part was first sent. It rejects a delayed retry of the commit.'],
+ ['keys-expired','Keys-expired record','A record the leader appends for tombstones and fences older than twice the maximum commit age, and for stored batch outcomes older than one. Apply removes them, which keeps SQLite bounded.'],
+ ['stale-owner','Stale owner','A participant that stored an intent whose reply was lost, after which the broker used another owner. It learns the real owner from a fence answer or its own part, drops its entry, and never deletes the object.'],
+ ['max-age','Maximum commit age (T)','<code>diskless.metadata.commit.max.age.ms</code>, 5 minutes by default (provisional). Leaders reject a part whose first-send time is older. It also bounds when the broker gives up, when the owner may fence, and, doubled, when tombstones and fences expire.'],
+ ['first-send','First-send time','The broker\'s wall-clock time when the delegate first sent a commit part. Every retry reuses it.'],
+ ['commit-deadline','Commit deadline','How long the delegate keeps retrying the parts of one file, measured from when the file closed. It never exceeds the produce request timeout.'],
+ ['unknown-outcome','Unknown outcome','A part that reached its deadline without a confirmation. Its batches get <code>KAFKA_STORAGE_ERROR</code>, but its last request may still commit later, until a fence, a broker restart, or the maximum commit age stops it.'],
+ ['kse','<code>KAFKA_STORAGE_ERROR</code>','The retriable error a producer gets for batches whose part didn\'t confirm, or when no participant could store the intent.'],
+ ['commit-queue','Commit queue','An ordered queue of commit parts in <code>FileCommitter</code>. The new backend has one per coordinator partition; Postgres and in-memory keep a single queue.'],
+ ['reconciliation','Reconciliation','A coordinator leader comparing the user partitions in its SQLite and overlay with the diskless user partitions in the metadata image that map to it, then appending partition-created or topic-deleted records for the differences.'],
+ ['cache','Batch coordinate cache','A per-broker in-memory cache of recently produced batch coordinates. It absorbs most fetch lookups; a miss goes to the coordinator leader.'],
+ ['snapshot','Snapshot','A point-in-time copy of a replica\'s SQLite database on local disk, named by the offset and epoch stored inside it. Each replica keeps two of its own; snapshots never go to object storage.'],
+ ['covering-snapshot','Covering snapshot','A snapshot at or above the log start offset. Loading it and replaying the log after it rebuilds the full state.'],
+ ['filecleaner','<code>FileCleaner</code>','The broker job that deletes objects marked for deletion, after the deletion grace period. In this design it runs on owner leaders only.'],
+ ['grace','Deletion grace period','How long <code>FileCleaner</code> waits after an object is marked for deletion, so readers holding cached coordinates can finish.'],
+ ['consolidation','Consolidation','Rewriting diskless WAL data into classic log segments and tiering them to remote storage. Afterward the diskless batches can be pruned.'],
+ ['idempotent','Idempotent producer','A producer with a producer ID, an epoch, and per-partition sequence numbers, so the coordinator can drop duplicate batches.'],
+ ['two-pc','Two-phase commit','A protocol that makes a change atomic across several parties with a prepare round and a commit round. This design doesn\'t use one.'],
+];
+const GL={}; GLOSSARY.forEach(([id,term,def])=>GL[id]={id,term,def});
+function inlineTerm(g){return /^[A-Z][a-z]/.test(g.term)?g.term[0].toLowerCase()+g.term.slice(1):g.term;}
+function terms(html){
+  return html.replace(/\[\[([\w-]+)(?:\|([^\]]+))?\]\]/g,(m,id,txt)=>{
+    const g=GL[id]; if(!g){console.warn('missing term',id);return txt||id;}
+    return `<span class="t" tabindex="0" data-g="${id}">${txt||inlineTerm(g)}</span>`;
+  });
+}
+
+/* ------------------------------------------------------------------ tooltips */
+const tip=$('#tip'); let tipFor=null;
+function showTip(el){
+  const g=GL[el.dataset.g]; if(!g) return; tipFor=el;
+  tip.innerHTML=`<b>${g.term}</b>${g.def}<div class="hint">Click for the glossary</div>`;
+  tip.classList.add('on');
+  const r=el.getBoundingClientRect(), tw=Math.min(360,window.innerWidth-20);
+  let x=r.left+window.scrollX; x=Math.min(x,window.scrollX+window.innerWidth-tw-12); x=Math.max(8,x);
+  let y=r.bottom+window.scrollY+8;
+  tip.style.left=x+'px'; tip.style.top=y+'px';
+  const th=tip.offsetHeight; if(r.bottom+th+16>window.innerHeight&&r.top>th+16) tip.style.top=(r.top+window.scrollY-th-8)+'px';
+}
+function hideTip(){tip.classList.remove('on');tipFor=null;}
+document.addEventListener('mouseover',e=>{const t=e.target.closest&&e.target.closest('.t'); if(t&&t!==tipFor) showTip(t); else if(!t&&tipFor&&document.activeElement!==tipFor) hideTip();});
+document.addEventListener('focusin',e=>{const t=e.target.closest&&e.target.closest('.t'); if(t) showTip(t);});
+document.addEventListener('focusout',e=>{if(e.target===tipFor) hideTip();});
+document.addEventListener('click',e=>{const t=e.target.closest&&e.target.closest('.t'); if(!t) return; hideTip(); jumpGloss(t.dataset.g);});
+document.addEventListener('keydown',e=>{if(e.key==='Enter'&&document.activeElement&&document.activeElement.classList.contains('t')) jumpGloss(document.activeElement.dataset.g); if(e.key==='Escape') hideTip();});
+function jumpGloss(id){const s=$('#glsearch'); if(s.value){s.value='';filterGloss('');} const dt=$('#g-'+id); if(!dt) return; dt.scrollIntoView({behavior:REDUCED?'auto':'smooth',block:'center'}); dt.classList.add('flash'); setTimeout(()=>dt.classList.remove('flash'),1600);}
+function buildGloss(){
+  const items=[...GLOSSARY].sort((a,b)=>a[1].replace(/<[^>]+>|_/g,'').localeCompare(b[1].replace(/<[^>]+>|_/g,''),'en',{sensitivity:'base'}));
+  $('#gloss').innerHTML=items.map(([id,term,def])=>`<dt id="g-${id}" data-s="${(term+' '+def).replace(/<[^>]+>/g,'').toLowerCase().replace(/"/g,'')}">${term}</dt><dd data-for="${id}">${def}</dd>`).join('');
+}
+function filterGloss(q){q=q.trim().toLowerCase(); $$('#gloss dt').forEach(dt=>{const ok=!q||dt.dataset.s.includes(q); dt.style.display=ok?'':'none'; dt.nextElementSibling.style.display=ok?'':'none';});}
+
+/* ------------------------------------------------------------------ murmur2, as in org.apache.kafka.common.utils.Utils */
+function murmur2(d){
+  const len=d.length,m=0x5bd1e995,r=24; let h=(0x9747b28c^len)|0; const l4=len>>2;
+  for(let i=0;i<l4;i++){const o=i<<2; let k=(d[o]|(d[o+1]<<8)|(d[o+2]<<16)|(d[o+3]<<24))|0; k=Math.imul(k,m); k^=k>>>r; k=Math.imul(k,m); h=Math.imul(h,m); h^=k;}
+  const idx=l4<<2;
+  switch(len-idx){case 3:h^=(d[idx+2]&0xff)<<16; /* falls through */ case 2:h^=(d[idx+1]&0xff)<<8; /* falls through */ case 1:h^=d[idx]&0xff; h=Math.imul(h,m);}
+  h^=h>>>13; h=Math.imul(h,m); h^=h>>>15; return h|0;
+}
+const toPositive=x=>x&0x7fffffff;
+function b64uDecode(s){
+  if(!/^[A-Za-z0-9_-]{22}$/.test(s)) return null;
+  const bin=atob(s.replace(/-/g,'+').replace(/_/g,'/')+'=='); if(bin.length!==16) return null;
+  return Uint8Array.from(bin,c=>c.charCodeAt(0));
+}
+function b64uEncode(bytes){return btoa(String.fromCharCode(...bytes)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');}
+function randomUuid(){const b=new Uint8Array(16); crypto.getRandomValues(b); return b64uEncode(b);}
+function logKey(idBytes,p){const b=new Uint8Array(20); b.set(idBytes,0); new DataView(b.buffer).setInt32(16,p,false); return b;}
+const utf8=s=>new TextEncoder().encode(s);
+
+/* ------------------------------------------------------------------ stage engine */
+const KINDS={pc:['PC','partition created'],td:['TD','topic deleted'],in:['IN','intent registered'],fc:['FC','file committed'],ps:['PS','participant state recorded'],oa:['OA','owner accepted'],ff:['FF','file fenced'],dm:['DM','file delete marked'],fd:['FD','file deleted'],ra:['RA','retention applied'],dp:['DP','deleted log purged'],ke:['KE','keys expired'],od:['OD','owner entry dropped']};
+const ARROW={req:'#3b5bdb',reply:'#2b8a3e',err:'#c92a2a',meta:'#862e9c',store:'#a85d00',local:'#3b5bdb',repl:'#868e96'};
+const CPCOL=['var(--cp0)','var(--cp1)','var(--cp2)','var(--cp3)'];
+const CPHEX=['#3b5bdb','#0c8599','#7048e8','#d9480f'];
+const KEY_A='gIbaIOBupgjfpMPahmRfQw', KEY_B='GFerPMIPMmWKu3T40gcqHQ', KEY_F2='pX0aQb7nRWe1v2cK9dLmYg';
+const sk=k=>k.slice(0,6)+'…';
+const cpb=i=>`<span class="cpb c${i}">CP${i}</span>`;
+
+function baseState(){
+  const nx=[120,87,64,101];
+  return {
+    n:{admin:{note:''},producer:{note:''},consumer:{note:''},ctrl:{lines:['…earlier metadata']},s3:{},b1:{note:''},b2:{note:''},b3:{note:''}},
+    cp:[0,1,2,3].map(i=>({i,leader:['B1','B2','B3','B1'][i],log:[],next:nx[i],hw:nx[i],sql:[],status:''})),
+    obj:[],
+  };
+}
+/* state helpers used by the scenarios */
+function R(s,i,k,txt){const c=s.cp[i]; c.log.push({o:c.next++,k,txt}); return c.next-1;}
+function HW(s,...is){is.forEach(i=>s.cp[i].hw=s.cp[i].next);}
+function SQ(s,i,tab,txt){s.cp[i].sql.push([tab,txt]);}
+function SQrm(s,i,tab,match){s.cp[i].sql=s.cp[i].sql.filter(r=>!(r[0]===tab&&r[1].includes(match)));}
+function SQset(s,i,tab,match,txt){const r=s.cp[i].sql.find(r=>r[0]===tab&&r[1].includes(match)); if(r) r[1]=txt; else SQ(s,i,tab,txt);}
+function OBJ(s,key,st,note){const o=s.obj.find(o=>o.key===key); if(o){o.st=st; if(note!==undefined)o.note=note;} else s.obj.push({key,st,note:note||''});}
+
+function makeStage(host,cfg){
+  const uid='s'+Math.random().toString(36).slice(2,8);
+  const scen=cfg.scenarios; let sc=0, i=0, timer=null;
+  const tabs=scen.length>1?`<div class="tabs">${scen.map((x,k)=>`<button class="btn" data-sc="${k}">${x.label}</button>`).join('')}</div><div class="scen-desc"></div>`:'';
+  host.innerHTML=`${tabs}<div class="stagewrap" tabindex="0" aria-label="Diagram. Use the left and right arrow keys to step."><div class="stagescroll"><div class="stage">
+    <div class="row r1"><div class="node" data-id="admin"></div><div class="node" data-id="producer"></div><div class="node" data-id="consumer"></div><div class="node" data-id="ctrl"></div><div class="node" data-id="s3"></div></div>
+    <div class="row r2"><div class="node" data-id="b1"></div><div class="node" data-id="b2"></div><div class="node" data-id="b3"></div></div>
+    <div class="row r3">${[0,1,2,3].map(k=>`<div class="node cp" data-id="cp${k}"></div>`).join('')}</div>
+    <svg class="wires"></svg></div></div>
+    ${cfg.static?'':`<div class="cap"><div><div class="capn"></div><h4></h4><div class="capd"></div></div></div>
+    <div class="ctrls"><button class="btn" data-act="prev">◀ Back</button><button class="btn pri" data-act="next">Next ▶</button><button class="btn" data-act="play">▶ Play</button><button class="btn" data-act="reset">↺ Restart</button><div class="dots"></div><span class="kbd">← → keys work when the diagram is focused</span></div>`}
+    <div class="legend">${[['req','request'],['reply','reply'],['err','error'],['meta','metadata'],['store','object storage']].map(([k,l])=>`<span><i style="background:${ARROW[k]}"></i>${l}</span>`).join('')}
+    ${(()=>{const ks=Object.entries(KINDS).filter(([k])=>!cfg.kinds||cfg.kinds.includes(k)); return ks.length?`<span style="margin-left:8px">records:</span>`+ks.map(([k,[a,l]])=>`<span class="k-${k}"><em class="kd">${a}</em>${l}</span>`).join(''):'';})()}
+    <span style="margin-left:8px"><i style="background:repeating-linear-gradient(135deg,#fff,#fff 3px,#9fb0e8 3px,#9fb0e8 6px);height:10px;width:16px"></i>above HW: in the leader's overlay</span></div>`;
+  const stage=$('.stage',host), svg=$('svg.wires',host), wrap=$('.stagewrap',host);
+  const node=id=>$(`.node[data-id="${id}"]`,stage);
+  let lastArrows=[];
+
+  function stateAt(k){const S=scen[sc]; const s=(S.init||cfg.init||baseState)(); for(let j=0;j<=k&&j<S.steps.length;j++){const f=S.steps[j].do; if(f) f(s);} return s;}
+
+  function render(){
+    const S=scen[sc], step=S.steps[i]||{}; const s=stateAt(i), prev=i>0?stateAt(i-1):null;
+    const hl=new Set(step.hl||[]); (step.a||[]).forEach(a=>{hl.add(a[0]);hl.add(a[1]);});
+    const prevRows=new Set(); if(prev) prev.cp.forEach(c=>c.sql.forEach(r=>prevRows.add(c.i+'|'+r[0]+'|'+r[1])));
+    const set=(id,html,cls)=>{const el=node(id); el.innerHTML=html; el.classList.toggle('hl',hl.has(id)); el.classList.toggle('down',!!cls);};
+    const n=s.n;
+    set('admin',`<div class="nm">Admin client</div><div class="note">${n.admin.note||'&nbsp;'}</div>`);
+    set('producer',`<div class="nm">Producer</div><div class="note">${n.producer.note||'&nbsp;'}</div>`);
+    set('consumer',`<div class="nm">Consumer</div><div class="note">${n.consumer.note||'&nbsp;'}</div>`);
+    set('ctrl',`<div class="nm">Controller <span class="muted">KRaft metadata log</span></div><div class="ctl-lines">${n.ctrl.lines.slice(-3).map(l=>`<div>${l}</div>`).join('')}</div>`);
+    set('s3',`<div class="nm">Object storage</div><div class="objs">${s.obj.length?s.obj.map(o=>`<div class="obj ${o.st}" title="${o.key}">${sk(o.key)} ${o.note?'· '+o.note:''}${o.st==='marked'?' · marked':''}${o.st==='uploading'?' · uploading':''}</div>`).join(''):'<div class="empty">no objects of interest</div>'}</div>`);
+    ['b1','b2','b3'].forEach((b,bi)=>{
+      const name=b.toUpperCase(); const leads=s.cp.filter(c=>c.leader===name).map(c=>cpb(c.i)).join(' ');
+      set(b,`<div class="nm">${name} <span class="muted">rack ${'abc'[bi]}</span>${n[b].down?'<span class="badge">down</span>':''}</div><div class="note">${n[b].down?'':'leads '+(leads||'nothing')}</div><div class="note">${n[b].note||'&nbsp;'}</div>`,n[b].down);
+    });
+    s.cp.forEach(c=>{
+      const shown=c.log.slice(-4); let lg='<div class="lg more">… earlier records</div>'; let hwDone=false;
+      shown.forEach(r=>{ if(!hwDone&&r.o>=c.hw){lg+='<div class="hwl">HW</div>';hwDone=true;} const [ab,full]=KINDS[r.k]; lg+=`<div class="lg k-${r.k}${r.o>=c.hw?' pend':''}" title="${full}: ${r.txt}"><span class="off">${r.o}</span><span class="kd">${ab}</span><span class="tx">${r.txt}</span></div>`;});
+      if(!hwDone) lg+='<div class="hwl">HW</div>';
+      const rows=c.sql.slice(-4); const more=c.sql.length-rows.length;
+      const sq=(more>0?`<div class="empty">+${more} more rows</div>`:'')+(rows.length?rows.map(r=>`<div class="sq${prev&&!prevRows.has(c.i+'|'+r[0]+'|'+r[1])?' new':''}" title="${r[0]}: ${r[1]}"><span class="tb">${r[0]}</span><span class="v">${r[1]}</span></div>`).join(''):'<div class="empty">no rows for these topics</div>');
+      const pend=c.log.filter(r=>r.o>=c.hw).length;
+      const badge=c.status==='down'?'<span class="badge">unavailable</span>':c.status==='noleader'?'<span class="badge">no leader</span>':c.status==='gate'?'<span class="badge gate">HW gate closed</span>':'';
+      set('cp'+c.i,`<div class="cph" style="background:${CPCOL[c.i]}"><b>CP${c.i}</b><span>${c.status==='noleader'?'electing…':'leader '+c.leader} ${badge}</span></div>
+        <div class="sec"><span>log</span><span>${pend?pend+' in overlay':''}</span></div><div class="lgbox">${lg}</div>
+        <div class="sec"><span>SQLite (every replica)</span></div><div class="sqlbox">${sq}</div>`, c.status==='down'||c.status==='noleader');
+    });
+    if(!cfg.static){
+      $('.capn',host).textContent=`Step ${i+1} of ${S.steps.length}`;
+      $('.cap h4',host).innerHTML=terms(step.t||'');
+      $('.capd',host).innerHTML=terms(step.d||'');
+      $('.dots',host).innerHTML=S.steps.map((_,k)=>`<button aria-label="Step ${k+1}" class="${k<i?'done':''}${k===i?' cur':''}" data-k="${k}"></button>`).join('');
+      $('[data-act=prev]',host).disabled=i===0; $('[data-act=next]',host).disabled=i===S.steps.length-1;
+      $('[data-act=play]',host).textContent=timer?'❚❚ Pause':'▶ Play';
+    }
+    if(tabs){$$('.tabs .btn',host).forEach((b,k)=>b.classList.toggle('on',k===sc)); $('.scen-desc',host).innerHTML=terms(S.desc||'');}
+    lastArrows=step.a||[];
+    requestAnimationFrame(drawArrows);
+  }
+
+  function rectOf(id){const el=node(id), sr=stage.getBoundingClientRect(), r=el.getBoundingClientRect(); return {x:r.left-sr.left,y:r.top-sr.top,w:r.width,h:r.height};}
+  function drawArrows(){
+    const W=stage.scrollWidth,H=stage.scrollHeight; svg.setAttribute('width',W); svg.setAttribute('height',H); svg.setAttribute('viewBox',`0 0 ${W} ${H}`);
+    let out=`<defs>${Object.entries(ARROW).map(([k,c])=>`<marker id="${uid}-${k}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="${c}"/></marker>`).join('')}</defs>`;
+    const pairCount={}, pairIdx={};
+    lastArrows.forEach(a=>{const k=[a[0],a[1]].sort().join('~'); pairCount[k]=(pairCount[k]||0)+1;});
+    const labels=[];
+    lastArrows.forEach(([f,t,label,kind='req'])=>{
+      const A=rectOf(f),B=rectOf(t); const key=[f,t].sort().join('~'); const idx=pairIdx[key]=(pairIdx[key]||0)+1; const cnt=pairCount[key];
+      const off=(idx-1-(cnt-1)/2)*18; const sameRow=Math.abs(A.y-B.y)<4;
+      let p1,p2,c;
+      if(sameRow){
+        const dir=f<t?1:-1;
+        p1={x:A.x+A.w/2+off*dir*0.6,y:A.y+A.h}; p2={x:B.x+B.w/2-off*dir*0.6,y:B.y+B.h};
+        const low=B.y>200, depth=(low?66:44)+(idx-1)*(low?64:40)+Math.abs(p2.x-p1.x)*(low?0.09:0.02);
+        c={x:(p1.x+p2.x)/2,y:Math.max(p1.y,p2.y)+depth};
+      } else {
+        const down=B.y>A.y, acx=A.x+A.w/2, bcx=B.x+B.w/2, canon=f<t?1:-1;
+        const sx=Math.max(A.x+16,Math.min(A.x+A.w-16,acx+(bcx-acx)*0.3))+off*canon*1.4;
+        const ex=Math.max(B.x+16,Math.min(B.x+B.w-16,bcx+(acx-bcx)*0.3))+off*canon*1.4;
+        p1={x:sx,y:down?A.y+A.h:A.y}; p2={x:ex,y:down?B.y:B.y+B.h};
+        c={x:(p1.x+p2.x)/2+off*canon*0.6,y:(p1.y+p2.y)/2};
+      }
+      const d=`M${p1.x.toFixed(1)},${p1.y.toFixed(1)} Q${c.x.toFixed(1)},${c.y.toFixed(1)} ${p2.x.toFixed(1)},${p2.y.toFixed(1)}`;
+      const col=ARROW[kind]||ARROW.req;
+      out+=`<path class="fade" d="${d}" stroke="${col}" ${kind==='local'?'stroke-dasharray="5 4"':''} marker-end="url(#${uid}-${kind})"/>`;
+      if(!REDUCED) out+=`<circle r="3.4" fill="${col}"><animateMotion dur="1.7s" repeatCount="indefinite" path="${d}"/></circle>`;
+      const m={x:.25*p1.x+.5*c.x+.25*p2.x,y:.25*p1.y+.5*c.y+.25*p2.y};
+      if(label) labels.push({m,label,col});
+    });
+    labels.forEach(({m,label,col},k)=>{out+=`<g class="lb fade" data-k="${k}"><rect rx="4" fill="#fff" stroke="${col}" stroke-width="1"/><text class="lbl" fill="${col}" x="${m.x.toFixed(1)}" y="${(m.y+3.5).toFixed(1)}" text-anchor="middle">${label}</text></g>`;});
+    svg.innerHTML=out;
+    $$('g.lb',svg).forEach(g=>{const tx=$('text',g),bb=tx.getBBox(),rc=$('rect',g); rc.setAttribute('x',bb.x-5); rc.setAttribute('y',bb.y-2); rc.setAttribute('width',bb.width+10); rc.setAttribute('height',bb.height+4);});
+  }
+
+  function go(k){const S=scen[sc]; i=Math.max(0,Math.min(S.steps.length-1,k)); render();}
+  function stop(){if(timer){clearInterval(timer);timer=null;}}
+  host.addEventListener('click',e=>{
+    const b=e.target.closest('button'); if(!b||!host.contains(b)) return;
+    if(b.dataset.sc!==undefined){stop(); sc=+b.dataset.sc; i=0; render(); return;}
+    if(b.dataset.k!==undefined){stop(); go(+b.dataset.k); return;}
+    const act=b.dataset.act;
+    if(act==='next'){stop();go(i+1);} else if(act==='prev'){stop();go(i-1);} else if(act==='reset'){stop();go(0);}
+    else if(act==='play'){ if(timer){stop();render();} else { if(i===scen[sc].steps.length-1) i=0; timer=setInterval(()=>{ if(i>=scen[sc].steps.length-1){stop();render();return;} go(i+1);},7000); render(); } }
+  });
+  wrap.addEventListener('keydown',e=>{if(e.key==='ArrowRight'){e.preventDefault();stop();go(i+1);} else if(e.key==='ArrowLeft'){e.preventDefault();stop();go(i-1);}});
+  new ResizeObserver(()=>requestAnimationFrame(drawArrows)).observe(stage);
+  render();
+  return {go};
+}
+</script>
+<script>
+'use strict';
+/* ------------------------------------------------------------------ scenario states */
+function initEmpty(){const s=baseState(); SQ(s,2,'logs','clicks-0 · start 0 · next 5310'); SQ(s,2,'batches','clicks-0 … earlier batches'); return s;}
+function initTopic(){
+  const s=initEmpty();
+  SQ(s,0,'logs','orders-2 · start 0 · next 0');
+  SQ(s,1,'logs','orders-0 · start 0 · next 0'); SQ(s,1,'logs','orders-3 · start 0 · next 0');
+  SQ(s,3,'logs','orders-1 · start 0 · next 0');
+  s.n.ctrl.lines.push('TopicRecord orders qruke9kl…','PartitionRecord ×4');
+  return s;
+}
+function applyHappy(s,upto){P_HAPPY.slice(0,upto).forEach(st=>st.do&&st.do(s));}
+function clearNotes(s){['admin','producer','consumer','b1','b2','b3'].forEach(k=>s.n[k].note='');}
+function initCommitted(){const s=initTopic(); applyHappy(s,P_HAPPY.length); clearNotes(s); return s;}
+function commitRows(s,i,part,offs,bytes,next){
+  SQset(s,i,'logs',part,`${part} · start 0 · next ${next}`);
+  SQ(s,i,'files',`${sk(KEY_A)} · owner CP1`);
+  SQ(s,i,'batches',`${part} ${offs} → ${sk(KEY_A)} bytes ${bytes}`);
+}
+
+/* ------------------------------------------------------------------ 1. topic creation */
+const P_CREATE=[
+ {t:'An admin creates a diskless topic',a:[['admin','ctrl','CreateTopics orders ×4']],do:s=>{s.n.admin.note='orders · 4 partitions · <code>diskless.enable=true</code>';},
+  d:'An operator creates <code>orders</code> with four partitions and <code>diskless.enable=true</code>. The request goes to the [[kraft|KRaft]] controller, as for any topic.'},
+ {t:'KRaft commits the topic, and only the topic',a:[['ctrl','admin','success','reply']],do:s=>{s.n.ctrl.lines.push('TopicRecord orders qruke9kl…','PartitionRecord ×4');},
+  d:'The controller writes the topic and its partitions to the metadata log and answers. It doesn\'t call the coordinator. Today, <code>ControllerApis.createTopicsDiskless</code> calls the control plane and can wait up to ten seconds for metadata on a request thread; this design removes that call. KRaft assigns the topic ID <code>qruke9klPV8gd1JdINt4eA</code>, and the coordinator keys everything by that ID, not by the name.'},
+ {t:'Every broker learns about the topic',a:[['ctrl','b1','metadata update','meta'],['ctrl','b2','metadata update','meta'],['ctrl','b3','metadata update','meta']],do:s=>{['b1','b2','b3'].forEach(b=>s.n[b].note='image: orders (4 partitions)');},
+  d:'The [[metadata-image]] update reaches every broker through <code>BrokerMetadataPublisher.onMetadataUpdate</code>, the same hook the group and share coordinators use to learn about topic changes.'},
+ {t:'Each coordinator leader finds the partitions that map to it',hl:['cp0','cp1','cp3'],do:s=>{R(s,0,'pc','partition created orders-2'); R(s,1,'pc','partition created orders-0'); R(s,1,'pc','partition created orders-3'); R(s,3,'pc','partition created orders-1');},
+  d:'On every metadata update, each coordinator leader runs [[reconciliation]]. It lists the diskless user partitions in the image that <a href="#mapping">map</a> to it, compares them with its SQLite rows and its pending [[overlay]] entries, and appends a <em>partition-created</em> record for each one that\'s missing. CP1 gets <code>orders-0</code> and <code>orders-3</code>, CP3 gets <code>orders-1</code>, and CP0 gets <code>orders-2</code>. Nothing maps to CP2, so it does nothing. The records sit above the high watermark until they\'re replicated.'},
+ {t:'Too early: a produce before reconciliation finishes',a:[['producer','b3','Produce orders-1'],['b3','producer','retriable error','err']],hl:['cp3'],do:s=>{s.n.producer.note='retries orders-1';},
+  d:'The producer already sees the topic in its metadata, but CP3 hasn\'t applied <code>orders-1</code> yet. A produce to a partition its leader hasn\'t reconciled gets a retriable error, and the client retries. This window lasts until the records pass the high watermark, usually milliseconds.'},
+ {t:'Replicated, committed, applied',do:s=>{HW(s,0,1,3); SQ(s,0,'logs','orders-2 · start 0 · next 0'); SQ(s,1,'logs','orders-0 · start 0 · next 0'); SQ(s,1,'logs','orders-3 · start 0 · next 0'); SQ(s,3,'logs','orders-1 · start 0 · next 0'); s.n.producer.note='';},hl:['cp0','cp1','cp3'],
+  d:'The followers fetch the records like any Kafka log. Once every in-sync replica has them, the [[hw]] passes them, and every [[replica]] [[apply|applies]] them to its own SQLite database: one new <code>logs</code> row per partition, highlighted in yellow. Produce to <code>orders</code> now works.'},
+ {t:'Why a record, and not a direct table write?',hl:['cp0','cp1','cp3'],
+  d:'Each replica could insert the rows itself when its own metadata image changes. But each replica would do it at a different point relative to the commits in its log, so two replicas could disagree. A record fixes where the change sits among the commits, and the same log then produces the same state on every replica. That\'s the core rule of the design: <b>apply reads nothing outside its own coordinator partition\'s log, and it never reads a clock.</b> Even time-based decisions, such as expiring old keys, are records that the leader appends.'},
+ {t:'Duplicates and outages are harmless',hl:['ctrl'],
+  d:'Two metadata updates can arrive before the first partition-created record applies. The diff counts pending overlay entries as well as SQLite rows, so the leader doesn\'t append a second record; if one ever slipped through, apply treats it as a no-op. If a coordinator leader is down when the topic is created, the controller doesn\'t wait for it. The next leader reconciles on election. The metadata log is the retry record, so the coordinator needs no queue of its own.'},
+];
+
+/* ------------------------------------------------------------------ 2. produce */
+const P_HAPPY=[
+ {t:'A producer sends to any broker',a:[['producer','b2','Produce orders-0, -1, -2']],do:s=>{s.n.producer.note='one batch each to orders-0, orders-1, orders-2'; s.n.b2.note='open file: orders-0 · orders-1 · orders-2';},
+  d:'Diskless topics have no partition leader on the data path, so any broker accepts produce for any partition. B2 collects batches from all its producers into one open [[wal-object|WAL file]]. This producer sends one [[batch]] each to <code>orders-0</code>, <code>orders-1</code>, and <code>orders-2</code>.'},
+ {t:'B2 closes the file and finds its participants',hl:['b2'],do:s=>{s.n.b2.note=`closed · key <code>${sk(KEY_A)}</code> · participants CP0, CP1, CP3 · owner CP1`;},
+  d:`Every 250&nbsp;ms, or once 8&nbsp;MiB has accumulated, B2 closes the file. It maps each batch to its coordinator partition: <code>orders-2</code> to CP0, <code>orders-0</code> to CP1, and <code>orders-1</code> to CP3. Those three are the file's [[participant|participants]]. B2 generates the [[object-key]] <code>${KEY_A}</code> now, before the upload, so the next step can name it. Hashing that key picks index 1 of the sorted list [CP0, CP1, CP3], so CP1 is the [[preferred-owner]]. You can check this in the <a href="#calc">calculator</a>.`},
+ {t:'Store the intent at the owner, before uploading',a:[['b2','cp1','register intent','local']],do:s=>{R(s,1,'in',`intent ${sk(KEY_A)} · CP0,1,3 · owner CP1 · B2 epoch 17`);},
+  d:'B2 leads CP1, so the delegate runs this request locally. For any other owner it would send a [[private-rpc]] to that partition\'s leader. The [[intent]] names the object key, the participants, the owner, and B2\'s broker ID and [[broker-epoch]]. CP1 checks the epoch against its metadata image, so a request from an earlier incarnation of B2 is rejected.'},
+ {t:'The intent becomes durable',a:[['cp1','b2','intent stored','reply']],do:s=>{HW(s,1); SQ(s,1,'owner',`${sk(KEY_A)} CP0 silent · CP3 silent`);},
+  d:'CP1 appends with <code>acks=-1</code>, and every replica [[fsync|fsyncs]] the record (<code>flush.messages=1</code>). Once the high watermark passes it, apply creates CP1\'s [[owner-entry]]: the other participants start out [[silent]]. From now on, the object can\'t be forgotten. Whatever happens next, its owner knows the key and will resolve it. If no participant can store the intent, B2 uploads nothing, and the produce fails with [[kse]].'},
+ {t:'Upload the object',a:[['b2','s3','PutObject '+sk(KEY_A),'store']],do:s=>{OBJ(s,KEY_A,'stored','3 batches'); s.n.b2.note=`uploaded <code>${sk(KEY_A)}</code>`;},
+  d:'Only now does B2 upload the object, with one <code>PutObject</code>. Every upload retry reuses the same key. Storage never exposes a partly uploaded object, and readers find an object only through committed batches, so nothing reads it before the commit.'},
+ {t:'Split the commit into parts',a:[['b2','cp0','part: orders-2'],['b2','cp1','part: orders-0','local'],['b2','cp3','part: orders-1']],do:s=>{s.n.b2.note='3 parts in flight · same key · first-send 12:00:00.31';},
+  d:'The [[delegate]] sends one commit [[part]] per participant, in parallel. Parts for CP0 and CP3 go to their leader, B1, and the part for CP1 runs locally. Each part carries the object key, the participant set, the owner, B2\'s broker ID and epoch, the [[first-send|first-send time]], and only the batches that map to that coordinator partition. There\'s no [[two-pc|two-phase commit]]: each part succeeds or fails on its own, as a produce to several classic partitions can.'},
+ {t:'Each leader checks, reserves, and appends',hl:['cp0','cp1','cp3'],do:s=>{R(s,0,'fc',`${sk(KEY_A)} orders-2 → 0–9`); R(s,1,'fc',`${sk(KEY_A)} orders-0 → 0–4`); R(s,3,'fc',`${sk(KEY_A)} orders-1 → 0–7`);},
+  d:'Each leader runs the part through its <a href="#checks">checks</a>: the age limit, the broker epoch, any predecessor fences, a lookup of the object key in case this is a retry, and the producer sequence rules. Then it assigns the next offsets from SQLite plus its [[overlay]], records the reservation there so the next commit sees it, and adds a <em>file-committed</em> record to the batch it\'s building. After one [[linger|append linger]], the batch goes to the log in one append: one replication round trip and one fsync for many commits.'},
+ {t:'Committed: apply, then reply',a:[['cp0','b2','orders-2 @0','reply'],['cp1','b2','orders-0 @0','reply'],['cp3','b2','orders-1 @0','reply']],
+  do:s=>{HW(s,0,1,3); commitRows(s,0,'orders-2','0–9','5120–9215',10); commitRows(s,1,'orders-0','0–4','0–2047',5); commitRows(s,3,'orders-1','0–7','2048–5119',8); SQset(s,1,'owner',sk(KEY_A),`${sk(KEY_A)} CP0 silent · CP1 ref · CP3 silent`);},
+  d:'When the high watermark passes each record, every replica applies it: a <code>files</code> row and <code>batches</code> rows that point into the object. The leader removes the overlay entry and sends the [[parked-reply]] with the assigned offsets. On CP1, the owner now marks its own part referenced, because it holds batches of the object.'},
+ {t:'The producer gets its offsets',a:[['b2','producer','offsets','reply']],do:s=>{s.n.producer.note='orders-0 @0 · orders-1 @0 · orders-2 @0'; s.n.b2.note='file done';},
+  d:'The file completes once every part has an answer. <code>AppendCompleter</code> merges the per-batch results back into request order, as it does today, and B2 answers the producer. A produce now costs one intent append plus the slowest part, which is why the number of coordinator partitions is a latency question.'},
+ {t:'What each coordinator partition knows now',hl:['cp0','cp1','cp3'],
+  d:'CP0, CP1, and CP3 each hold their own batches of the object and nothing about the others\' batches. CP1 also holds the owner entry: CP0 silent, CP1 referenced, CP3 silent. Participants never report commits to the owner; they report only releases, which the <a href="#cleanup">cleanup chapter</a> follows.'},
+];
+
+const P_DOWN=[
+ {t:'CP1 can\'t append',a:[['producer','b2','Produce orders-0, -1, -2']],do:s=>{s.n.producer.note='one batch each to orders-0, orders-1, orders-2';},hl:['cp1'],
+  d:'Two of CP1\'s three replicas have dropped out of its ISR. With fewer than <code>min.insync.replicas</code> in sync, every append to CP1 fails at once with <code>NOT_ENOUGH_REPLICAS</code>. The coordinator writes through an Inkless <code>PartitionWriter</code> with <code>acks=-1</code>, so it fails fast instead of parking replies until a timeout. The producer sends the same three batches as in the happy path.'},
+ {t:'The preferred owner rejects the intent',a:[['b2','cp1','register intent','local'],['cp1','b2','NOT_ENOUGH_REPLICAS','err']],do:s=>{s.n.b2.note=`closed · key <code>${sk(KEY_A)}</code> · preferred owner CP1`;},
+  d:'The key is the same, so CP1 is still the preferred owner, and B2 tries it first. The append fails immediately.'},
+ {t:'Fall back to the next participant',a:[['b2','cp3','register intent'],['cp3','b2','intent stored','reply']],do:s=>{R(s,3,'in',`intent ${sk(KEY_A)} · CP0,1,3 · owner CP3 · B2 epoch 17`); HW(s,3); SQ(s,3,'owner',`${sk(KEY_A)} CP0 silent · CP1 silent`); s.n.b2.note=`owner of <code>${sk(KEY_A)}</code> is CP3`;},
+  d:'B2 tries the next participant in sorted order after CP1, which is CP3. CP3 stores the intent and becomes the [[owner]]. The owner is whichever participant stored the intent: every part and record names CP3 from now on, and no replica ever recomputes it. Without the fallback, one unavailable coordinator partition would block every object that preferred it.'},
+ {t:'Upload, then send the parts',a:[['b2','s3','PutObject','store'],['b2','cp0','part: orders-2'],['b2','cp1','part: orders-0','local'],['b2','cp3','part: orders-1'],['cp1','b2','NOT_ENOUGH_REPLICAS','err']],
+  do:s=>{OBJ(s,KEY_A,'stored','3 batches'); R(s,0,'fc',`${sk(KEY_A)} orders-2 → 0–9 · owner CP3`); R(s,3,'fc',`${sk(KEY_A)} orders-1 → 0–7 · owner CP3`);},
+  d:'B2 uploads the object and sends three parts. CP0 and CP3 accept theirs. CP1 rejects its part, and the delegate keeps retrying it against CP1\'s current leader, always with the same object key and first-send time.'},
+ {t:'Healthy parts don\'t wait',a:[['cp0','b2','orders-2 @0','reply'],['cp3','b2','orders-1 @0','reply']],
+  do:s=>{HW(s,0,3); SQset(s,0,'logs','orders-2','orders-2 · start 0 · next 10'); SQ(s,0,'batches',`orders-2 0–9 → ${sk(KEY_A)}`); SQset(s,3,'logs','orders-1','orders-1 · start 0 · next 8'); SQ(s,3,'batches',`orders-1 0–7 → ${sk(KEY_A)}`); SQset(s,3,'owner',sk(KEY_A),`${sk(KEY_A)} CP0 silent · CP1 silent · CP3 ref`);},
+  d:'CP0 and CP3 commit, and their batches become visible to consumers right away. <code>FileCommitter</code> keeps one [[commit-queue]] per coordinator partition, so neither these parts nor later files\' parts on CP0 and CP3 wait for CP1. The <a href="#queues">commit queue simulator</a> shows what would happen otherwise.'},
+ {t:'The deadline passes: a partial result',a:[['b2','producer','orders-0 failed; others ok','err']],do:s=>{s.n.producer.note='orders-1 @0 · orders-2 @0 · orders-0: <code>KAFKA_STORAGE_ERROR</code>, retry'; s.n.b2.note=`unconfirmed on CP1: <code>${sk(KEY_A)}</code>`;},
+  d:'At the file\'s [[commit-deadline]], the unconfirmed part\'s batches get [[kse]], and the confirmed ones get their offsets. The producer retries only <code>orders-0</code>, as with any partial produce failure. The CP1 part now has an [[unknown-outcome]]: one of its requests could still reach CP1 and commit later. B2 remembers the key as unconfirmed for CP1.'},
+ {t:'CP1 recovers, and the next part carries a predecessor fence',a:[['b2','cp1','next part + fence '+sk(KEY_A),'local']],
+  do:s=>{s.cp[1].status=''; R(s,1,'ff',`fence ${sk(KEY_A)} (predecessor, from B2)`); R(s,1,'fc',`${sk(KEY_F2)} orders-0 → 0–4`); s.n.b2.note=`file 2, key <code>${sk(KEY_F2)}</code>, holds the orders-0 retry`;},
+  d:`B2's next file holds the producer's retry of <code>orders-0</code>, so it has a part for CP1. That part lists <code>${sk(KEY_A)}</code> as a predecessor key. CP1's leader [[predecessor-fence|fences]] that key first, because it has no pending or applied commit for it, and only then reserves the new part. Without the fence, the old request could arrive later and land after the retry, so the batch would appear twice and out of order.`},
+ {t:'Applied, and the owner learns later',a:[['cp1','b2','orders-0 @0','reply']],
+  do:s=>{HW(s,1); SQ(s,1,'fences',`${sk(KEY_A)} fenced · released`); SQset(s,1,'logs','orders-0','orders-0 · start 0 · next 5'); SQ(s,1,'batches',`orders-0 0–4 → ${sk(KEY_F2)}`);},
+  d:'A predecessor fence is an ordinary [[fence]]: the key now rejects any later commit on CP1, and CP1 counts as released for that object. The owner, CP3, still sees CP1 as silent. Once its conditions hold, it fences CP1 itself and gets the answer released, then deletes the object when CP0 and CP3 release their batches. The fence cost no extra request: it rode on a part that B2 was sending anyway.'},
+];
+
+const P_CRASH=[
+ {t:'Three parts in flight',a:[['b2','cp0','part: orders-2'],['b2','cp1','part: orders-0','local'],['b2','cp3','part: orders-1']],
+  do:s=>{R(s,0,'fc',`${sk(KEY_A)} orders-2 → 0–9 (also on B3)`); R(s,1,'fc',`${sk(KEY_A)} orders-0 → 0–4`); R(s,3,'fc',`${sk(KEY_A)} orders-1 → 0–7 (only on B1)`); s.n.b2.note='3 parts in flight · first-send 12:00:00.31';},
+  d:'This starts where the happy path sends its commit parts: the intent is stored at CP1 and the object is uploaded. All three leaders have appended their <em>file-committed</em> records and are waiting for the high watermark.'},
+ {t:'CP1 commits; then B1 crashes',a:[['cp1','b2','orders-0 @0','reply']],
+  do:s=>{HW(s,1); commitRows(s,1,'orders-0','0–4','0–2047',5); SQset(s,1,'owner',sk(KEY_A),`${sk(KEY_A)} CP0 silent · CP1 ref · CP3 silent`); s.n.b1.down=true; s.cp[0].status='noleader'; s.cp[3].status='noleader';},
+  d:'CP1 commits and replies. Then B1 crashes, and B1 led both CP0 and CP3. CP0\'s record had already reached its follower on B3, but the high watermark hadn\'t passed it. CP3\'s record existed only on B1. Neither leader replied, because a reply waits for the high watermark.'},
+ {t:'New leaders, one partition at a time',a:[['ctrl','b3','lead CP0','meta'],['ctrl','b2','lead CP3','meta']],
+  do:s=>{s.n.ctrl.lines.push('LeaderChange CP0 → B3','LeaderChange CP3 → B2'); s.cp[0].leader='B3'; s.cp[0].status='gate'; s.cp[3].leader='B2'; s.cp[3].status=''; const c=s.cp[3]; c.log.pop(); c.next--;},
+  d:'The controller elects B3 for CP0 and B2 for CP3. Each coordinator partition changes leader on its own, and only these two stall. Unclean election is off, so only an in-sync replica can lead. CP3\'s unreplicated record is gone: the log discarded it. CP0\'s record survived on B3. A new leader starts with an empty overlay and keeps its [[hw-gate]] closed until its high watermark reaches the log end it saw at election.'},
+ {t:'The delegate retries with the same key',a:[['b2','cp0','retry part, same key'],['b2','cp3','retry part, same key','local']],
+  do:s=>{HW(s,0); s.cp[0].status=''; commitRows(s,0,'orders-2','0–9','5120–9215',10);},
+  d:'B2 got no answer from CP0 or CP3. The delegate finds the new leaders in its metadata cache and retries each part with the same object key and first-send time, within the file\'s commit deadline. Meanwhile CP0\'s followers catch up, its high watermark passes the surviving record, and the gate opens.'},
+ {t:'CP0: the key is already there',a:[['cp0','b2','stored result: orders-2 @0','reply']],
+  d:'CP0\'s new leader looks up the object key in its overlay and SQLite and finds the committed record. It appends nothing and returns the stored result. There is still exactly one record and one set of offsets. This protects non-idempotent producers too, because the identity is the file, not the batch.'},
+ {t:'CP3: the key is new, so it commits normally',a:[['cp3','b2','orders-1 @0','reply']],
+  do:s=>{R(s,3,'fc',`${sk(KEY_A)} orders-1 → 0–7`); HW(s,3); commitRows(s,3,'orders-1','0–7','2048–5119',8);},
+  d:'CP3\'s record was truncated, so the key is unknown there, and the retry commits like a first attempt. Truncation never touches SQLite: replicas apply only records at or below the high watermark, so no applied row is ever undone.'},
+ {t:'The producer sees one clean result',a:[['b2','producer','offsets','reply']],do:s=>{s.n.producer.note='orders-0 @0 · orders-1 @0 · orders-2 @0'; s.n.b2.note='file done';},
+  d:'The producer gets offsets for all three batches, with no duplicate. What made this safe is the object key: a fresh key per upload, reused by every retry, checked on each coordinator partition against both the overlay and SQLite.'},
+];
+function initCrash(){const s=initTopic(); applyHappy(s,5); clearNotes(s); return s;}
+function initDown(){const s=initTopic(); s.cp[1].status='down'; return s;}
+
+/* ------------------------------------------------------------------ 3. consume */
+const P_FETCH=[
+ {t:'A consumer fetches from any broker',a:[['consumer','b3','Fetch orders-0, orders-2 @0']],do:s=>{s.n.consumer.note='fetch orders-0 and orders-2 from offset 0';},
+  d:'A consumer asks for <code>orders-0</code> and <code>orders-2</code> from offset 0. Like produce, fetch works on any broker; clients usually pick one in their own availability zone.'},
+ {t:'First stop: the batch coordinate cache',hl:['b2','b3'],do:s=>{s.n.b3.note='coordinate cache: miss'; s.n.b2.note=`coordinate cache: has <code>${sk(KEY_A)}</code>`;},
+  d:'Each broker keeps a [[cache|batch coordinate cache]] of recently produced batches. B2 produced these, so a fetch sent to B2 would hit its cache and skip the coordinator. B3 misses.'},
+ {t:'Split the lookup by coordinator partition',a:[['b3','cp1','findBatches orders-0'],['b3','cp0','findBatches orders-2']],
+  d:'On a miss, the delegate splits <code>findBatches</code> the same way it splits commits: <code>orders-0</code> goes to CP1\'s leader on B2, and <code>orders-2</code> to CP0\'s leader on B1. <code>fetchMaxBytes</code> is one budget for the whole fetch, so the delegate sends the full budget with each part. Only leaders answer: there are no follower reads in this design.'},
+ {t:'Leaders answer from committed state',a:[['cp1','b3','coordinates orders-0','reply'],['cp0','b3','coordinates orders-2','reply']],
+  d:'Each leader answers from its SQLite, which holds every record up to the high watermark. The answer is [[batch-coordinates]], not data: the object key, the byte range, the offset range, and timestamps. Coordinate rows are small, so the extra rows a part returns beyond the shared budget cost little.'},
+ {t:'Merge, trim, and read the bytes',a:[['b3','s3','GET byte ranges '+sk(KEY_A),'store'],['s3','b3','bytes','store']],do:s=>{s.n.b3.note='merged in request order · trimmed to <code>fetchMaxBytes</code>';},
+  d:'The delegate merges the parts back into request order and trims the result to the fetch budget. Then B3 reads the byte ranges from object storage. Both batches live in the same object, because B2 wrote them into the same file.'},
+ {t:'Records go to the consumer',a:[['b3','consumer','records','reply']],do:s=>{s.n.b3.note=`cached coordinates for <code>${sk(KEY_A)}</code>`; s.n.consumer.note='got orders-0 0–4 and orders-2 0–9';},
+  d:'B3 caches the coordinates it learned and returns the records. Two things are unchanged by this backend: consumer group offsets still live in <code>__consumer_offsets</code>, and <code>listOffsets</code> goes to the same coordinator leaders as <code>findBatches</code>.'},
+ {t:'The risk to watch: a cache storm',hl:['cp0','cp1','cp2','cp3'],
+  d:'Most fetches never reach a coordinator leader. But if every consumer restarts at once, every broker\'s cache is empty at the same moment, and the misses all land on the leaders together. Each leader shares its broker\'s heap, page cache, disk, and garbage collector with that broker\'s own partitions. The design lists this as an open capacity risk, to be benchmarked against the Postgres backend.'},
+];
+
+/* ------------------------------------------------------------------ 4. cleanup */
+const P_CLEAN=[
+ {t:'Days later, retention runs on CP3',hl:['cp3'],do:s=>{R(s,3,'ra','retention orders-1: delete 0–7, start → 8');},
+  d:'Retention runs on each coordinator leader, for its own user partitions. It\'s a local job, not an RPC. CP3\'s leader decides that <code>orders-1</code>\'s oldest batches have expired and appends a <em>retention-applied</em> record listing the deleted batches and the new log start offset. Because the decision is a record, every replica removes exactly the same rows.'},
+ {t:'Applying it releases the object',hl:['cp3'],do:s=>{HW(s,3); SQrm(s,3,'batches','orders-1'); SQset(s,3,'logs','orders-1','orders-1 · start 8 · next 8'); SQset(s,3,'files',sk(KEY_A),`${sk(KEY_A)} · released here`);},
+  d:`When the record applies, CP3 holds no batch of <code>${sk(KEY_A)}</code> anymore. That's a [[release]]. CP3 doesn't need to know anything about the other participants; it only knows that its own share of the object is gone.`},
+ {t:'Report the release to the owner',a:[['cp3','cp1','report release']],do:s=>{R(s,1,'ps',`${sk(KEY_A)}: CP3 released`); HW(s,1); SQset(s,1,'owner',sk(KEY_A),`${sk(KEY_A)} CP0 silent · CP1 ref · CP3 rel`);},
+  d:'CP3\'s leader sends a release report to the owner named in its part, CP1. The broker\'s scheduler sends it and retries with exponential backoff, and the report is idempotent, so a repeat is harmless. CP1 appends a <em>participant-state-recorded</em> record: CP3 released.'},
+ {t:'Owner accepted, so the participant can forget',a:[['cp1','cp3','accepted','reply']],do:s=>{R(s,3,'oa',`owner accepted ${sk(KEY_A)}`); HW(s,3); SQrm(s,3,'files',sk(KEY_A));},
+  d:'CP3 appends an <em>owner-accepted</em> record, so a future CP3 leader knows not to resend the report. The part was first sent days ago, much more than one [[max-age|maximum commit age]], so CP3 deletes its row for the object. A release within the maximum commit age would keep a [[tombstone]] instead, so that a delayed retry of the commit can\'t bring back batches that retention removed.'},
+ {t:'CP0 releases too, and the owner releases itself',a:[['cp0','cp1','report release'],['cp1','cp0','accepted','reply']],
+  do:s=>{R(s,0,'ra','retention orders-2: delete 0–9, start → 10'); R(s,0,'oa',`owner accepted ${sk(KEY_A)}`); HW(s,0); SQrm(s,0,'batches','orders-2'); SQrm(s,0,'files',sk(KEY_A)); SQset(s,0,'logs','orders-2','orders-2 · start 10 · next 10');
+         R(s,1,'ps',`${sk(KEY_A)}: CP0 released`); R(s,1,'ra','retention orders-0: delete 0–4, start → 5'); HW(s,1); SQrm(s,1,'batches','orders-0'); SQset(s,1,'logs','orders-0','orders-0 · start 5 · next 5'); SQset(s,1,'owner',sk(KEY_A),`${sk(KEY_A)} CP0 rel · CP1 rel · CP3 rel`);},
+  d:'CP0 goes through the same steps for <code>orders-2</code>. CP1 removes its own last batch of the object from <code>orders-0</code>; as the owner, it records its own release locally and sends nothing. Releases can arrive in any order, and the object stays until the last one.'},
+ {t:'Everyone released: mark for deletion',hl:['cp1'],do:s=>{R(s,1,'dm',`delete marked ${sk(KEY_A)}`); HW(s,1); OBJ(s,KEY_A,'marked');},
+  d:'The owner now sees every participant released, and the intent is far older than the maximum commit age, so no commit for the key can still arrive anywhere. CP1 appends a <em>file-delete-marked</em> record with the time.'},
+ {t:'FileCleaner deletes the object',a:[['b2','s3','DeleteObject '+sk(KEY_A),'store']],do:s=>{R(s,1,'fd',`file deleted ${sk(KEY_A)}`); HW(s,1); OBJ(s,KEY_A,'deleted'); SQrm(s,1,'owner',sk(KEY_A)); SQrm(s,1,'files',sk(KEY_A));},
+  d:'[[filecleaner]] runs only on owner leaders, so B2, which leads CP1, deletes the object after the [[grace|deletion grace period]], which lets readers with cached coordinates finish. Deleting a key that\'s already gone counts as success. Owner-based deletion is the only path in the design that deletes a WAL object.'},
+ {t:'Three other ways to release',hl:['cp0','cp1','cp3'],
+  d:'Retention is one of four ways a participant can lose its last batch of an object. <code>DeleteRecords</code> moves a partition\'s log start offset forward. [[consolidation|Consolidation]] prunes batches once their data is in tiered storage: the broker that hosts the partition\'s local log decides the safe offset and sends <code>pruneDisklessLogs</code> to the leader, which records it. Topic purge removes a deleted topic\'s batches, as the <a href="#deletion">deletion chapter</a> shows. All four end in the same release report.'},
+];
+
+/* ------------------------------------------------------------------ 5. delete */
+function initDelete(){
+  const s=initCommitted(); OBJ(s,KEY_B,'stored','orders-3 + clicks-0');
+  SQset(s,1,'logs','orders-3','orders-3 · start 0 · next 4'); SQ(s,1,'batches',`orders-3 0–3 → ${sk(KEY_B)}`);
+  SQ(s,2,'owner',`${sk(KEY_B)} CP1 silent · CP2 ref`); SQ(s,2,'batches',`clicks-0 5310–5339 → ${sk(KEY_B)}`);
+  return s;
+}
+const P_DELETE=[
+ {t:'An admin deletes the topic',a:[['admin','ctrl','DeleteTopics orders']],do:s=>{s.n.admin.note='delete orders';},
+  d:`Two objects hold <code>orders</code> data. <code>${sk(KEY_A)}</code> holds only <code>orders</code> batches. <code>${sk(KEY_B)}</code> holds a batch for <code>orders-3</code> on CP1 and one for <code>clicks-0</code> on CP2, its owner.`},
+ {t:'KRaft removes the topic and answers',a:[['ctrl','admin','success','reply']],do:s=>{s.n.ctrl.lines.push('RemoveTopicRecord qruke9kl…');},
+  d:'The controller commits the deletion to the metadata log and answers. The admin client stops retrying once it sees success, and brokers refuse produce to the topic as soon as their metadata shows it gone. The controller doesn\'t wait for the coordinator. Today\'s <code>ControllerApis</code> deletes from the control plane <em>before</em> the KRaft delete, because nothing would retry the cleanup afterward. Reconciliation removes the need for that order.'},
+ {t:'The brokers see it gone',a:[['ctrl','b1','metadata update','meta'],['ctrl','b2','metadata update','meta'],['ctrl','b3','metadata update','meta']],do:s=>{['b1','b2','b3'].forEach(b=>s.n[b].note='image: orders removed');},
+  d:'Each broker\'s metadata image drops the topic.'},
+ {t:'Each coordinator leader notices on its own',hl:['cp0','cp1','cp3'],do:s=>{R(s,0,'td','topic deleted qruke9kl…'); R(s,1,'td','topic deleted qruke9kl…'); R(s,3,'td','topic deleted qruke9kl…');},
+  d:'Each leader diffs again: topic ID <code>qruke9kl…</code> is in its SQLite but not in the image, so it appends a <em>topic-deleted</em> record. CP0, CP1, and CP3 each handle their own share of the topic, at slightly different times. The diff runs against the full image, not only a delta\'s deleted IDs, because a broker that loads a metadata snapshot never sees the delete itself. A leader that was down does the same on election.'},
+ {t:'Purge in capped passes',hl:['cp0','cp1','cp3'],
+  do:s=>{HW(s,0,1,3); R(s,0,'dp','purged orders-2 · empty'); R(s,1,'dp','purged orders-0 · empty'); R(s,1,'dp','purged orders-3 · empty'); R(s,3,'dp','purged orders-1 · empty'); HW(s,0,1,3);
+    [0,1,3].forEach(i=>{s.cp[i].sql=s.cp[i].sql.filter(r=>!/orders-/.test(r[1])&&!(r[0]==='files'));});},
+  d:'Topic purge works through deleted partitions in capped passes, like <code>purge_deleted_logs_v1</code> in Postgres. Each pass appends one <em>deleted-log-purged</em> record per partition it touched. Applying the record removes the partition\'s batches, and once the partition is empty, its <code>logs</code> and <code>producer_state</code> rows too.'},
+ {t:'The purge releases objects, and each owner decides',a:[['cp0','cp1','release '+sk(KEY_A)],['cp3','cp1','release '+sk(KEY_A)],['cp1','cp2','release '+sk(KEY_B)]],
+  do:s=>{R(s,1,'ps',`${sk(KEY_A)}: CP0, CP3 released`); HW(s,1); SQset(s,1,'owner',sk(KEY_A),`${sk(KEY_A)} CP0 rel · CP1 rel · CP3 rel`); R(s,2,'ps',`${sk(KEY_B)}: CP1 released`); HW(s,2); SQset(s,2,'owner',sk(KEY_B),`${sk(KEY_B)} CP1 rel · CP2 ref`);},
+  d:`Each object whose last local batch the purge removed is released, and the participants report to its owner. <code>${sk(KEY_A)}</code> held only <code>orders</code> data, so CP1 now sees all three participants released. <code>${sk(KEY_B)}</code> still has a <code>clicks-0</code> batch on CP2, so CP2 is still referenced and the object stays: deleting a topic never deletes another topic's data.`},
+ {t:'The first object is deleted',a:[['b2','s3','DeleteObject '+sk(KEY_A),'store']],do:s=>{R(s,1,'dm',`delete marked ${sk(KEY_A)}`); R(s,1,'fd',`file deleted ${sk(KEY_A)}`); HW(s,1); OBJ(s,KEY_A,'deleted'); SQrm(s,1,'owner',sk(KEY_A));},
+  d:`CP1 marks <code>${sk(KEY_A)}</code> for deletion, and FileCleaner on B2 deletes it after the grace period. <code>${sk(KEY_B)}</code> waits until <code>clicks-0</code> releases its batch.`},
+ {t:'Recreating the name is safe',a:[['admin','ctrl','CreateTopics orders']],do:s=>{s.n.admin.note='create orders again'; s.n.ctrl.lines.push('TopicRecord orders (new ID)');},
+  d:'If someone creates <code>orders</code> again, KRaft gives it a new topic ID. The coordinator keys everything by topic ID, so the new topic\'s partition-created records never collide with the old topic\'s purge, even while the purge is still running.'},
+];
+</script>
+<script>
+'use strict';
+const cpColor=(k,N)=>N<=4?CPHEX[k]:`hsl(${Math.round((k*137.508)%360)} 55% 42%)`;
+const hex=b=>[...b].map(x=>x.toString(16).padStart(2,'0'));
+
+/* ------------------------------------------------------------------ mapping calculator */
+function initCalc(){
+  const tIn=$('#m-topic'), pIn=$('#m-part'), nSel=$('#m-n');
+  nSel.innerHTML=[1,2,4,8,16,32,64,128,256,512,1024,2048,4096].map(n=>`<option value="${n}"${n===4?' selected':''}>${n}${n===4?' (this page)':n===8?' (default)':''}</option>`).join('');
+  tIn.value='qruke9klPV8gd1JdINt4eA';
+  function upd(){
+    const id=b64uDecode(tIn.value.trim()); let p=parseInt(pIn.value,10); if(!(p>=0)) p=0; const N=+nSel.value;
+    $('#m-err').textContent='';
+    if(!id){$('#m-err').textContent='A topic ID is 22 URL-safe base64 characters (16 bytes), as Kafka prints it.'; $('#m-bytes').innerHTML=''; $('#m-pipe').innerHTML=''; $('#m-spread').innerHTML=''; $('#m-split').innerHTML=''; return;}
+    const key=logKey(id,p), hx=hex(key);
+    $('#m-bytes').innerHTML=hx.map((h,k)=>`<span class="${k>=16?'p':''}">${h}</span>`).join('');
+    const h=murmur2(key), pos=toPositive(h), slot=pos%4096, cp=slot%N;
+    $('#m-pipe').innerHTML=`
+      <div class="st"><span>murmur2(logKey)</span><span class="v">${h} <span style="color:var(--faint);font-weight:400">(0x${(h>>>0).toString(16).padStart(8,'0')})</span></span></div>
+      <div class="st"><span>toPositive(…)</span><span class="v">${pos}</span></div>
+      <div class="st"><span>slot = … % 4096</span><span class="v">${slot}</span></div>
+      <div class="st"><span>slot % N</span><span class="v"><span class="cpb" style="background:${cpColor(cp,N)}">CP${cp}</span></span></div>
+      <div class="st"><span>check: toPositive % N</span><span class="v">${pos%N} ${pos%N===cp?'<span style="color:var(--ok)">matches</span>':'<span style="color:var(--err)">differs</span>'}</span></div>`;
+    const cnt=12; let sp='';
+    for(let q=0;q<cnt;q++){const c=toPositive(murmur2(logKey(id,q)))%4096%N; sp+=`<div style="background:${cpColor(c,N)};${q===p?'outline:2px solid #1b2130;outline-offset:1px':''}" title="partition ${q} → CP${c}">p${q}→CP${c}</div>`;}
+    $('#m-spread').innerHTML=sp;
+    if(N<4096){const c2=slot%(2*N); $('#m-split').innerHTML=`If N doubled to ${2*N}, slot ${slot} would ${c2===cp?`<b>stay on CP${cp}</b>`:`<b>move from CP${cp} to CP${c2}</b> (that is, CP${cp} + ${N})`}. Each coordinator partition keeps the slots where <code>slot % ${2*N} &lt; ${N}</code> and hands the rest to the coordinator partition ${N} above it, so no slot moves between two old partitions.`;}
+    else $('#m-split').innerHTML='At N = 4096 every slot is its own coordinator partition; N can\'t grow further.';
+  }
+  [tIn,pIn,nSel].forEach(el=>el.addEventListener('input',upd));
+  $('#m-rand').onclick=()=>{tIn.value=randomUuid(); upd();};
+  $$('[data-preset]').forEach(b=>b.onclick=()=>{tIn.value=b.dataset.preset; upd();});
+  upd();
+
+  const kIn=$('#o-key'); const parts=new Set([0,1,3]);
+  $('#o-parts').innerHTML=[...Array(8).keys()].map(k=>`<label class="chk"><input type="checkbox" data-p="${k}" ${parts.has(k)?'checked':''}>CP${k}</label>`).join('');
+  function upo(){
+    const ps=[...parts].sort((a,b)=>a-b); const key=kIn.value;
+    if(!ps.length){$('#o-pipe').innerHTML='<div class="st">Select at least one participant.</div>'; return;}
+    const h=murmur2(utf8(key)), pos=toPositive(h), idx=pos%ps.length, own=ps[idx];
+    const fb=[...ps.slice(idx+1),...ps.slice(0,idx)];
+    $('#o-pipe').innerHTML=`
+      <div class="st"><span>sorted participants</span><span class="v">[${ps.map(x=>'CP'+x).join(', ')}]</span></div>
+      <div class="st"><span>murmur2(UTF-8 key)</span><span class="v">${h}</span></div>
+      <div class="st"><span>toPositive % ${ps.length}</span><span class="v">index ${idx}</span></div>
+      <div class="st"><span>preferred owner</span><span class="v"><span class="cpb" style="background:${cpColor(own,4)}">CP${own}</span></span></div>
+      <div class="st"><span>fallback order</span><span class="v">${fb.length?fb.map(x=>'CP'+x).join(', then '):'none: a single participant'}</span></div>`;
+  }
+  $('#o-parts').addEventListener('change',e=>{const k=+e.target.dataset.p; e.target.checked?parts.add(k):parts.delete(k); upo();});
+  kIn.addEventListener('input',upo); $('#o-rand').onclick=()=>{kIn.value=randomUuid(); upo();};
+  upo();
+}
+
+/* ------------------------------------------------------------------ commit queue simulator */
+function initQueueSim(){
+  const root=$('#qsim'); let mode='queues', cp2='down';
+  const FILES=[[0,1,2,3],[0,1,3],[0,1,2,3],[1,3],[0,2,3],[0,1,3]], D=4;
+  const FCOL=['#3b5bdb','#0c8599','#7048e8','#d9480f','#2b8a3e','#ae3ec9'];
+  const dur=cp=>cp===2?(cp2==='ok'?1:cp2==='slow'?2.5:Infinity):1;
+  function sim(){
+    const parts=[]; const run=(f,cp,start)=>{const close=f,dl=close+D; let end=start+dur(cp),fail=false; if(end>dl){end=Math.max(start,dl);fail=true;} const p={f,cp,close,start,end,fail}; parts.push(p); return p;};
+    if(mode==='queues'){for(let cp=0;cp<4;cp++){let last=0; FILES.forEach((ps,f)=>{if(!ps.includes(cp))return; last=run(f,cp,Math.max(f,last)).end;});}}
+    else {let last=0; FILES.forEach((ps,f)=>{const start=Math.max(f,last); let fe=start; ps.forEach(cp=>{fe=Math.max(fe,run(f,cp,start).end);}); last=fe;});}
+    return parts;
+  }
+  function render(){
+    $$('[data-q-mode]',root).forEach(b=>b.classList.toggle('on',b.dataset.qMode===mode));
+    $$('[data-q-cp2]',root).forEach(b=>b.classList.toggle('on',b.dataset.qCp2===cp2));
+    const parts=sim(); const maxT=Math.max(10,Math.ceil(Math.max(...parts.map(p=>p.end)))+1); const X=t=>(t/maxT*100).toFixed(3)+'%';
+    let h='';
+    for(let cp=0;cp<4;cp++){
+      h+=`<div class="gl"><div class="lab" style="color:${CPHEX[cp]}">CP${cp}</div><div class="lane">`;
+      parts.filter(p=>p.cp===cp).forEach(p=>{
+        if(p.start>p.close+1e-9) h+=`<div class="gb wait" style="left:${X(p.close)};width:calc(${X(p.start-p.close)} - 2px);background:${FCOL[p.f]}" title="F${p.f+1} part waits from t=${p.close} to t=${p.start}"></div>`;
+        const w=p.end-p.start; h+=`<div class="gb${p.fail?' fail':''}" style="left:${X(p.start)};width:${w>0?`calc(${X(w)} - 2px)`:'8px'};background:${FCOL[p.f]}" title="F${p.f+1} part on CP${cp}: t=${p.start} to t=${p.end}${p.fail?', failed at the deadline':''}">F${p.f+1}${p.fail?' ✕':''}</div>`;
+      });
+      h+='</div></div>';
+    }
+    h+=`<div class="gaxis"><div></div><div class="ticks">${[...Array(maxT+1).keys()].map(t=>`<span style="left:${X(t)}">${t}</span>`).join('')}</div></div>`;
+    h+=`<div class="qkey"><i></i>a thin bar: the part is queued, waiting for its turn</div>`;
+    h+=FILES.map((_,f)=>`<div class="gmark" style="left:calc(70px + (100% - 70px) * ${f/maxT})" title="F${f+1} closes"></div>`).join('');
+    $('#q-gantt').innerHTML=h;
+    let rows='', healthy=[];
+    FILES.forEach((ps,f)=>{
+      const mine=parts.filter(p=>p.f===f), done=Math.max(...mine.map(p=>p.end)), failed=mine.filter(p=>p.fail);
+      mine.filter(p=>!p.fail).forEach(p=>healthy.push(p.end-p.close));
+      rows+=`<tr><td><b style="color:${FCOL[f]}">F${f+1}</b></td><td>${ps.map(c=>cpb(c)).join(' ')}</td><td>${f}</td><td>${+done.toFixed(2)}</td><td>${+(done-f).toFixed(2)}</td><td class="${failed.length?'bad':'good'}">${failed.length?`CP${failed.map(p=>p.cp).join(', CP')} part failed at the deadline: those batches get <code>KAFKA_STORAGE_ERROR</code>`:'every part committed'}</td></tr>`;
+    });
+    const avg=healthy.length?(healthy.reduce((a,b)=>a+b,0)/healthy.length):0;
+    $('#q-summary').innerHTML=`<table class="qres"><tr><th>File</th><th>Parts</th><th>Closed</th><th>All answers by</th><th>Producer waits</th><th>Outcome</th></tr>${rows}</table>
+      <div style="font-size:.88rem">Committed parts became visible to consumers on average <b>${avg.toFixed(2)}</b> intervals after their file closed (1.00 is the best case). ${mode==='single'&&cp2!=='ok'?'With one thread, every file waits behind the stuck part, even files like F2 and F4 that have no part on CP2.':mode==='queues'&&cp2!=='ok'?'Only CP2\'s lane falls behind. Files without a CP2 part, like F2 and F4, finish on time, and the other lanes commit as soon as each file closes. A file with a stuck part still answers its producer only at its deadline.':'Everything is healthy, so both commit paths behave the same.'}</div>`;
+  }
+  root.addEventListener('click',e=>{const b=e.target.closest('button'); if(!b) return; if(b.dataset.qMode) mode=b.dataset.qMode; if(b.dataset.qCp2) cp2=b.dataset.qCp2; render();});
+  render();
+}
+
+/* ------------------------------------------------------------------ overlay lab */
+function initOverlayLab(){
+  let S;
+  const L=()=>S.reps[S.leader];
+  function reset(){
+    S={reps:['B1','B2','B3'].map(n=>({name:n,log:[],hw:3,applied:3,stalled:false})),leader:0,epoch:5,isr:new Set([0,1,2]),down:new Set(),reserved:[],parked:[],seq:3,hw:3,gate:null,offline:false,ev:[]};
+    S.reps.forEach(r=>{for(let o=0;o<3;o++) r.log.push({o,c:'c'+(o+1),ep:5});});
+    S.ev=['Reset. Commits c1 to c3 are committed and applied on every replica. B1 leads with leader epoch 5.'];
+  }
+  let out=[]; const say=m=>out.push(m);
+  function recompute(){
+    if(S.offline) return;
+    const nh=Math.min(...[...S.isr].map(i=>S.reps[i].log.length)); if(nh>S.hw) S.hw=nh;
+    const l=L(); l.hw=S.hw; l.applied=Math.min(S.hw,l.log.length);
+    const done=S.parked.filter(p=>p.o<S.hw);
+    if(done.length) say(`The HW moves to ${S.hw}. The leader applies ${done.map(p=>p.c).join(', ')} to SQLite, drops ${done.length>1?'them':'it'} from the overlay, and sends the parked ${done.length>1?'replies':'reply'}.`);
+    S.parked=S.parked.filter(p=>p.o>=S.hw);
+    if(S.gate!==null&&S.hw>=S.gate){say(`The HW reached ${S.gate}, the log end at election, so the gate opens and ${l.name} starts serving.`); S.gate=null;}
+  }
+  const A={
+    commit(){
+      if(S.offline){say('No leader: the request gets a retriable error.');return;}
+      if(S.gate!==null){say(`Rejected with a retriable error: ${L().name}'s high-watermark gate is still closed.`);return;}
+      const o=L().log.length+S.reserved.length, c='c'+(++S.seq); S.reserved.push({c,o});
+      say(`${c} arrives. The leader checks it against SQLite plus the overlay, reserves offset ${o}, and adds it to the current batch. The reservation is in memory only.`);
+    },
+    append(){
+      if(S.offline){say('No leader.');return;}
+      if(!S.reserved.length){say('Nothing is reserved, so the linger ends with nothing to append.');return;}
+      const ids=S.reserved.map(x=>x.c).join(', ');
+      if(S.isr.size<2){say(`The append is rejected with NOT_ENOUGH_REPLICAS: the ISR has ${S.isr.size} replica, below min.insync.replicas=2. The runtime reverts the batch, and ${ids} ${S.reserved.length===1?'fails':'fail'} at once with a retriable error.`); S.reserved=[]; return;}
+      S.reserved.forEach(x=>L().log.push({o:x.o,c:x.c,ep:S.epoch})); S.parked.push(...S.reserved);
+      const one=S.reserved.length===1;
+      say(`The linger ends: ${ids} ${one?'goes':'go'} to the log in one append and one fsync. ${one?'Its reply is':'Their replies are'} parked until the HW passes ${one?'it':'them'}.`); S.reserved=[]; recompute();
+    },
+    fetch(i){
+      const r=S.reps[i], l=L(); if(r.stalled){say(`${r.name} is stalled and doesn't fetch.`);return;}
+      const n=l.log.length-r.log.length; for(let k=r.log.length;k<l.log.length;k++) r.log.push({...l.log[k]});
+      if(!S.isr.has(i)&&r.log.length===l.log.length){S.isr.add(i); say(`${r.name} has caught up, so the leader adds it back to the ISR.`);}
+      recompute(); r.hw=S.hw; r.applied=Math.min(r.hw,r.log.length);
+      say(n?`${r.name} fetches ${n} record${n>1?'s':''} and learns HW=${S.hw}. It applies everything below the HW to its own SQLite.`:`${r.name} fetches; nothing new. It learns HW=${S.hw} and applies up to it.`);
+    },
+    stall(i){
+      const r=S.reps[i]; r.stalled=!r.stalled;
+      if(r.stalled){S.isr.delete(i); say(`${r.name} stops fetching. After <code>replica.lag.time.max.ms</code> the leader drops it from the ISR, and the HW follows the remaining in-sync replicas.`); recompute();}
+      else say(`${r.name} resumes. It rejoins the ISR once it has fetched everything.`);
+    },
+    fail(){
+      const old=S.leader, oldName=L().name; const lost=[...S.reserved,...S.parked];
+      S.down.add(old); S.isr.delete(old);
+      const cands=[...S.isr].filter(i=>!S.down.has(i));
+      say(`${oldName} fails.`+(lost.length?` Its overlay and parked replies are gone: ${lost.map(x=>x.c).join(', ')} ${lost.length===1?'gets a retriable error, and its broker retries':'get a retriable error, and their brokers retry'} with the same object key.`:''));
+      S.reserved=[]; S.parked=[];
+      if(!cands.length){S.offline=true; say('No other replica is in the ISR. Unclean leader election is off, so the partition stays offline rather than lose committed records. Restart the old leader to bring it back.'); return;}
+      const best=cands.reduce((a,b)=>S.reps[b].log.length>S.reps[a].log.length?b:a); S.leader=best; S.epoch++; const nl=L();
+      const kept=lost.filter(x=>x.o<nl.log.length&&nl.log[x.o].c===x.c).map(x=>x.c);
+      const gone=lost.filter(x=>!kept.includes(x.c)&&S.reps[old].log.some(e=>e.c===x.c)).map(x=>x.c);
+      if(kept.length) say(kept.length===1?`${kept[0]} survived on ${nl.name}: its retry finds the key and gets the stored result.`:`${kept.join(', ')} survived on ${nl.name}: their retries find the keys and get the stored results.`);
+      if(gone.length) say(gone.length===1?`${gone[0]} never reached ${nl.name} and is gone; its retry commits it as new.`:`${gone.join(', ')} never reached ${nl.name} and are gone; their retries commit them as new.`);
+      S.reps.forEach((r,j)=>{ if(j===best||S.down.has(j)) return; if(r.log.length>nl.log.length){const a=nl.log.length,b=r.log.length-1; r.log.length=nl.log.length; say(`${r.name} truncates offset${a===b?' '+a:'s '+a+'–'+b} that the new leader doesn't have. None was applied, because replicas apply only below the HW.`);} });
+      S.hw=nl.hw; S.gate=nl.log.length;
+      say(`${nl.name} becomes leader with epoch ${S.epoch} and an empty overlay. Its log ends at ${S.gate}${S.hw<S.gate?`, but its HW is ${S.hw}, so it rejects requests until followers catch up and the HW reaches ${S.gate}`:', and its HW is already there'}.`);
+      recompute();
+    },
+    restart(){
+      const j=[...S.down][0]; if(j===undefined) return; const r=S.reps[j]; S.down.delete(j);
+      if(S.offline){S.offline=false; S.leader=j; S.isr=new Set([j]); S.epoch++; S.gate=null; say(`${r.name} restarts and becomes leader again with epoch ${S.epoch}. Nothing committed was lost.`); recompute(); return;}
+      const l=L(); let k=0; while(k<r.log.length&&k<l.log.length&&r.log[k].c===l.log[k].c&&r.log[k].ep===l.log[k].ep) k++;
+      const cut=r.log.length-k; r.log.length=k; r.applied=Math.min(r.applied,k); r.hw=Math.min(r.hw,k); r.stalled=false;
+      say(`${r.name} restarts as a follower.`+(cut?` It truncates ${cut} record${cut>1?'s':''} from offset ${k} that diverge from the new leader. None of them was applied, so SQLite needs no undo.`:'')+' It rejoins the ISR after it catches up.');
+    },
+    reset(){reset();},
+  };
+  function render(){
+    const l=L(); const btn=(act,label,arg,dis)=>`<button class="btn" data-ol="${act}" ${arg!==undefined?`data-arg="${arg}"`:''} ${dis?'disabled':''}>${label}</button>`;
+    let b=btn('commit','Commit request arrives',undefined,S.offline)+btn('append','Linger ends: append',undefined,S.offline||!S.reserved.length)+'<span class="sep"></span>';
+    S.reps.forEach((r,j)=>{if(j!==S.leader&&!S.down.has(j)&&!S.offline) b+=btn('fetch',`${r.name} fetches`,j,r.stalled);});
+    b+='<span class="sep"></span>';
+    S.reps.forEach((r,j)=>{if(j!==S.leader&&!S.down.has(j)&&!S.offline) b+=btn('stall',r.stalled?`Resume ${r.name}`:`Stall ${r.name}`,j);});
+    b+='<span class="sep"></span>'+btn('fail',`Fail leader ${l.name}`,undefined,S.offline);
+    if(S.down.size) b+=btn('restart',`Restart ${S.reps[[...S.down][0]].name}`);
+    b+=btn('reset','Reset');
+    $('#ol-btns').innerHTML=b;
+    const maxLen=Math.max(...S.reps.map(r=>r.log.length))+S.reserved.length;
+    $('#ol-reps').innerHTML=S.reps.map((r,j)=>{
+      const isL=j===S.leader&&!S.offline, dn=S.down.has(j); const hw=isL?S.hw:r.hw;
+      const role=dn?'<span style="color:var(--err)">down</span>':isL?`leader · epoch ${S.epoch}`:`follower${S.isr.has(j)?'':' · <span style="color:var(--warn)">out of ISR</span>'}${r.stalled?' · stalled':''}`;
+      let cells='';
+      for(let o=0;o<maxLen;o++){
+        if(o===hw) cells+='<div class="hwm"></div>';
+        const e=r.log[o];
+        if(e) cells+=`<div class="cell${o<r.applied?' ap':''}${e.ep>5?' ep2':''}" title="offset ${o}, ${e.c}, epoch ${e.ep}"><span>${e.c}</span><span class="o">${o}</span></div>`;
+        else if(isL){const rv=S.reserved.find(x=>x.o===o); if(rv) cells+=`<div class="cell res" title="reserved in the overlay"><span>${rv.c}</span><span class="o">${o}</span></div>`;}
+      }
+      if(hw>=maxLen) cells+='<div class="hwm"></div>';
+      return `<div class="rep${dn?' down':''}"><div class="who"><b>${r.name}</b>${role}<br><span style="color:var(--faint)">applied below ${r.applied}</span></div><div class="cells">${cells}</div></div>`;
+    }).join('');
+    $('#ol-panel').innerHTML=`<div><b>Leader overlay (memory)</b>${S.reserved.length||S.parked.length?[...S.parked.map(p=>`${p.c} @${p.o}: appended, waiting for HW`),...S.reserved.map(p=>`${p.c} @${p.o}: reserved, not appended`)].join('<br>'):'empty'}</div>
+      <div><b>ISR</b>${S.offline?'none: offline':[...S.isr].sort().map(i=>S.reps[i].name).join(', ')} <span style="color:var(--faint)">(min.insync.replicas=2)</span></div>
+      <div><b>Gate</b>${S.offline?'no leader':S.gate===null?'open: serving':`closed until HW ≥ ${S.gate}`}<br><span style="color:var(--faint)">orange underline: written in a later epoch</span></div>`;
+    $('#ol-log').innerHTML=S.ev.map(m=>`<div>${m}</div>`).join('');
+  }
+  $('#ollab').addEventListener('click',e=>{const b=e.target.closest('[data-ol]'); if(!b) return; out=[]; A[b.dataset.ol](b.dataset.arg!==undefined?+b.dataset.arg:undefined); if(out.length) S.ev.unshift(out.join(' ')); render();});
+  reset(); render();
+}
+
+/* ------------------------------------------------------------------ owner lab */
+function initOwnerLab(){
+  const T=5, GRACE=1, MAXT=15, OWNER=1, PIDS=[0,1,3];
+  const SC={
+    all:{label:'All three parts committed',desc:'The normal case: CP0, CP1, and CP3 each committed their batches. Remove batches in any order, or let the clock run past T before removing any.',committed:[0,1,3],uploaded:true},
+    some:{label:'Broker stopped after two parts',desc:'B2 stopped after CP0 and CP1 committed. Its request for CP3 never got through, but a delayed copy may still be in flight. Once B2 restarts with a new broker epoch, leaders reject that copy too; here B2 stays down.',committed:[0,1],uploaded:true},
+    none:{label:'Broker stopped before the upload',desc:'B2 stored the intent at CP1 and then stopped. Nothing was uploaded, and no part was sent. Only the intent knows the key.',committed:[],uploaded:false},
+  };
+  let sc='some', S;
+  function reset(){
+    const c=SC[sc]; S={t:0,marked:null,deleted:false,ev:[],p:{}};
+    PIDS.forEach(id=>S.p[id]={committed:c.committed.includes(id),batches:c.committed.includes(id),view:'silent',fenced:false,fencedOnce:false,guard:null});
+    S.ev=[`t=0: B2 stored the intent at CP1 for <code>${sk(KEY_A)}</code> with participants CP0, CP1, and CP3.`+(c.uploaded?'':' Then it stopped.')];
+  }
+  let out=[]; const say=m=>out.push(`t=${S.t}: ${m}`);
+  const ownView=()=>{const o=S.p[OWNER]; return o.batches?'referenced':(o.committed||o.fenced)?'released':'silent';};
+  const viewOf=id=>id===OWNER?ownView():S.p[id].view;
+  function tick(){
+    PIDS.forEach(id=>{const p=S.p[id]; if(p.guard&&S.t>=p.guard.exp){say(`A keys-expired record on CP${id} removes its ${p.guard.kind} for the key, which is at least 2T old.`); p.guard=null;}});
+    if(S.deleted) return;
+    const o=S.p[OWNER];
+    if(S.t>=T&&!o.committed&&!o.fenced){o.fenced=true; o.guard={kind:'fence',exp:S.t+2*T}; say('CP1\'s own part never committed, and the intent is at least T old, so CP1 fences the key on itself and counts as released.');}
+    const others=PIDS.filter(id=>id!==OWNER);
+    const heardOk=others.every(id=>S.p[id].view!=='referenced');
+    const silent=others.filter(id=>S.p[id].view==='silent'&&!S.p[id].fencedOnce);
+    if(S.t>=T&&ownView()==='released'&&heardOk&&silent.length){
+      silent.forEach(id=>{const p=S.p[id]; p.fencedOnce=true;
+        if(p.batches){p.view='referenced'; say(`CP1 fences CP${id}. CP${id} holds a commit for the key, so it answers referenced. CP1 waits for its release report and never fences it again.`);}
+        else {p.fenced=true; p.view='released'; p.guard={kind:'fence',exp:S.t+2*T}; say(`CP1 fences CP${id}. CP${id} has no commit for the key, so it records the fence, will reject any later commit for it, and answers released.`);}
+      });
+    }
+    if(S.marked===null&&S.t>=T&&PIDS.every(id=>viewOf(id)==='released')){S.marked=S.t; say('Every participant is released, and the intent is at least T old. CP1 appends file-delete-marked.');}
+    if(S.marked!==null&&S.t>=S.marked+GRACE){S.deleted=true; say(SC[sc].uploaded?'FileCleaner on B2 deletes the object after the grace period, and a file-deleted record removes the owner entry.':'FileCleaner deletes a key that was never uploaded. Storage answers success, which counts as deleted.');}
+  }
+  const A={
+    adv(n){for(let k=0;k<n&&S.t<MAXT;k++){S.t++; tick();} if(!out.length) say('Nothing happens.'+(S.t<T?' The intent is younger than T, so a delayed part could still commit anywhere.':ownView()!=='released'?' CP1 still holds batches, so a fence couldn\'t unblock deletion yet.':''));},
+    drop(id){
+      const p=S.p[id]; if(!p.batches) return; p.batches=false;
+      if(id===OWNER) say('Retention removes CP1\'s last batch of the object. As the owner, CP1 records its own release locally and sends nothing.');
+      else {p.view='released'; const tomb=S.t<T; if(tomb) p.guard={kind:'tombstone',exp:S.t+2*T};
+        say(`Retention removes CP${id}'s last batch. CP${id} reports the release, CP1 records it, and CP${id} appends owner-accepted. ${tomb?`The part was first sent less than T ago, so CP${id} keeps a tombstone until t=${S.t+2*T}.`:`The part was first sent more than T ago, so CP${id} deletes its row.`}`);}
+      tick();
+    },
+    late(id){
+      const p=S.p[id];
+      if(S.t>=T) say(`A delayed copy of B2's part reaches CP${id}. Its first-send time is at least T old, so the age check rejects it.`);
+      else if(p.fenced) say(`A delayed copy of B2's part reaches CP${id}. The key is fenced there, so CP${id} rejects it.`);
+      else if(p.guard&&p.guard.kind==='tombstone') say(`A delayed copy of B2's part reaches CP${id}. CP${id} has a tombstone for the key, so it rejects the part instead of bringing back removed batches.`);
+      else if(p.committed) say(`A delayed copy of B2's part reaches CP${id}. The key is already committed there, so CP${id} returns the stored result and appends nothing.`);
+      else {p.committed=true; p.batches=true; say(`A delayed copy of B2's part reaches CP${id}. There's no fence, and the part is younger than T, so CP${id} commits it. CP${id} now holds batches of the object. This is why the owner can't count a silent participant as released before T.`);}
+      tick();
+    },
+    reset(){reset();},
+  };
+  function render(){
+    $('#ow-scen').innerHTML=Object.entries(SC).map(([k,v])=>`<button class="btn${k===sc?' on':''}" data-ow-sc="${k}">${v.label}</button>`).join('');
+    $('#ow-desc').innerHTML=SC[sc].desc;
+    const X=t=>(t/MAXT*100)+'%';
+    $('#ow-clock').innerHTML=`<div class="bar"></div><div class="fill" style="width:${X(S.t)}"></div>
+      <div class="mk" style="left:${X(0)}"><span>intent</span></div><div class="mk" style="left:${X(T)}"><span>T = 5 min</span></div><div class="mk" style="left:${X(2*T)}"><span>2T</span></div>
+      <div style="position:absolute;right:0;top:-6px;font-weight:700;font-size:.9rem">t = ${S.t} min</div>`;
+    $('#ow-parts').innerHTML=PIDS.map(id=>{
+      const p=S.p[id], v=viewOf(id), isO=id===OWNER;
+      const local=p.batches?'holds batches':p.fenced?'fenced: no commit':p.committed?'released its batches':'no commit (yet)';
+      const guard=p.guard?`${p.guard.kind} until t=${p.guard.exp}`:'none';
+      return `<div class="pcard" style="border-color:${CPHEX[id]}55"><div class="h">${cpb(id)} ${isO?'<span class="pill owner">owner</span>':''}</div>
+        <div>Owner's view: <span class="pill ${v}">${v}</span></div>
+        <div style="margin-top:3px">Local: ${local}</div>
+        <div>Key guard: ${guard}</div>
+        <div class="btnrow" style="margin:6px 0 0"><button class="btn" data-ow="drop" data-arg="${id}" ${p.batches&&!S.deleted?'':'disabled'}>Remove last batch</button>
+        ${isO?'':`<button class="btn" data-ow="late" data-arg="${id}" ${SC[sc].uploaded&&!S.deleted?'':'disabled'}>Deliver delayed part</button>`}</div></div>`;
+    }).join('');
+    $('#ow-btns').innerHTML=`<button class="btn pri" data-ow="adv" data-arg="1" ${S.t>=MAXT?'disabled':''}>Clock +1 min</button><button class="btn" data-ow="adv" data-arg="5" ${S.t>=MAXT?'disabled':''}>Clock +5 min</button><button class="btn" data-ow="reset">Reset</button>`;
+    const silent=PIDS.filter(id=>id!==OWNER&&S.p[id].view==='silent');
+    const c1=S.t>=T, c2=ownView()==='released', c3=PIDS.filter(id=>id!==OWNER).every(id=>S.p[id].view!=='referenced');
+    const yn=b=>b?'<span class="y">✔</span>':'<span class="n">○</span>';
+    let next;
+    if(S.deleted) next='Done: the object is deleted.';
+    else if(S.marked!==null) next=`Marked at t=${S.marked}. FileCleaner deletes after the grace period (t=${S.marked+GRACE}).`;
+    else if(!c1) next='Wait: a delayed commit part could still arrive.';
+    else if(!c2) next='Wait: CP1 itself still holds batches, so fencing can\'t unblock deletion.';
+    else if(!c3) next='Wait for the referenced participants\' release reports.';
+    else next='Fence the silent participants.';
+    $('#ow-conds').innerHTML=`<div>${yn(c1)} Intent at least T old</div><div>${yn(c2)} CP1 itself released</div><div>${yn(c3)} Every participant CP1 heard from is released</div>
+      <div style="margin-top:4px">Silent: ${silent.length?silent.map(cpb).join(' '):'none'}</div><div style="margin-top:4px"><b>Next:</b> ${next}</div>`;
+    $('#ow-obj').innerHTML=`<span class="objstate${S.deleted?' deleted':''}">${sk(KEY_A)} · ${S.deleted?'deleted':!SC[sc].uploaded?'never uploaded':S.marked!==null?'marked for deletion':'stored'}</span>`;
+    $('#ow-log').innerHTML=S.ev.map(m=>`<div>${m}</div>`).join('');
+  }
+  $('#olab').addEventListener('click',e=>{
+    const sb=e.target.closest('[data-ow-sc]'); if(sb){sc=sb.dataset.owSc; reset(); render(); return;}
+    const b=e.target.closest('[data-ow]'); if(!b) return; out=[]; A[b.dataset.ow](b.dataset.arg!==undefined?+b.dataset.arg:undefined); if(out.length) S.ev.unshift(out.join(' ')); render();
+  });
+  reset(); render();
+}
+
+/* ------------------------------------------------------------------ snapshot lab */
+function initSnapLab(){
+  let S;
+  function reset(){S={leo:300,ls:0,reps:['B1','B2','B3'].map(n=>({name:n,snaps:[],report:null,isr:true,applied:300,db:true})),ev:['Reset. The log holds offsets 0 to 299, and no replica has a snapshot yet. Before the log start first moves, a replica that loses its database replays from offset 0.']};}
+  let out=[]; const say=m=>out.push(m);
+  const others=()=>S.reps.slice(1).filter(r=>r.isr&&r.report!==null);
+  function consider(){
+    const lead=S.reps[0], older=lead.snaps.length===2?lead.snaps[0]:null;
+    const reps=others().map(r=>r.report); const best=reps.length?Math.max(...reps):null;
+    if(older===null||best===null) return;
+    const cand=Math.min(older,best);
+    if(cand>S.ls){say(`The leader moves the log start from ${S.ls} to ${cand} with <code>maybeIncrementLogStartOffset</code>, and the segments before it are deleted. Followers adopt the new log start from their fetch responses.`); S.ls=cand;}
+  }
+  const A={
+    append(){S.leo+=150; S.reps.forEach(r=>{if(r.isr) r.applied=S.leo;}); say(`150 commits later, the log ends at ${S.leo}. In-sync replicas apply as the HW moves.`); consider();},
+    snap(j){
+      const r=S.reps[j]; const at=r.applied; if(r.snaps.includes(at)){say(`${r.name} already has a snapshot at ${at}.`);return;}
+      r.snaps.push(at); r.snaps.sort((a,b)=>a-b); let rot=''; if(r.snaps.length>2){const gone=r.snaps.shift(); rot=` It keeps two snapshots, so it deletes the one at ${gone} after the new one is renamed into place.`;}
+      say(`${r.name} copies its SQLite database with the backup API and reads the snapshot's offset, ${at}, from the applied-offset row inside the copy.${rot}`);
+      if(j>0){ if(r.isr){r.report=r.snaps[r.snaps.length-1]; say(`${r.name} reports its newest snapshot, ${r.report}, to the leader.`);} else say(`${r.name} is out of the ISR, so its report wouldn't count yet.`); }
+      consider();
+    },
+    isr(){
+      const r=S.reps[2];
+      if(r.isr){r.isr=false; r.report=null; say('B3 falls out of the ISR. The leader drops B3\'s report, because B3 might lose its snapshot files while it\'s out.');}
+      else{
+        if(r.applied<S.ls&&!(r.snaps.length&&r.snaps[r.snaps.length-1]>=S.ls)){say('B3 needs records below the log start, so it can\'t catch up from the log. Replace its disk to see a snapshot rebuild.');return;}
+        r.isr=true; r.applied=S.leo; r.report=r.snaps.length?r.snaps[r.snaps.length-1]:null;
+        say(`B3 catches up and rejoins the ISR.${r.report!==null?` It sees itself back in the ISR and reports its newest snapshot again, ${r.report}.`:''}`);
+      }
+      consider();
+    },
+    replace(){
+      const r=S.reps[2]; r.snaps=[]; r.report=null; r.db=false; r.isr=false; r.applied=0;
+      if(S.ls===0){r.db=true; r.applied=S.leo; r.isr=true; say(`B3's disk is replaced. The log start is still 0, so B3 replays the whole log from offset 0 and needs no snapshot. It rejoins the ISR.`);}
+      else{
+        const src=S.reps.slice(1,2).find(x=>x.isr&&x.snaps.some(o=>o>=S.ls)); const from=src||S.reps[0];
+        const snap=Math.max(...from.snaps.filter(o=>o>=S.ls));
+        r.db=true; r.applied=S.leo; r.isr=true;
+        say(`B3's disk is replaced. It needs records below the log start, ${S.ls}, so it fetches the newest covering snapshot, at ${snap}, from ${from.name}${src?', an in-sync follower, which spares the leader':', the leader, because no follower has one'}. It checks the checksum, loads it, replays the log from ${snap}, and rejoins the ISR with no snapshots of its own yet.`);
+      }
+      consider();
+    },
+    reset(){reset();},
+  };
+  function render(){
+    $('#sn-btns').innerHTML=`<button class="btn pri" data-sn="append">Append 150 commits</button><span class="sep"></span>
+      ${S.reps.map((r,j)=>`<button class="btn" data-sn="snap" data-arg="${j}">${r.name} takes a snapshot</button>`).join('')}<span class="sep"></span>
+      <button class="btn" data-sn="isr">${S.reps[2].isr?'B3 leaves the ISR':'B3 rejoins the ISR'}</button><button class="btn" data-sn="replace">Replace B3's disk</button><button class="btn" data-sn="reset">Reset</button>`;
+    const max=Math.max(600,S.leo+60); const X=o=>(o/max*100)+'%';
+    let ax=''; for(let o=0;o<=max;o+=100) ax+=`<span style="position:absolute;left:${X(o)};transform:translateX(-50%);font-size:.7rem;color:var(--faint)">${o}</span>`;
+    ax+=`<span style="position:absolute;left:${X(S.leo)};transform:translateX(-50%);top:12px;font-size:.7rem;font-weight:700">log end ${S.leo}</span>`;
+    $('#sn-axis').innerHTML=ax;
+    $('#sn-rows').innerHTML=S.reps.map((r,j)=>{
+      const sn=r.snaps.map((o,k)=>`<div class="snap ${k===r.snaps.length-1?'new':'old'}" style="left:${X(o)}" title="snapshot at ${o}">S</div>`).join('');
+      const rp=r.report!==null?`<div class="rpt" style="left:${X(r.report)}" title="reported ${r.report}"></div>`:'';
+      return `<div class="snaprow"><div class="who"><b>${r.name}</b> ${j===0?'leader':r.isr?'in ISR':'<span style="color:var(--warn)">out of ISR</span>'}<br><span style="color:var(--faint)">${j===0?'own snapshots: '+(r.snaps.join(', ')||'none'):'reported: '+(r.report??'none')}</span></div>
+        <div class="track"><div class="pruned" style="width:${X(S.ls)}"></div><div style="position:absolute;left:${X(S.leo)};top:0;bottom:0;border-left:2px solid #868e96"></div>${sn}${rp}${j===0?`<div class="lsline" style="left:${X(S.ls)}"><span>log start ${S.ls}</span></div>`:`<div class="lsline" style="left:${X(S.ls)}"></div>`}</div></div>`;
+    }).join('');
+    const lead=S.reps[0], older=lead.snaps.length===2?lead.snaps[0]:null; const reps=others().map(r=>r.report); const best=reps.length?Math.max(...reps):null;
+    $('#sn-formula').innerHTML=`candidate = min( leader's older snapshot = ${older??'<i>none yet: the leader needs two</i>'}, highest snapshot reported by another in-sync replica = ${best??'<i>none</i>'} )`+(older!==null&&best!==null?` = ${Math.min(older,best)}`:'')+`<br>log start = ${S.ls}${older!==null&&best!==null&&Math.min(older,best)<=S.ls?' (the candidate isn\'t ahead of it, so it stays)':''}`;
+    $('#sn-log').innerHTML=S.ev.map(m=>`<div>${m}</div>`).join('');
+  }
+  $('#snlab').addEventListener('click',e=>{const b=e.target.closest('[data-sn]'); if(!b) return; out=[]; A[b.dataset.sn](b.dataset.arg!==undefined?+b.dataset.arg:undefined); if(out.length) S.ev.unshift(out.join(' ')); render();});
+  reset(); render();
+}
+</script>
+<script>
+'use strict';
+/* ------------------------------------------------------------------ failure explorer */
+const FAILURES=[
+ ['Commit path','A leader crashes during a commit','The part wasn\'t acknowledged, so the delegate retries it against the new leader within the file\'s commit deadline, with the same object key and first-send time.','The object key identifies the upload. If the record survived, the new leader returns the stored offsets; if it was truncated, the retry commits it as new. Either way there\'s one record. Watch it in the "leader crashes" produce scenario.'],
+ ['Commit path','A part misses its deadline, then commits late','Its batches get <code>KAFKA_STORAGE_ERROR</code>. The late request can still make them visible, until this broker\'s next part on that coordinator partition fences the key, the broker restarts, or the first-send time passes the maximum commit age.','Idempotent producers deduplicate their retries by sequence number. A non-idempotent producer retrying through the same broker is covered by the predecessor fence; through another broker, it can see a duplicate within the 5-minute window. The owner deletes the object only once that participant is released.'],
+ ['Commit path','A coordinator partition is unavailable, slow, or rebuilding','Parts on it wait until their file\'s deadline, then fail with <code>KAFKA_STORAGE_ERROR</code>. Parts on every other coordinator partition keep committing.','Each broker keeps one commit queue per coordinator partition, so one stuck partition delays each of its queued parts by at most one deadline. Try it in the commit queue simulator.'],
+ ['Commit path','The ISR drops below <code>min.insync.replicas</code>','Appends fail at once with <code>NOT_ENOUGH_REPLICAS</code>, and the runtime reverts the batch. Intents fall back to another owner, and parts retry until their deadline.','The Inkless <code>PartitionWriter</code> appends with <code>acks=-1</code>, so the failure is immediate rather than a parked reply that times out. The high watermark doesn\'t advance under the minimum ISR either, so acknowledged records are always on two replicas.'],
+ ['Commit path','A retry arrives while the first attempt is pending','The retry waits for the pending record\'s result. Only one record and one set of offsets exist.','Deduplication checks the overlay as well as SQLite. A <code>files</code> row exists only after apply, so checking the table alone would miss a retry during the high-watermark wait.'],
+ ['Commit path','Some parts of a commit succeed, others fail','Committed batches return their offsets; the rest get <code>KAFKA_STORAGE_ERROR</code>, and the producer retries only those partitions.','A non-transactional produce was never atomic across partitions, so there\'s nothing to roll back. A later retry of the same part returns the stored outcome of every batch, even after a failover.'],
+ ['Commit path','The uploading broker restarts with requests in flight','Leaders reject intents and parts that carry the old broker epoch. The owner fences the participants that never committed.','The broker epoch grows on every registration. A newer epoch than the leader\'s image is accepted, because the image can lag, and a briefly fenced broker isn\'t rejected.'],
+ ['Ownership and deletion','The preferred owner can\'t store the intent','The broker tries the next participants in sorted order. If none can, it uploads nothing, and the produce fails with <code>KAFKA_STORAGE_ERROR</code>.','Only the user partitions of the unavailable coordinator partition fail, not the whole object. Shown in the "one coordinator partition is down" scenario.'],
+ ['Ownership and deletion','An intent is stored, but its reply is lost','The broker falls back to another owner. The first partition holds a stale intent; when it eventually fences, the answer names the real owner, so it drops its entry and never deletes the object.','Every committed part names its owner, and fence answers carry it. An owner-entry-dropped record makes the drop part of the log.'],
+ ['Ownership and deletion','The broker stops after the intent, before the upload','Once the intent is older than the maximum commit age, the owner fences every participant, then deletes the object. Storage answers success for the missing key.','Every object in storage has an intent first, and the intent exists even when the object doesn\'t. Try "broker stopped before the upload" in the owner lab.'],
+ ['Ownership and deletion','The broker stops after some parts commit','Committed participants release later through normal cleanup. Once the owner and everyone it has heard from are released, it fences the silent ones; those that never committed count as released.','The fence is final: it makes the participant reject any later commit for the key. Try "broker stopped after two parts" in the owner lab.'],
+ ['Ownership and deletion','Storage completes an upload after the broker gave up','If the owner already deleted the key, the object leaks.','The broker gives up only once the intent is older than the maximum commit age, so the window is small. This failure leaks storage; it never loses data.'],
+ ['Ownership and deletion','The owner\'s leader is unreachable for a release report','The participant retries with backoff. Only that object\'s deletion waits.','Commits and reads don\'t depend on release reports. An owner-accepted record tells a new participant leader which reports still need sending.'],
+ ['Ownership and deletion','Broker clocks differ by more than the maximum commit age','The age check and the expiry of tombstones and fences lose their guarantee. A delayed part from a live broker could commit after its fence expired and point into a deleted object.','This is the design\'s one clock dependency, and it involves broker clocks only, never storage timestamps. Restarted brokers are still caught by the epoch check, and the age-check rejection metric shows skew before it gets that large.'],
+ ['Replication and local state','A leader change truncates unreplicated records','The leader drops those overlay entries and fails their parked replies with a retriable error. A replica discards fetched records above its applied offset that the new leader doesn\'t have.','The applied offset never exceeds the high watermark, so truncation never reaches SQLite, and no applied row is undone. Try it in the overlay lab.'],
+ ['Replication and local state','A replica loses power','<code>flush.messages=1</code> keeps every appended record. SQLite, in WAL mode with <code>synchronous=NORMAL</code>, may roll back its latest applies, and the replica replays them from the log.','Each apply stores its applied offset in the same transaction, so a rolled-back apply takes its offset with it. SQLite can fall behind the log but never get ahead of it.'],
+ ['Replication and local state','A replica\'s SQLite is missing, corrupt, or out of step with the log','It rebuilds from a peer\'s covering snapshot and replays the log. Before the log start first moves, it replays from offset 0 instead. A newly elected leader rejects requests until the rebuild finishes.','On open, the replica checks that the log still holds its stored offset with the stored leader epoch, the same check KRaft makes for a snapshot.'],
+ ['Replication and local state','A replica falls behind the log start','It fetches the newest covering snapshot from an in-sync follower, or from the leader if no follower has one, then replays.','The leader trims only behind snapshots that at least <code>min.insync.replicas</code> in-sync replicas hold. Try "replace B3\'s disk" in the snapshot lab.'],
+ ['Replication and local state','Two replicas of a coordinator partition are down','Its ISR is below the minimum, so its appends fail at once. Commits, intents, and reads for that coordinator partition stop until a replica returns.','Other coordinator partitions keep committing, because their commit queues don\'t wait, and owner fallback keeps objects uploading.'],
+ ['Replication and local state','A new leader can\'t rebuild its state','No covering snapshot is reachable and its database is gone. The leader must not serve, so that coordinator partition\'s user partitions are unavailable for writes.','This is an open item: the controller has no request to move one partition\'s leadership off a broker. Until it exists, the leader marks only that partition offline.'],
+ ['Lifecycle','A coordinator leader is down when a topic is created or deleted','The metadata change commits without it. The next leader reconciles on election. Produces to a new topic get a retriable error until then.','The metadata log is the retry record. The diff runs by topic ID against the full image, so nothing is missed and a recreated name doesn\'t collide.'],
+];
+function initFailures(){
+  let cur=0, h='', g='';
+  FAILURES.forEach(([grp,t],k)=>{if(grp!==g){h+=`<div class="g">${grp}</div>`; g=grp;} h+=`<button data-fx="${k}">${t}</button>`;});
+  $('#fx-list').innerHTML=h;
+  const show=k=>{cur=k; const [grp,t,what,why]=FAILURES[k]; $$('#fx-list button').forEach(b=>b.classList.toggle('on',+b.dataset.fx===k));
+    $('#fx-detail').innerHTML=`<div class="lbl">${grp}</div><h4>${t}</h4><div class="lbl">What happens</div><p>${what}</p><div class="lbl">Why it's safe, or how bad it is</div><p>${why}</p>`;};
+  $('#fx-list').addEventListener('click',e=>{const b=e.target.closest('[data-fx]'); if(b) show(+b.dataset.fx);});
+  show(0);
+}
+
+/* ------------------------------------------------------------------ alternatives */
+const ALTS=[
+ ['A two-phase commit across participants','A non-transactional produce has no cross-partition atomicity to preserve, and <code>commitFile</code> already returns one result per batch. A prepare round would add a round trip to every commit and a coordinator for the coordinators.'],
+ ['Keep one commit thread per broker','One stuck or slow coordinator partition would stall every broker\'s diskless produce, because most files touch most coordinator partitions. That defeats the point of splitting the state. See the commit queue simulator.'],
+ ['One upload per coordinator partition per commit interval','It removes every cross-partition reference, and with it the owner protocol. But it multiplies object storage writes by up to N and shrinks each object.'],
+ ['Route produce so each broker writes for one coordinator partition','Clients could no longer produce to any broker, and every availability zone would need a broker for each coordinator partition.'],
+ ['A scanner that deletes unknown objects','It lists the bucket and deletes objects no coordinator partition knows. It needs nothing on the produce path, but it fails toward data loss: a stale snapshot, a restore, a shared bucket prefix, or a wrong prefix config makes live objects look unknown, possibly a large share of the data in one pass. It also depends on storage timestamps agreeing with broker clocks, and its cost follows the number of live objects rather than the commit rate. Owner-based deletion fails toward a leak instead. A report-only scanner that counts suspected orphans remains possible future work.'],
+ ['A standalone fence at the commit deadline','The fence could fail like the part it guards, and it would add a request per stuck part. The predecessor fence rides on the next part to the same coordinator partition, costs nothing extra, and lands exactly where ordering is at stake. Neither form deletes objects sooner, because deletion waits the maximum commit age anyway.'],
+ ['Answer a retry with a fixed error for failed batches','The error changes what the client does: <code>INVALID_PRODUCER_EPOCH</code> is fatal, while <code>KAFKA_STORAGE_ERROR</code> makes it retry. So the file-committed record stores each batch\'s real outcome, and a retry returns it.'],
+ ['Write a custom write loop','It would reimplement batching, revert, parked replies, and resignation handling, all of which <code>CoordinatorRuntime</code> already provides to the group and share coordinators.'],
+ ['Keep the full state in CoordinatorRuntime timeline maps','Every election would replay the whole log, and <code>findBatches</code> and <code>listOffsets</code> would scan heap-resident indexes. SQLite holds committed state; timeline structures hold only the overlay.'],
+ ['A Raft quorum for the metadata','Out of scope. Normal Kafka replication with <code>acks=-1</code>, <code>min.insync.replicas=2</code>, unclean election off, and <code>flush.messages=1</code> gives the durability the coordinator needs, with machinery Kafka already runs.'],
+];
+function initAlts(){$('#alts').innerHTML=ALTS.map(([t,d])=>`<details><summary>${t}</summary><p>${d}</p></details>`).join('');}
+
+/* ------------------------------------------------------------------ records table */
+const RECS=[
+ ['in','Intent registered','Owner, before the upload','Object key, participant set, owner, uploader broker ID and epoch'],
+ ['fc','File committed','Each participant, once per commit part','Object key, format, size, uploader, participants, owner, first-send time, this partition\'s committed batches with offsets and producer fields, and the outcome of each other batch'],
+ ['pc','Partition created','Reconciliation','Topic ID, name, partition index'],
+ ['td','Topic deleted','Reconciliation','Topic ID'],
+ ['','Records deleted','<code>deleteRecords</code>','Partition, new log start offset'],
+ ['','Diskless log initialized','<code>initDisklessLog</code>','Partition, log start, diskless start, producer states'],
+ ['','Diskless log repaired','<code>repairDisklessLog</code>','Partition, diskless start'],
+ ['ps','Participant state recorded','Owner, on a release report or fence answer','Object key, participant, state: referenced or released'],
+ ['oa','Owner accepted','Participant, after the owner accepts its release','Object key'],
+ ['ff','File fenced','Participant, on an owner\'s fence or a predecessor fence','Object key, who fenced, the answer'],
+ ['od','Owner entry dropped','Stale owner, when an answer names another owner','Object key'],
+ ['dm','File delete marked','Owner, once every participant is released and the intent is older than T','Object key, marked time'],
+ ['fd','File deleted','<code>FileCleaner</code> on the owner','Object key'],
+ ['ke','Keys expired','Leader, periodically','Keys whose tombstones, fences, or stored outcomes expired'],
+ ['ra','Retention applied','<code>enforceRetention</code>','Partition, batches deleted, new log start'],
+ ['','Log pruned','<code>pruneDisklessLogs</code>','Partition, new diskless log start'],
+ ['','Cross-tier start advanced','<code>advanceCrossTierLogStartOffset</code>','Partition, remote log start offset'],
+ ['dp','Deleted log purged','Topic purge','Partition, optional boundary offset, whether it\'s now empty'],
+];
+function initRecs(){$('#rec-table').innerHTML=`<table><tr><th></th><th>Record</th><th>Written by</th><th>Content</th></tr>${RECS.map(([k,n,w,c])=>`<tr><td class="k-${k}">${k?`<span class="lg" style="display:inline;padding:0"><span class="kd" style="padding:0 4px">${KINDS[k][0]}</span></span>`:''}</td><td>${n}</td><td>${w}</td><td>${c}</td></tr>`).join('')}</table>`;}
+
+/* ------------------------------------------------------------------ toc highlight */
+function initToc(){
+  const links=$$('#toc a'); const targets=links.map(a=>$(a.getAttribute('href'))).filter(Boolean);
+  let raf=0; const upd=()=>{raf=0; let cur=targets[0]; targets.forEach(t=>{if(t.getBoundingClientRect().top<140) cur=t;}); links.forEach(a=>a.classList.toggle('on',a.getAttribute('href')==='#'+cur.id));};
+  window.addEventListener('scroll',()=>{if(!raf) raf=requestAnimationFrame(upd);},{passive:true}); upd();
+}
+
+/* ------------------------------------------------------------------ init */
+(function init(){
+  const main=$('#main'); main.innerHTML=terms(main.innerHTML);
+  buildGloss(); $('#glsearch').addEventListener('input',e=>filterGloss(e.target.value));
+  makeStage($('#stage-map'),{static:true,init:initTopic,scenarios:[{steps:[{}]}]});
+  makeStage($('#stage-create'),{init:initEmpty,kinds:['pc'],scenarios:[{steps:P_CREATE}]});
+  makeStage($('#stage-produce'),{kinds:['in','fc','ff'],scenarios:[
+    {label:'Happy path',desc:'Everything works. Follow one WAL file from the producer to committed offsets.',init:initTopic,steps:P_HAPPY},
+    {label:'One coordinator partition is down',desc:'CP1, the preferred owner, can\'t append. Watch owner fallback, a partial result, and a predecessor fence.',init:initDown,steps:P_DOWN},
+    {label:'A leader crashes mid-commit',desc:'B1, which leads CP0 and CP3, crashes before two of the three parts are acknowledged. Watch the retries.',init:initCrash,steps:P_CRASH},
+  ]});
+  makeStage($('#stage-consume'),{init:initCommitted,kinds:[],scenarios:[{steps:P_FETCH}]});
+  makeStage($('#stage-cleanup'),{init:initCommitted,kinds:['ra','ps','oa','dm','fd'],scenarios:[{steps:P_CLEAN}]});
+  makeStage($('#stage-delete'),{init:initDelete,kinds:['td','dp','ps','dm','fd'],scenarios:[{steps:P_DELETE}]});
+  initCalc(); initQueueSim(); initOverlayLab(); initOwnerLab(); initSnapLab(); initFailures(); initAlts(); initRecs(); initToc();
+})();
+</script>
+</body>
+</html>

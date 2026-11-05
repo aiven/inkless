@@ -28,6 +28,8 @@ AI_AGENT_EMAILS: Final = (
 )
 BLAME_HEADER: Final = re.compile(r"^([0-9a-f]{40}) \d+ (\d+)")
 EXCLUDE_GENERATED: Final = ":(exclude,attr:linguist-generated=true)"
+# Proposal versions keep their original text. The style rules skip them.
+EXCLUDE_PROPOSALS: Final = ":(exclude,glob)docs/inkless/proposals/**"
 SQL_AS_EXT: Final = ".lua"
 
 
@@ -63,7 +65,7 @@ def owned_pathspecs() -> list[str]:
                 pathspecs.append(":(glob)" + fields[0])
     if not pathspecs:
         sys.exit("No OWNED entries found in INKLESS_OWNERSHIP")
-    return [*pathspecs, EXCLUDE_GENERATED]
+    return [*pathspecs, EXCLUDE_GENERATED, EXCLUDE_PROPOSALS]
 
 
 def resolve_base(base_arg: str | None) -> str:
