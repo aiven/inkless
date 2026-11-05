@@ -521,6 +521,11 @@ class ReplicaManager(val config: KafkaConfig,
   private val disklessSwitchedPrefixMissingFetchRate: Meter =
     metricsGroup.newMeter(DisklessSwitchedPrefixMissingFetchRateMetricName, "fetches", TimeUnit.SECONDS)
 
+  // Switched partitions this broker took offline because its local copy of the classic prefix is
+  // incomplete. Unlike a log directory failure, the log stays usable, so the next metadata change
+  // brings the partition back and an operator recovery doesn't need a broker restart.
+  private val switchFencedPartitions = ConcurrentHashMap.newKeySet[TopicPartition]()
+
   /**
    * Returns true when this broker consolidates the topic: the feature is enabled here and the topic
    * is diskless with remote storage. Says nothing about the classic-to-diskless switch phase, so a
@@ -537,6 +542,10 @@ class ReplicaManager(val config: KafkaConfig,
    */
   private[server] def consolidationActiveFor(tp: TopicPartition): Boolean =
     consolidationEnabledFor(tp.topic) && !_inklessMetadataView.isClassicPrefixWaitingForUpload(tp)
+
+  private def isPhaseOneConsolidatingSwitch(tp: TopicPartition, registration: PartitionRegistration): Boolean =
+    registration.classicToDisklessStartOffset >= 0 && !registration.classicPrefixInRemoteStorage &&
+      consolidationEnabledFor(tp.topic)
 
   private[server] def disklessSwitchedReplicasOutsideIsrCount: Int = onlinePartitionsIterator.count { partition =>
     val topicPartition = partition.topicPartition
@@ -735,6 +744,7 @@ class ReplicaManager(val config: KafkaConfig,
     val partitionsToDelete = mutable.Set.empty[TopicPartition]
     partitionsToStop.foreach { stopPartition =>
       val topicPartition = stopPartition.topicPartition
+      switchFencedPartitions.remove(topicPartition)
       var topicId: Option[Uuid] = None
       if (stopPartition.deleteLocalLog) {
         getPartition(topicPartition) match {
@@ -3723,6 +3733,7 @@ class ReplicaManager(val config: KafkaConfig,
   }
 
   def markPartitionOffline(tp: TopicPartition): Unit = replicaStateChangeLock synchronized {
+    switchFencedPartitions.remove(tp)
     allPartitions.get(tp) match {
       case online: HostedPartition.Online[Partition] =>
         val partition = online.partition
@@ -4024,6 +4035,13 @@ class ReplicaManager(val config: KafkaConfig,
                                           delta: TopicsDelta,
                                           topicId: Uuid): Option[(Partition, Boolean)] = {
     getPartition(tp) match {
+      case _: HostedPartition.Offline[Partition] if switchFencedPartitions.remove(tp) && logManager.getLog(tp).isDefined =>
+        stateChangeLogger.info(s"Recreating switched partition $tp with topic id $topicId, which this broker " +
+          "took offline because its local classic prefix is incomplete.")
+        val partition = Partition(new TopicIdPartition(topicId, tp), time, this)
+        allPartitions.put(tp, new HostedPartition.Online(partition))
+        Some(partition, true)
+
       case offline: HostedPartition.Offline[Partition] =>
         val offlinePartition = offline.partition
         if (offlinePartition.toScala.flatMap(p => p.topicId).contains(topicId)) {
@@ -4218,15 +4236,22 @@ class ReplicaManager(val config: KafkaConfig,
                   val reason =
                     if (consolidationEnabledFor(tp.topic) && log.remoteLogEnabled())
                       "the classic-to-diskless switch is in phase 1, and only a leader that holds the whole " +
-                        "classic prefix can request the classicPrefixInRemoteStorage flag. Move leadership to a " +
-                        "replica that holds the prefix"
+                        "classic prefix can request the classicPrefixInRemoteStorage flag. Elect a replica that " +
+                        "holds the prefix with `kafka-topic-switch.sh elect`, or accept the loss of the part " +
+                        "that isn't in remote storage with `kafka-topic-switch.sh start-phase-2`"
                     else
                       "the prefix is not recoverable from remote storage (no consolidation or remote storage on " +
                         "this broker)"
                   stateChangeLogger.error(s"Leader partition $tp has LEO ${log.logEndOffset} below the " +
                     s"classic-to-diskless seal $seal and the classic prefix [0, $seal) is locally incomplete: " +
                     s"$reason. Marking the partition offline.")
+                  // Going offline clears the partition's log, and the remote log manager tracks only
+                  // partitions with a log. Registering it as a follower first keeps the remote copy of
+                  // the prefix visible to `kafka-topic-switch.sh describe` while the partition is offline.
+                  remoteLogManager.foreach(_.onLeadershipChange(
+                    util.Set.of[TopicPartitionLog](), util.Set.of[TopicPartitionLog](partition), util.Map.of(tp.topic, topicId)))
                   markPartitionOffline(tp)
+                  switchFencedPartitions.add(tp)
                 }
               }
             }
@@ -4744,9 +4769,12 @@ class ReplicaManager(val config: KafkaConfig,
               s"with topic id ${info.topicId} due to a storage error ${e.getMessage}")
             markPartitionOffline(tp)
         }
-      } else if (logManager.getLog(tp).isDefined && !isConsolidatingDisklessTopic) {
+      } else if ((logManager.getLog(tp).isDefined || isPhaseOneConsolidatingSwitch(tp, info.partition)) &&
+          !isConsolidatingDisklessTopic) {
         // Post-restart: diskless topic still has classic data on local disk (offsets < disklessStartOffset).
-        // Create the Partition so classic data remains accessible for reads.
+        // Create the Partition so classic data remains accessible for reads. In phase 1 of a consolidating
+        // switch, a leader that lost its whole local log gets an empty one: the fence in
+        // maybeReconcileSwitchedLeader needs a log to register the partition with the remote log manager.
         getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
           try {
             val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
