@@ -330,6 +330,8 @@ class InklessMetadataViewTest {
       List(bornDiskless, pending, phaseOne, phaseTwo).map(metadataView.isClassicPrefixInRemoteStorage))
     assertEquals(List(false, false, true, false),
       List(bornDiskless, pending, phaseOne, phaseTwo).map(metadataView.isClassicPrefixWaitingForUpload))
+    assertEquals(List(None, None, Some(42L), None),
+      List(bornDiskless, pending, phaseOne, phaseTwo).map(metadataView.classicPrefixWaitingForUploadSeal))
     assertEquals(List(false, true, true, false),
       List(bornDiskless, pending, phaseOne, phaseTwo).map(tp =>
         metadataView.isClassicPrefixOnlyOnLocalDisks(tp.topic, tp.partition)))
@@ -341,6 +343,7 @@ class InklessMetadataViewTest {
     stubImageWithoutTopic(tp.topic())
     assertFalse(metadataView.isClassicPrefixInRemoteStorage(tp))
     assertFalse(metadataView.isClassicPrefixWaitingForUpload(tp))
+    assertEquals(None, metadataView.classicPrefixWaitingForUploadSeal(tp))
     assertFalse(metadataView.isClassicPrefixOnlyOnLocalDisks(tp.topic, tp.partition))
   }
 

@@ -4053,15 +4053,40 @@ class ReplicaManager(val config: KafkaConfig,
       log.highWatermark
   }
 
-  private def maybeShrinkIsr(): Unit = {
+  // Visible for testing
+  private[server] def maybeShrinkIsr(): Unit = {
     trace("Evaluating ISR list of partitions to see which replicas can be removed from the ISR")
 
     // Shrink ISRs for non offline partitions
     allPartitions.forEach { (topicPartition, _) =>
-      if (!_inklessMetadataView.isDisklessTopic(topicPartition.topic()))
+      if (isIsrShrinkEligible(topicPartition))
         onlinePartition(topicPartition).foreach(_.maybeShrinkIsr())
     }
   }
+
+  /**
+   * Returns true if the partition shrinks ISR for lag by classic rules: a classic partition, or a
+   * partition whose classic-to-diskless switch is pending or in phase 1. In both, the ISR members' local
+   * logs are the only complete copy of the classic prefix. While the switch is pending, the leader commits
+   * the seal only once its high watermark reaches its frozen log end offset, so a follower that stops
+   * fetching below it blocks the switch until the shrink removes it. In phase 1 the lag check stops at
+   * `replicationStopOffset`, the seal, so the shrink measures lag on the prefix. A born-diskless or
+   * phase-2 partition has no prefix to lag on.
+   */
+  private[server] def isIsrShrinkEligible(topicPartition: TopicPartition): Boolean =
+    !_inklessMetadataView.isDisklessTopic(topicPartition.topic()) ||
+      _inklessMetadataView.isClassicPrefixOnlyOnLocalDisks(topicPartition.topic(), topicPartition.partition())
+
+  /**
+   * Returns the offset at which follower replication of the partition stops, or `None` if it doesn't
+   * stop. In phase 1 of the classic-to-diskless switch, it's the seal: the leader records a follower
+   * fetch at or above the seal as a fetch at the seal. The leader epoch can start past the seal, for
+   * example after an operator re-seal lowers the seal without a new leader epoch, or after a new leader
+   * truncates a tail above the seal. `Partition` caps the ISR admission check at the seal, and its lag
+   * check treats a follower recorded at or past the seal as caught up.
+   */
+  private[kafka] def replicationStopOffset(topicPartition: TopicPartition): Option[Long] =
+    _inklessMetadataView.classicPrefixWaitingForUploadSeal(topicPartition)
 
   private def leaderPartitionsIterator: Iterator[Partition] =
     onlinePartitionsIterator.filter(_.leaderLogIfLocal.isDefined)
@@ -5165,10 +5190,15 @@ class ReplicaManager(val config: KafkaConfig,
               partition.seal()
               changedPartitions.add(partition)
               val isOutOfIsr = !info.partition.isr.contains(config.brokerId)
+              // In phase 1 of the classic-to-diskless switch, the leader shrinks ISR for lag, and a new
+              // leader starts with no fetch state for this follower. One fetch at the seal records it, so
+              // a follower that already stopped fetching doesn't fall out of ISR on every leader change.
+              val isPhaseOne = seal >= 0 && !info.partition.classicPrefixInRemoteStorage
               // Skip during controlled shutdown: the leader will not expand ISR for a shutting-down
               // broker (isReplicaIsrEligible), and this replica is about to stop serving.
               if (seal >= 0 && !isInControlledShutdown &&
-                (partition.localLogOrException.highWatermark < seal || isOutOfIsr)) {
+                (partition.localLogOrException.highWatermark < seal || isOutOfIsr ||
+                  (isPhaseOne && isNewLeaderEpoch))) {
                 // Schedule a catch-up fetch when the local HW is below the seal -- either
                 // because we restarted with a stale HW (unclean shutdown) or because we
                 // were just added as a replica and have an empty local log.
