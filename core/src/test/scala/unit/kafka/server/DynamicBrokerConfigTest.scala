@@ -1143,7 +1143,7 @@ class DynamicBrokerConfigTest {
     config.dynamicConfig.initialize(None)
     val reconfigurations = new AtomicInteger()
     config.dynamicConfig.addBrokerReconfigurable(new BrokerReconfigurable {
-      override def reconfigurableConfigs: util.Set[String] = DynamicInklessControlPlaneConfig.ReconfigurableConfigs
+      override def reconfigurableConfigs: Set[String] = DynamicInklessControlPlaneConfig.ReconfigurableConfigs.asScala
       override def validateReconfiguration(newConfig: KafkaConfig): Unit = {}
       override def reconfigure(oldConfig: KafkaConfig, newConfig: KafkaConfig): Unit = reconfigurations.incrementAndGet()
     })
