@@ -7391,8 +7391,12 @@ class ReplicaManagerInklessTest {
       populateLocalLogAtLeoAndCheckpointedHwm(replicaManager, tp, log, leo = 10L, hw = 10L)
 
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(10L)
+      when(replicaManager.inklessMetadataView().isClassicPrefixInRemoteStorage(tp)).thenReturn(true)
 
-      val delta = disklessFollowerDelta(topicName, topicId, brokerId, leaderId)
+      // In phase 1 of the classic-to-diskless switch, a new leader epoch schedules one fetch at the
+      // seal. Phase 2 has no such fetch.
+      val delta = disklessFollowerDelta(topicName, topicId, brokerId, leaderId,
+        classicToDisklessStartOffset = 10L, classicPrefixInRemoteStorage = true)
       replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))
 
       // Nothing to catch up — no fetcher should be added for this partition.
@@ -7925,8 +7929,15 @@ class ReplicaManagerInklessTest {
         replicaManager.applyDelta(sealDelta, sealImage)
 
         // Nothing consolidates in phase 1, so the follower behaves like a switched partition that
-        // doesn't consolidate: it's at the seal and in the ISR, so it needs no fetcher at all.
-        verify(mockFetcherManager, never()).removeFetcherForPartitions(Set(tp))
+        // doesn't consolidate: it's at the seal and in the ISR, so it only schedules one classic fetch at
+        // the seal for the new leader epoch.
+        val leaderEndpoint = ClusterImageTest.IMAGE1.broker(leaderId).listeners().get("PLAINTEXT")
+        verify(mockFetcherManager).addFetcherForPartitions(Map(tp -> InitialFetchState(
+          topicId = Some(topicId),
+          leader = new BrokerEndPoint(leaderId, leaderEndpoint.host(), leaderEndpoint.port()),
+          currentLeaderEpoch = 0,
+          initOffset = sealOffset
+        )))
         verify(mockCfm, never()).addFetcherForPartitions(any())
         assertEquals(0L, log.localLogStartOffset)
 
@@ -8474,6 +8485,71 @@ class ReplicaManagerInklessTest {
     }
   }
 
+  @ParameterizedTest(name = "testApplyDeltaSchedulesSealFetchOnLeaderChangeOnlyInPhaseOne with classicPrefixInRemoteStorage: {0}")
+  @ValueSource(booleans = Array(false, true))
+  def testApplyDeltaSchedulesSealFetchOnLeaderChangeOnlyInPhaseOne(classicPrefixInRemoteStorage: Boolean): Unit = {
+    // In phase 1 of the classic-to-diskless switch, a follower leaves the classic fetcher once it's at
+    // the seal and in ISR, and a new leader shrinks ISR for lag. One fetch at the seal must record this
+    // follower on the new leader. In phase 2 the leader doesn't shrink, so no fetch is needed.
+    val topicName = "switched-topic"
+    val topicId = Uuid.randomUuid()
+    val tp = new TopicPartition(topicName, 0)
+    val brokerId = 1
+    val firstLeaderId = 2
+    val secondLeaderId = 0
+    val sealOffset = 10L
+
+    val mockFetcherManager = mock(classOf[ReplicaFetcherManager])
+    when(mockFetcherManager.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+
+    val replicaManager = createReplicaManager(
+      List(topicName),
+      mockReplicaFetcherManager = Some(mockFetcherManager)
+    )
+    try {
+      val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+      populateLocalLogAtLeoAndCheckpointedHwm(replicaManager, tp, log, leo = sealOffset, hw = sealOffset)
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(sealOffset)
+      when(replicaManager.inklessMetadataView().isClassicPrefixInRemoteStorage(tp)).thenReturn(classicPrefixInRemoteStorage)
+      when(replicaManager.inklessMetadataView().isClassicPrefixWaitingForUpload(tp)).thenReturn(!classicPrefixInRemoteStorage)
+
+      val firstDelta = disklessFollowerDelta(topicName, topicId, brokerId, firstLeaderId,
+        classicToDisklessStartOffset = sealOffset, classicPrefixInRemoteStorage = classicPrefixInRemoteStorage)
+      replicaManager.applyDelta(firstDelta, imageFromTopics(firstDelta.apply()))
+      clearInvocations(mockFetcherManager)
+
+      val leaderChangeDelta = new TopicsDelta(TopicsImage.EMPTY)
+      leaderChangeDelta.replay(new TopicRecord().setName(topicName).setTopicId(topicId))
+      val leaderChangeRecord = new PartitionRecord()
+        .setPartitionId(0)
+        .setTopicId(topicId)
+        .setReplicas(util.Arrays.asList(brokerId, firstLeaderId, secondLeaderId))
+        .setIsr(util.Arrays.asList(brokerId, firstLeaderId, secondLeaderId))
+        .setLeader(secondLeaderId)
+        .setLeaderEpoch(1)
+        .setPartitionEpoch(1)
+      leaderChangeRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicToDisklessStartOffset(sealOffset))
+      if (classicPrefixInRemoteStorage)
+        leaderChangeRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicPrefixInRemoteStorage())
+      leaderChangeDelta.replay(leaderChangeRecord)
+      replicaManager.applyDelta(leaderChangeDelta, imageFromTopics(leaderChangeDelta.apply()))
+
+      if (classicPrefixInRemoteStorage) {
+        verify(mockFetcherManager, never()).addFetcherForPartitions(any())
+      } else {
+        val secondEndpoint = ClusterImageTest.IMAGE1.broker(secondLeaderId).listeners().get("PLAINTEXT")
+        verify(mockFetcherManager).addFetcherForPartitions(Map(tp -> InitialFetchState(
+          topicId = Some(topicId),
+          leader = new BrokerEndPoint(secondLeaderId, secondEndpoint.host(), secondEndpoint.port()),
+          currentLeaderEpoch = 1,
+          initOffset = sealOffset
+        )))
+      }
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
   @Test
   def testFollowerFetchAtClassicToDisklessStartOffsetReturnsEmptyAndIdle(): Unit = {
     val followerId = 2
@@ -8576,6 +8652,237 @@ class ReplicaManagerInklessTest {
       // fetch state at the seal...
       assertEquals(sealOffset, partition.getReplica(followerId).get.stateSnapshot.logEndOffset)
       // ...which drives the normal ISR-expansion path for the now caught-up follower.
+      verify(alterPartitionManager).submit(any(), argThat[LeaderAndIsr](_.isr.contains(followerId)))
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @ParameterizedTest(name = "{0}: shrinks ISR for lag = {1}")
+  @CsvSource(Array("PENDING, true", "PHASE_ONE, true", "PHASE_TWO, false", "BORN_DISKLESS, false"))
+  def testMaybeShrinkIsrGatesDisklessPartitionOnSwitchPhase(phase: String, expectShrink: Boolean): Unit = {
+    val followerId = 2
+    val sealOffset = 5L
+    val tp = disklessTopicPartition.topicPartition()
+    val replicaManager = createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      topicIdMapping = Map(disklessTopicPartition.topic() -> disklessTopicPartition.topicId()),
+      disklessManagedReplicasEnabled = true,
+    )
+    try {
+      val partition = setupSwitchedLeaderWithOutOfSyncFollower(
+        replicaManager, disklessTopicPartition, followerId, sealOffset, followerInIsr = true)
+      phase match {
+        case "PENDING" =>
+          when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp))
+            .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
+          when(replicaManager.inklessMetadataView().isClassicPrefixOnlyOnLocalDisks(tp.topic(), tp.partition()))
+            .thenReturn(true)
+        case "PHASE_ONE" =>
+          when(replicaManager.inklessMetadataView().isClassicPrefixWaitingForUpload(tp)).thenReturn(true)
+          when(replicaManager.inklessMetadataView().isClassicPrefixOnlyOnLocalDisks(tp.topic(), tp.partition()))
+            .thenReturn(true)
+          when(replicaManager.inklessMetadataView().classicPrefixWaitingForUploadSeal(tp)).thenReturn(Some(sealOffset))
+        case "PHASE_TWO" =>
+          when(replicaManager.inklessMetadataView().isClassicPrefixInRemoteStorage(tp)).thenReturn(true)
+        case "BORN_DISKLESS" =>
+          when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp))
+            .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+      }
+      assertTrue(partition.inSyncReplicaIds.contains(followerId))
+      prepareAlterPartitionSubmit()
+
+      // The follower never fetches from this leader, so it is out of sync once the lag time passes.
+      time.sleep(replicaManager.config.replicaLagTimeMaxMs + 1)
+      replicaManager.maybeShrinkIsr()
+
+      if (expectShrink)
+        verify(alterPartitionManager).submit(any(), argThat[LeaderAndIsr](!_.isr.contains(followerId)))
+      else
+        verify(alterPartitionManager, never()).submit(any(), any())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testMaybeShrinkIsrRemovesStalledFollowerBelowFrozenLeoWhileSwitchPending(): Unit = {
+    // While the switch is pending, the leader is sealed, so its log end offset is frozen, and the seal
+    // commits only once the high watermark reaches it. A follower in ISR that stops fetching below the log
+    // end offset holds the high watermark below it until the shrink removes the follower.
+    val followerId = 2
+    val leo = 10L
+    val stalledAt = 5L
+    val tp = disklessTopicPartition.topicPartition()
+    val replicaManager = createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      topicIdMapping = Map(disklessTopicPartition.topic() -> disklessTopicPartition.topicId()),
+      disklessManagedReplicasEnabled = true,
+    )
+    try {
+      val partition = setupSwitchedLeaderWithOutOfSyncFollower(
+        replicaManager, disklessTopicPartition, followerId, leo, followerInIsr = true)
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp))
+        .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
+      when(replicaManager.inklessMetadataView().isClassicPrefixOnlyOnLocalDisks(tp.topic(), tp.partition()))
+        .thenReturn(true)
+      partition.seal()
+      // The follower replicated up to stalledAt and then stopped fetching.
+      partition.localLogOrException.updateHighWatermark(stalledAt)
+      assertEquals(stalledAt, partition.localLogOrException.highWatermark)
+      assertEquals(leo, partition.localLogOrException.logEndOffset)
+      prepareAlterPartitionSubmit()
+
+      time.sleep(replicaManager.config.replicaLagTimeMaxMs + 1)
+      replicaManager.maybeShrinkIsr()
+
+      verify(alterPartitionManager).submit(any(), argThat[LeaderAndIsr](!_.isr.contains(followerId)))
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @ParameterizedTest(name = "followerFetchedAtSeal: {0}")
+  @ValueSource(booleans = Array(true, false))
+  def testMaybeShrinkIsrCapsLagAtSealWhenPhaseOneLeaderKeepsConsolidatedSuffix(followerFetchedAtSeal: Boolean): Unit = {
+    // The leader records a follower fetch at the seal, so lag against the leader's log end offset would
+    // remove a follower that holds the whole prefix. A follower that never fetches still lags on the prefix.
+    val followerId = 2
+    val sealOffset = 10L
+    val consolidationCtor = mockConstruction(classOf[ConsolidationFetcherManager])
+    try {
+      val topicIdPartition = new TopicIdPartition(Uuid.randomUuid(), new TopicPartition("consolidating-topic", 0))
+      val replicaManager = createReplicaManager(
+        List(topicIdPartition.topic()),
+        topicIdMapping = Map(topicIdPartition.topic() -> topicIdPartition.topicId()),
+        disklessRemoteStorageConsolidationEnabled = true,
+        consolidatingDisklessTopics = Set(topicIdPartition.topic()),
+      )
+      try {
+        val partition = setupPhaseOneLeaderWithConsolidatedSuffix(replicaManager, topicIdPartition, followerId,
+          followerInIsr = true, sealOffset, highWatermark = sealOffset)
+        if (followerFetchedAtSeal) {
+          val data = fetchFollowerAtSeal(
+            replicaManager, topicIdPartition, followerId, sealOffset, Optional.of(partition.getLeaderEpoch))
+          assertEquals(Errors.NONE, data.error)
+          assertEquals(sealOffset, partition.getReplica(followerId).get.stateSnapshot.logEndOffset)
+        }
+        prepareAlterPartitionSubmit()
+
+        time.sleep(replicaManager.config.replicaLagTimeMaxMs + 1)
+        replicaManager.maybeShrinkIsr()
+
+        if (followerFetchedAtSeal)
+          verify(alterPartitionManager, never()).submit(any(), any())
+        else
+          verify(alterPartitionManager).submit(any(), argThat[LeaderAndIsr](!_.isr.contains(followerId)))
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
+    } finally {
+      consolidationCtor.close()
+    }
+  }
+
+  @Test
+  def testFollowerFetchAtSealJoinsIsrWhenPhaseOneLeaderKeepsConsolidatedSuffix(): Unit = {
+    // The leader's high watermark and leader epoch start offset are both past the seal. A follower at the
+    // seal holds the whole prefix, so it joins ISR anyway.
+    val followerId = 2
+    val sealOffset = 10L
+    val consolidationCtor = mockConstruction(classOf[ConsolidationFetcherManager])
+    try {
+      val topicIdPartition = new TopicIdPartition(Uuid.randomUuid(), new TopicPartition("consolidating-topic", 0))
+      val replicaManager = createReplicaManager(
+        List(topicIdPartition.topic()),
+        topicIdMapping = Map(topicIdPartition.topic() -> topicIdPartition.topicId()),
+        disklessRemoteStorageConsolidationEnabled = true,
+        consolidatingDisklessTopics = Set(topicIdPartition.topic()),
+      )
+      try {
+        val partition = setupPhaseOneLeaderWithConsolidatedSuffix(replicaManager, topicIdPartition, followerId,
+          followerInIsr = false, sealOffset, highWatermark = sealOffset + 3)
+        assertTrue(partition.localLogOrException.highWatermark > sealOffset)
+        prepareAlterPartitionSubmit()
+
+        val data = fetchFollowerAtSeal(
+          replicaManager, topicIdPartition, followerId, sealOffset, Optional.of(partition.getLeaderEpoch))
+
+        assertEquals(Errors.NONE, data.error)
+        verify(alterPartitionManager).submit(any(), argThat[LeaderAndIsr](_.isr.contains(followerId)))
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
+    } finally {
+      consolidationCtor.close()
+    }
+  }
+
+  @Test
+  def testMaybeShrinkIsrKeepsFollowerAtOldSealWhenOperatorLowersPhaseOneSeal(): Unit = {
+    // An operator re-seal keeps the leader epoch, so the follower doesn't fetch at the lowered seal and the
+    // leader keeps its recorded offset at the old seal. The follower still holds the whole lowered prefix.
+    val followerId = 2
+    val sealOffset = 10L
+    val loweredSeal = 7L
+    val topicIdPartition = new TopicIdPartition(Uuid.randomUuid(), new TopicPartition("switched-topic", 0))
+    val tp = topicIdPartition.topicPartition()
+    val replicaManager = createReplicaManager(
+      List(tp.topic()),
+      topicIdMapping = Map(tp.topic() -> topicIdPartition.topicId()),
+      initDisklessLogManager = Some(mock(classOf[InitDisklessLogManager])),
+    )
+    try {
+      val (partition, image) =
+        setupPhaseOneLeaderAtSeal(replicaManager, topicIdPartition, followerId, followerInIsr = true, sealOffset)
+      val data = fetchFollowerAtSeal(
+        replicaManager, topicIdPartition, followerId, sealOffset, Optional.of(partition.getLeaderEpoch))
+      assertEquals(Errors.NONE, data.error)
+      assertEquals(sealOffset, partition.getReplica(followerId).get.stateSnapshot.logEndOffset)
+
+      val leaderEpoch = partition.getLeaderEpoch
+      lowerPhaseOneSeal(replicaManager, topicIdPartition, image, loweredSeal)
+      assertEquals(leaderEpoch, partition.getLeaderEpoch)
+      assertEquals(loweredSeal, partition.localLogOrException.logEndOffset)
+      assertEquals(sealOffset, partition.getReplica(followerId).get.stateSnapshot.logEndOffset)
+      prepareAlterPartitionSubmit()
+
+      time.sleep(replicaManager.config.replicaLagTimeMaxMs + 1)
+      replicaManager.maybeShrinkIsr()
+
+      verify(alterPartitionManager, never()).submit(any(), any())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testFollowerFetchAtLoweredSealJoinsIsrWhenOperatorLowersPhaseOneSeal(): Unit = {
+    // The leader epoch starts at the old seal, and an operator re-seal keeps it. A follower at the lowered
+    // seal holds the whole lowered prefix, so it joins ISR anyway.
+    val followerId = 2
+    val sealOffset = 10L
+    val loweredSeal = 7L
+    val topicIdPartition = new TopicIdPartition(Uuid.randomUuid(), new TopicPartition("switched-topic", 0))
+    val tp = topicIdPartition.topicPartition()
+    val replicaManager = createReplicaManager(
+      List(tp.topic()),
+      topicIdMapping = Map(tp.topic() -> topicIdPartition.topicId()),
+      initDisklessLogManager = Some(mock(classOf[InitDisklessLogManager])),
+    )
+    try {
+      val (partition, image) =
+        setupPhaseOneLeaderAtSeal(replicaManager, topicIdPartition, followerId, followerInIsr = false, sealOffset)
+      lowerPhaseOneSeal(replicaManager, topicIdPartition, image, loweredSeal)
+      assertEquals(loweredSeal, partition.localLogOrException.logEndOffset)
+      assertEquals(loweredSeal, partition.localLogOrException.highWatermark)
+      prepareAlterPartitionSubmit()
+
+      val data = fetchFollowerAtSeal(
+        replicaManager, topicIdPartition, followerId, loweredSeal, Optional.of(partition.getLeaderEpoch))
+
+      assertEquals(Errors.NONE, data.error)
+      assertEquals(loweredSeal, partition.getReplica(followerId).get.stateSnapshot.logEndOffset)
       verify(alterPartitionManager).submit(any(), argThat[LeaderAndIsr](_.isr.contains(followerId)))
     } finally {
       replicaManager.shutdown(checkpointHW = false)
@@ -9521,8 +9828,10 @@ class ReplicaManagerInklessTest {
   private def setupSwitchedLeaderWithOutOfSyncFollower(replicaManager: ReplicaManager,
                                                        topicIdPartition: TopicIdPartition,
                                                        followerId: Int,
-                                                       sealOffset: Long): Partition = {
+                                                       sealOffset: Long,
+                                                       followerInIsr: Boolean = false): Partition = {
     val leaderId = replicaManager.config.brokerId
+    val isr = if (followerInIsr) List(leaderId, followerId) else List(leaderId)
     // ClusterImageTest.IMAGE1 registers brokers 1 (leader) and 2 (follower) as alive/unfenced, which
     // is what isReplicaIsrEligible consults via metadataCache.getAliveBrokerEpoch on the leader.
     replicaManager.metadataCache.asInstanceOf[KRaftMetadataCache].setImage(imageFromTopics(TopicsImage.EMPTY))
@@ -9538,7 +9847,7 @@ class ReplicaManagerInklessTest {
       .setLeaderEpoch(0)
       .setPartitionEpoch(0)
       .setReplicas(List[Integer](leaderId, followerId).asJava)
-      .setIsr(List[Integer](leaderId).asJava))
+      .setIsr(isr.map(Integer.valueOf).asJava))
 
     val (partition, _) = replicaManager.getOrCreatePartition(
       topicIdPartition.topicPartition(),
@@ -9548,7 +9857,7 @@ class ReplicaManagerInklessTest {
       partitionRegistration(
         leaderId,
         leaderEpoch = 0,
-        isr = Array(leaderId),
+        isr = isr.toArray,
         partitionEpoch = 0,
         replicas = Array(leaderId, followerId)),
       isNew = false,
@@ -9565,6 +9874,108 @@ class ReplicaManagerInklessTest {
     when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(topicIdPartition.topicPartition()))
       .thenReturn(sealOffset)
     partition
+  }
+
+  // Models a leader that consolidated in phase 1 of the classic-to-diskless switch before an upgrade:
+  // applyDelta keeps its consolidated suffix above the seal, and its leader epoch starts at the end of it.
+  private def setupPhaseOneLeaderWithConsolidatedSuffix(replicaManager: ReplicaManager,
+                                                        topicIdPartition: TopicIdPartition,
+                                                        followerId: Int,
+                                                        followerInIsr: Boolean,
+                                                        sealOffset: Long,
+                                                        highWatermark: Long): Partition = {
+    val tp = topicIdPartition.topicPartition()
+    val leaderId = replicaManager.config.brokerId
+    val logEndOffset = sealOffset + 3
+    val disklessLeaderEpoch = 5
+    // ClusterImageTest.IMAGE1 registers the follower as alive, which ISR expansion requires.
+    replicaManager.metadataCache.asInstanceOf[KRaftMetadataCache].setImage(imageFromTopics(TopicsImage.EMPTY))
+
+    val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicIdPartition.topicId()))
+    populateConsolidatedLocalLogAndCheckpointedHwm(
+      replicaManager, tp, log, sealOffset, logEndOffset, disklessLeaderEpoch, hw = highWatermark)
+    when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(sealOffset)
+    when(replicaManager.inklessMetadataView().getDisklessLeaderEpoch(tp)).thenReturn(disklessLeaderEpoch)
+    when(replicaManager.inklessMetadataView().isClassicPrefixWaitingForUpload(tp)).thenReturn(true)
+    when(replicaManager.inklessMetadataView().isClassicPrefixOnlyOnLocalDisks(tp.topic(), tp.partition())).thenReturn(true)
+    when(replicaManager.inklessMetadataView().classicPrefixWaitingForUploadSeal(tp)).thenReturn(Some(sealOffset))
+
+    val delta = new TopicsDelta(TopicsImage.EMPTY)
+    delta.replay(new TopicRecord().setName(tp.topic()).setTopicId(topicIdPartition.topicId()))
+    val partitionRecord = new PartitionRecord()
+      .setPartitionId(tp.partition())
+      .setTopicId(topicIdPartition.topicId())
+      .setReplicas(util.Arrays.asList(leaderId, followerId))
+      .setIsr(if (followerInIsr) util.Arrays.asList(leaderId, followerId) else util.Arrays.asList(leaderId))
+      .setLeader(leaderId)
+      .setLeaderEpoch(disklessLeaderEpoch + 1)
+      .setPartitionEpoch(0)
+    partitionRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicToDisklessStartOffset(sealOffset))
+    partitionRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeDisklessLeaderEpoch(disklessLeaderEpoch))
+    delta.replay(partitionRecord)
+    replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))
+
+    val partition = replicaManager.getPartition(tp).asInstanceOf[HostedPartition.Online[Partition]].partition
+    assertTrue(partition.isLeader)
+    assertTrue(partition.isSealed)
+    assertEquals(logEndOffset, partition.localLogOrException.logEndOffset)
+    partition
+  }
+
+  // Makes this broker the phase-1 leader through `applyDelta`, with its log at the seal, so its leader epoch
+  // starts at the seal. Returns the image that a later re-seal delta builds on.
+  private def setupPhaseOneLeaderAtSeal(replicaManager: ReplicaManager,
+                                        topicIdPartition: TopicIdPartition,
+                                        followerId: Int,
+                                        followerInIsr: Boolean,
+                                        sealOffset: Long): (Partition, MetadataImage) = {
+    val tp = topicIdPartition.topicPartition()
+    val leaderId = replicaManager.config.brokerId
+    // ClusterImageTest.IMAGE1 registers the follower as alive, which ISR expansion requires.
+    replicaManager.metadataCache.asInstanceOf[KRaftMetadataCache].setImage(imageFromTopics(TopicsImage.EMPTY))
+    val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicIdPartition.topicId()))
+    populateLocalLogAtLeoAndCheckpointedHwm(replicaManager, tp, log, leo = sealOffset, hw = sealOffset)
+    when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(sealOffset)
+    when(replicaManager.inklessMetadataView().isClassicPrefixWaitingForUpload(tp)).thenReturn(true)
+    when(replicaManager.inklessMetadataView().isClassicPrefixOnlyOnLocalDisks(tp.topic(), tp.partition())).thenReturn(true)
+    when(replicaManager.inklessMetadataView().classicPrefixWaitingForUploadSeal(tp)).thenReturn(Some(sealOffset))
+
+    val delta = new TopicsDelta(TopicsImage.EMPTY)
+    delta.replay(new TopicRecord().setName(tp.topic()).setTopicId(topicIdPartition.topicId()))
+    val partitionRecord = new PartitionRecord()
+      .setPartitionId(tp.partition())
+      .setTopicId(topicIdPartition.topicId())
+      .setReplicas(util.Arrays.asList(leaderId, followerId))
+      .setIsr(if (followerInIsr) util.Arrays.asList(leaderId, followerId) else util.Arrays.asList(leaderId))
+      .setLeader(leaderId)
+      .setLeaderEpoch(1)
+      .setPartitionEpoch(0)
+    partitionRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicToDisklessStartOffset(sealOffset))
+    delta.replay(partitionRecord)
+    val image = imageFromTopics(delta.apply())
+    replicaManager.applyDelta(delta, image)
+
+    val partition = replicaManager.getPartition(tp).asInstanceOf[HostedPartition.Online[Partition]].partition
+    assertTrue(partition.isLeader)
+    assertTrue(partition.isSealed)
+    (partition, image)
+  }
+
+  // An operator re-seal writes only the lower seal, so the leader and its epoch stay the same.
+  private def lowerPhaseOneSeal(replicaManager: ReplicaManager,
+                                topicIdPartition: TopicIdPartition,
+                                image: MetadataImage,
+                                loweredSeal: Long): Unit = {
+    val tp = topicIdPartition.topicPartition()
+    when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(loweredSeal)
+    when(replicaManager.inklessMetadataView().classicPrefixWaitingForUploadSeal(tp)).thenReturn(Some(loweredSeal))
+    val delta = new TopicsDelta(image.topics())
+    val record = new PartitionChangeRecord()
+      .setTopicId(topicIdPartition.topicId())
+      .setPartitionId(tp.partition())
+    record.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicToDisklessStartOffset(loweredSeal))
+    delta.replay(record)
+    replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))
   }
 
   /**
@@ -10061,6 +10472,7 @@ class ReplicaManagerInklessTest {
       .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
     when(inklessMetadata.getDisklessLeaderEpoch(any()))
       .thenReturn(PartitionRegistration.NO_DISKLESS_LEADER_EPOCH)
+    when(inklessMetadata.classicPrefixWaitingForUploadSeal(any())).thenReturn(None)
     when(inklessMetadata.getTopicId(anyString())).thenAnswer{ invocation =>
       val topicName = invocation.getArgument(0, classOf[String])
       topicIdMapping.getOrElse(topicName, Uuid.ZERO_UUID)
