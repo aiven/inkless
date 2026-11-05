@@ -35,6 +35,7 @@ import org.apache.kafka.server.common.ApiMessageAndVersion;
 import org.apache.kafka.server.common.EligibleLeaderReplicasVersion;
 import org.apache.kafka.server.common.MetadataVersion;
 import org.apache.kafka.server.config.ConfigSynonym;
+import org.apache.kafka.server.config.InklessControlPlaneConfigs;
 import org.apache.kafka.server.config.ServerLogConfigs;
 import org.apache.kafka.server.policy.AlterConfigPolicy;
 import org.apache.kafka.server.policy.AlterConfigPolicy.RequestMetadata;
@@ -600,6 +601,103 @@ public class ConfigurationControlManagerTest {
                 setName(MetadataVersion.FEATURE_NAME).
                 setFeatureLevel(level));
         return featureControlManager;
+    }
+
+    @Test
+    public void testIncrementalAlterConfigSkipsRecordForUnchangedControlPlaneConnectionString() {
+        ConfigurationControlManager manager = new ConfigurationControlManager.Builder().
+            setFeatureControl(createFeatureControlManager()).
+            setKafkaConfigSchema(SCHEMA).
+            build();
+        String key = InklessControlPlaneConfigs.CONNECTION_STRING_CONFIG;
+        String value = "jdbc:postgresql://pg:5432/defaultdb?sslmode=require";
+        Map<String, Entry<AlterConfigOp.OpType, String>> keyToOps = toMap(entry(key, entry(SET, value)));
+
+        ControllerResult<ApiError> first = manager.incrementalAlterConfig(
+            ConfigurationControlManager.DEFAULT_NODE, keyToOps, false);
+        assertEquals(List.of(new ConfigRecord().setResourceType(BROKER.id()).setResourceName("").
+                setName(key).setValue(value)),
+            first.records().stream().map(ApiMessageAndVersion::message).toList());
+        RecordTestUtils.replayAll(manager, first.records());
+
+        ControllerResult<ApiError> second = manager.incrementalAlterConfig(
+            ConfigurationControlManager.DEFAULT_NODE, keyToOps, false);
+        assertEquals(ApiError.NONE, second.response());
+        assertEquals(List.of(), second.records());
+        assertEquals(Map.of(key, value), manager.getConfigs(ConfigurationControlManager.DEFAULT_NODE));
+
+        ControllerResult<ApiError> changed = manager.incrementalAlterConfig(
+            ConfigurationControlManager.DEFAULT_NODE, toMap(entry(key, entry(SET, ""))), false);
+        assertEquals(1, changed.records().size());
+    }
+
+    @Test
+    public void testIncrementalAlterConfigStillEmitsRecordForUnchangedOtherBrokerValue() {
+        ConfigurationControlManager manager = new ConfigurationControlManager.Builder().
+            setFeatureControl(createFeatureControlManager()).
+            setKafkaConfigSchema(SCHEMA).
+            build();
+        for (String key : List.of("abc", InklessControlPlaneConfigs.READ_CONNECTION_STRING_CONFIG)) {
+            Map<String, Entry<AlterConfigOp.OpType, String>> keyToOps = toMap(entry(key, entry(SET, "x")));
+            ControllerResult<ApiError> first = manager.incrementalAlterConfig(
+                ConfigurationControlManager.DEFAULT_NODE, keyToOps, false);
+            RecordTestUtils.replayAll(manager, first.records());
+
+            ControllerResult<ApiError> second = manager.incrementalAlterConfig(
+                ConfigurationControlManager.DEFAULT_NODE, keyToOps, false);
+            assertEquals(ApiError.NONE, second.response());
+            assertEquals(1, second.records().size(), "KAFKA-14136: unchanged " + key);
+        }
+    }
+
+    @Test
+    public void testLegacyAlterConfigsSkipsRecordForUnchangedControlPlaneConnectionString() {
+        ConfigurationControlManager manager = new ConfigurationControlManager.Builder().
+            setFeatureControl(createFeatureControlManager()).
+            setKafkaConfigSchema(SCHEMA).
+            build();
+        ConfigResource cluster = ConfigurationControlManager.DEFAULT_NODE;
+        String key = InklessControlPlaneConfigs.CONNECTION_STRING_CONFIG;
+        String value = "jdbc:postgresql://pg:5432/defaultdb?sslmode=require";
+        Map<ConfigResource, Map<String, String>> configs = toMap(entry(cluster, toMap(
+            entry(key, value), entry("abc", "x"))));
+
+        ControllerResult<Map<ConfigResource, ApiError>> first = manager.legacyAlterConfigs(configs, false);
+        assertEquals(2, first.records().size());
+        RecordTestUtils.replayAll(manager, first.records());
+
+        ControllerResult<Map<ConfigResource, ApiError>> second = manager.legacyAlterConfigs(configs, false);
+        assertEquals(Map.of(cluster, ApiError.NONE), second.response());
+        assertEquals(List.of(new ConfigRecord().setResourceType(BROKER.id()).setResourceName("").
+                setName("abc").setValue("x")),
+            second.records().stream().map(ApiMessageAndVersion::message).toList(),
+            "KAFKA-14136: only the unchanged non-connection-string config still emits");
+
+        ControllerResult<Map<ConfigResource, ApiError>> omitted = manager.legacyAlterConfigs(
+            toMap(entry(cluster, toMap(entry("abc", "x")))), false);
+        assertEquals(List.of(
+                new ConfigRecord().setResourceType(BROKER.id()).setResourceName("").
+                    setName("abc").setValue("x"),
+                new ConfigRecord().setResourceType(BROKER.id()).setResourceName("").
+                    setName(key).setValue(null)),
+            omitted.records().stream().map(ApiMessageAndVersion::message).toList());
+    }
+
+    @Test
+    public void testIncrementalAlterConfigSkipsRecordForUnchangedTopicValue() {
+        ConfigurationControlManager manager = new ConfigurationControlManager.Builder().
+            setFeatureControl(createFeatureControlManager()).
+            setKafkaConfigSchema(SCHEMA).
+            build();
+        Map<String, Entry<AlterConfigOp.OpType, String>> keyToOps = toMap(entry("def", entry(SET, "x")));
+
+        ControllerResult<ApiError> first = manager.incrementalAlterConfig(MYTOPIC, keyToOps, true);
+        assertEquals(1, first.records().size());
+        RecordTestUtils.replayAll(manager, first.records());
+
+        ControllerResult<ApiError> second = manager.incrementalAlterConfig(MYTOPIC, keyToOps, false);
+        assertEquals(ApiError.NONE, second.response());
+        assertEquals(List.of(), second.records());
     }
 
     private FeatureControlManager createFeatureControlManager() {
