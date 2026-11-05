@@ -885,6 +885,25 @@ class ReplicaFetcherThreadTest {
   }
 
   @Test
+  def shouldNotEvictPartitionAtSealUntilHighWatermarkReachesSeal(): Unit = {
+    verifyDisklessSwitchEviction(
+      classicToDisklessStartOffset = 100L,
+      logEndOffsetAfterAppend = 100L,
+      expectEviction = false,
+      highWatermark = Some(99L))
+  }
+
+  @Test
+  def shouldEvictConsolidatingPartitionAtSealWithHighWatermarkBelowSeal(): Unit = {
+    verifyDisklessSwitchEviction(
+      classicToDisklessStartOffset = 100L,
+      logEndOffsetAfterAppend = 100L,
+      expectEviction = true,
+      consolidationActive = true,
+      highWatermark = Some(99L))
+  }
+
+  @Test
   def shouldNotEvictPartitionWhenLogEndOffsetBelowClassicToDisklessSealOffset(): Unit = {
     verifyDisklessSwitchEviction(
       classicToDisklessStartOffset = 100L,
@@ -936,7 +955,8 @@ class ReplicaFetcherThreadTest {
     logEndOffsetAfterAppend: Long,
     expectEviction: Boolean,
     replicaInIsr: Boolean = true,
-    consolidationActive: Boolean = false
+    consolidationActive: Boolean = false,
+    highWatermark: Option[Long] = None
   ): Unit = {
     val props = TestUtils.createBrokerConfig(1)
     val config = KafkaConfig.fromProps(props)
@@ -948,6 +968,7 @@ class ReplicaFetcherThreadTest {
     // top of processPartitionData and the seal-offset comparison at the bottom.
     val log: UnifiedLog = mock(classOf[UnifiedLog])
     when(log.logEndOffset).thenReturn(logEndOffsetAfterAppend)
+    when(log.highWatermark).thenReturn(highWatermark.getOrElse(logEndOffsetAfterAppend))
     when(log.maybeUpdateHighWatermark(anyLong())).thenReturn(Optional.empty)
 
     val partition: Partition = mock(classOf[Partition])
@@ -988,12 +1009,15 @@ class ReplicaFetcherThreadTest {
 
     // fetchOffset must equal log.logEndOffset to avoid the offset-mismatch IllegalStateException.
     thread.processPartitionData(t1p0, logEndOffsetAfterAppend, Int.MaxValue, partitionData)
+    val waitsAtSeal = thread.partitionsAwaitingIsrRecovery.contains(t1p0)
 
     // processPartitionData only buffers the eviction; the actual fetcher removal is deferred to doWork().
     verify(replicaFetcherManager, times(0)).removeFetcherForPartitions(any())
 
     thread.doWork()
 
+    val reachedSeal = classicToDisklessStartOffset >= 0 && logEndOffsetAfterAppend >= classicToDisklessStartOffset
+    assertEquals(reachedSeal && !expectEviction, waitsAtSeal)
     if (expectEviction) {
       verify(replicaFetcherManager, times(1)).removeFetcherForPartitions(Set(t1p0))
       // The prefix goes before consolidation can append next to it.
