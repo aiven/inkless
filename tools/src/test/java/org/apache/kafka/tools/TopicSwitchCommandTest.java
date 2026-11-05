@@ -19,13 +19,17 @@ package org.apache.kafka.tools;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AlterDisklessSwitchOptions;
 import org.apache.kafka.clients.admin.AlterDisklessSwitchResult;
+import org.apache.kafka.clients.admin.DescribeDisklessSwitchReplicaResult;
 import org.apache.kafka.clients.admin.DescribeTopicPartitionsResult;
 import org.apache.kafka.clients.admin.DescribeTopicsOptions;
+import org.apache.kafka.clients.admin.DisklessSwitchReplicaDescription;
 import org.apache.kafka.clients.admin.ListOffsetsResult;
 import org.apache.kafka.clients.admin.OffsetSpec;
 import org.apache.kafka.clients.admin.RepairDisklessLogResult;
 import org.apache.kafka.common.KafkaFuture;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.errors.TimeoutException;
+import org.apache.kafka.common.internals.KafkaFutureImpl;
 import org.apache.kafka.common.message.DescribeTopicPartitionsResponseData;
 import org.apache.kafka.common.message.DescribeTopicPartitionsResponseData.DescribeTopicPartitionsResponsePartition;
 import org.apache.kafka.common.message.DescribeTopicPartitionsResponseData.DescribeTopicPartitionsResponseTopic;
@@ -55,6 +59,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -65,6 +70,11 @@ import static org.mockito.Mockito.when;
 public class TopicSwitchCommandTest {
 
     private static final String TOPIC = "test-topic";
+    private static final long SEAL = 100L;
+    // Phase 1 replicas of a partition sealed at 100, whose remote copy holds [0, 60).
+    private static final DisklessSwitchReplicaDescription WIPED = replica(true, 0, 0, 0, 0, 0, 60);
+    private static final DisklessSwitchReplicaDescription COMPLETE = replica(false, 0, SEAL, SEAL, 0, 0, 60);
+    private static final DisklessSwitchReplicaDescription LAGGING = replica(false, 0, 80, 80, 0, 0, 60);
 
     @Mock
     private Admin adminClient;
@@ -460,6 +470,338 @@ public class TopicSwitchCommandTest {
     public void testSealAcceptsBootstrapController() throws Exception {
         TopicSwitchCommand.argumentParser()
             .parseArgs(new String[]{"seal", "--bootstrap-controller", "localhost:9093", "--topic", TOPIC, "--partition", "0"});
+    }
+
+    @Test
+    public void testRecoveryCommandsRejectBootstrapController() {
+        for (String command : List.of("describe", "elect", "start-phase-2")) {
+            assertThrows(ArgumentParserException.class, () -> TopicSwitchCommand.argumentParser().parseArgs(
+                new String[]{command, "--bootstrap-controller", "localhost:9093", "--topic", TOPIC, "--partition", "0",
+                    "--replica", "2"}), command);
+        }
+    }
+
+    @Test
+    public void testRecoveryCommandsParse() throws Exception {
+        TopicSwitchCommand.argumentParser().parseArgs(new String[]{"describe", "--bootstrap-server", "localhost:9092",
+            "--topic", TOPIC, "--partition", "0"});
+        TopicSwitchCommand.argumentParser().parseArgs(new String[]{"elect", "--bootstrap-server", "localhost:9092",
+            "--topic", TOPIC, "--partition", "0", "--replica", "2", "--dry-run"});
+        TopicSwitchCommand.argumentParser().parseArgs(new String[]{"start-phase-2", "--bootstrap-server",
+            "localhost:9092", "--topic", TOPIC, "--partition", "0", "--accept-data-loss", "--dry-run"});
+    }
+
+    @Test
+    public void testElectRequiresReplica() {
+        assertThrows(ArgumentParserException.class, () -> TopicSwitchCommand.argumentParser().parseArgs(
+            new String[]{"elect", "--bootstrap-server", "localhost:9092", "--topic", TOPIC, "--partition", "0"}));
+    }
+
+    @Test
+    public void testElectReplicaHoldingClassicPrefix() throws Exception {
+        mockPhaseOnePartition();
+        mockReplica(1, WIPED);
+        mockReplica(2, COMPLETE);
+        mockReplica(3, LAGGING);
+        mockAlterDisklessSwitch();
+
+        String output = runElectCommand(2, false);
+
+        verify(adminClient).alterDisklessSwitch(eq(TOPIC), eq(0), eq(SEAL),
+            argThat(options -> options.leaderId() == 2 && !options.classicPrefixInRemoteStorage()));
+        assertTrue(output.contains("broker 2 holds the classic prefix up to the seal 100"), output);
+        assertTrue(output.contains("Elected broker 2 as the leader of test-topic-0"), output);
+    }
+
+    @Test
+    public void testElectDryRunDoesNotCommit() throws Exception {
+        mockPhaseOnePartition();
+        mockReplica(1, WIPED);
+        mockReplica(2, COMPLETE);
+        mockReplica(3, LAGGING);
+
+        String output = runElectCommand(2, true);
+
+        verify(adminClient, never()).alterDisklessSwitch(any(), anyInt(), anyLong(), any());
+        assertTrue(output.contains("[dry-run] Would elect broker 2 as the leader of test-topic-0"), output);
+    }
+
+    @Test
+    public void testElectAcceptsReplicaWhoseLogContinuesRemoteCopy() throws Exception {
+        mockPhaseOnePartition();
+        mockReplica(1, WIPED);
+        mockReplica(2, replica(false, 50, 100, 100, 0, 0, 60));
+        mockReplica(3, LAGGING);
+
+        String output = runElectCommand(2, true);
+
+        assertTrue(output.contains("[dry-run] Would elect broker 2"), output);
+    }
+
+    @Test
+    public void testElectRejectsReplicaBelowSeal() {
+        mockPhaseOnePartition();
+        mockReplica(1, WIPED);
+        mockReplica(2, COMPLETE);
+        mockReplica(3, LAGGING);
+
+        RuntimeException ex = assertThrows(RuntimeException.class, () -> runElectCommand(3, false));
+
+        assertTrue(ex.getMessage().contains("its high watermark 80 is below the seal"), ex.getMessage());
+        verify(adminClient, never()).alterDisklessSwitch(any(), anyInt(), anyLong(), any());
+    }
+
+    @Test
+    public void testElectRejectsReplicaWithGapAfterRemoteCopy() {
+        mockPhaseOnePartition();
+        mockReplica(1, WIPED);
+        mockReplica(2, replica(false, 70, 100, 100, 0, 0, 60));
+        mockReplica(3, LAGGING);
+
+        RuntimeException ex = assertThrows(RuntimeException.class, () -> runElectCommand(2, true));
+
+        assertTrue(ex.getMessage().contains("its log starts at 70, and remote storage holds the prefix only up to 60"),
+            ex.getMessage());
+    }
+
+    @Test
+    public void testElectRejectsReplicaWhenRemoteCopyMissesStart() {
+        mockPhaseOnePartition();
+        mockReplica(1, replica(true, 0, 0, 0, 0, 20, 60));
+        mockReplica(2, replica(false, 30, 100, 100, 0, 20, 60));
+        mockReplica(3, replica(false, 0, 80, 80, 0, 20, 60));
+
+        RuntimeException ex = assertThrows(RuntimeException.class, () -> runElectCommand(2, true));
+
+        assertTrue(ex.getMessage().contains("remote storage misses the offsets from 0 to 20"), ex.getMessage());
+    }
+
+    @Test
+    public void testElectRejectsCurrentLeaderAndNonReplica() {
+        mockPhaseOnePartition();
+        mockReplica(1, WIPED);
+        mockReplica(2, COMPLETE);
+        mockReplica(3, LAGGING);
+
+        RuntimeException leader = assertThrows(RuntimeException.class, () -> runElectCommand(1, false));
+        assertTrue(leader.getMessage().contains("already the leader"), leader.getMessage());
+        RuntimeException notReplica = assertThrows(RuntimeException.class, () -> runElectCommand(4, false));
+        assertTrue(notReplica.getMessage().contains("isn't a replica"), notReplica.getMessage());
+        verify(adminClient, never()).alterDisklessSwitch(any(), anyInt(), anyLong(), any());
+    }
+
+    @Test
+    public void testElectRejectsUnreachableReplica() {
+        mockPhaseOnePartition();
+        mockReplica(1, WIPED);
+        mockReplicaError(2, new TimeoutException("Timed out waiting for broker 2"));
+        mockReplica(3, LAGGING);
+
+        RuntimeException ex = assertThrows(RuntimeException.class, () -> runElectCommand(2, false));
+
+        assertTrue(ex.getMessage().contains("Cannot describe broker 2's replica"), ex.getMessage());
+        assertTrue(ex.getMessage().contains("Timed out waiting for broker 2"), ex.getMessage());
+    }
+
+    @Test
+    public void testElectRejectsPartitionOutsidePhaseOne() {
+        mockDescribe(List.of(buildPartition(0, 1, 7, SEAL, 7, true)));
+        mockReplica(1, COMPLETE);
+
+        RuntimeException ex = assertThrows(RuntimeException.class, () -> runElectCommand(2, false));
+
+        assertTrue(ex.getMessage().contains("isn't in phase 1 of the switch"), ex.getMessage());
+    }
+
+    @Test
+    public void testStartPhaseTwoRefusesWhenReplicaHoldsClassicPrefix() {
+        mockPhaseOnePartition();
+        mockReplica(1, WIPED);
+        mockReplica(2, COMPLETE);
+        mockReplica(3, LAGGING);
+
+        RuntimeException ex = assertThrows(RuntimeException.class, () -> runStartPhaseTwoCommand(true, false));
+
+        assertTrue(ex.getMessage().contains("Broker 2 holds the whole classic prefix"), ex.getMessage());
+        verify(adminClient, never()).alterDisklessSwitch(any(), anyInt(), anyLong(), any());
+    }
+
+    @Test
+    public void testStartPhaseTwoRefusesWhenLeaderHoldsClassicPrefix() {
+        mockPhaseOnePartition();
+        mockReplica(1, COMPLETE);
+        mockReplica(2, LAGGING);
+        mockReplica(3, LAGGING);
+
+        RuntimeException ex = assertThrows(RuntimeException.class, () -> runStartPhaseTwoCommand(true, false));
+
+        assertTrue(ex.getMessage().contains("doesn't need recovery"), ex.getMessage());
+    }
+
+    @Test
+    public void testStartPhaseTwoRequiresAcceptDataLoss() {
+        mockPhaseOnePartition();
+        mockReplica(1, WIPED);
+        mockReplica(2, LAGGING);
+        mockReplica(3, LAGGING);
+
+        RuntimeException ex = assertThrows(RuntimeException.class, () -> runStartPhaseTwoCommand(false, false));
+
+        assertTrue(ex.getMessage().contains("at seal 60 loses the records in [60, 100)"), ex.getMessage());
+        assertTrue(ex.getMessage().contains("--accept-data-loss"), ex.getMessage());
+        verify(adminClient, never()).alterDisklessSwitch(any(), anyInt(), anyLong(), any());
+    }
+
+    @Test
+    public void testStartPhaseTwoWithAcceptDataLossLowersSeal() throws Exception {
+        mockPhaseOnePartition();
+        mockReplica(1, WIPED);
+        mockReplica(2, LAGGING);
+        mockReplica(3, LAGGING);
+        mockAlterDisklessSwitch();
+
+        String output = runStartPhaseTwoCommand(true, false);
+
+        verify(adminClient).alterDisklessSwitch(eq(TOPIC), eq(0), eq(60L),
+            argThat(options -> options.classicPrefixInRemoteStorage() && options.leaderId() == -1));
+        assertTrue(output.contains("Accepting the loss of the records in [60, 100)"), output);
+        assertTrue(output.contains("Started phase 2 for test-topic-0 at seal 60"), output);
+        assertTrue(output.contains("Run the repair command"), output);
+    }
+
+    @Test
+    public void testStartPhaseTwoWithoutLossWhenRemoteHoldsWholePrefix() throws Exception {
+        mockPhaseOnePartition();
+        mockReplica(1, replica(true, 0, 0, 0, 0, 0, SEAL));
+        mockReplica(2, LAGGING);
+        mockReplica(3, LAGGING);
+        mockAlterDisklessSwitch();
+
+        String output = runStartPhaseTwoCommand(false, false);
+
+        verify(adminClient).alterDisklessSwitch(eq(TOPIC), eq(0), eq(SEAL),
+            argThat(AlterDisklessSwitchOptions::classicPrefixInRemoteStorage));
+        assertFalse(output.contains("Accepting the loss"), output);
+        assertFalse(output.contains("Run the repair command"), output);
+    }
+
+    @Test
+    public void testStartPhaseTwoRequiresAcceptDataLossForMissingStart() {
+        mockPhaseOnePartition();
+        mockReplica(1, replica(true, 0, 0, 0, 0, 20, SEAL));
+        mockReplica(2, LAGGING);
+        mockReplica(3, LAGGING);
+
+        RuntimeException ex = assertThrows(RuntimeException.class, () -> runStartPhaseTwoCommand(false, false));
+
+        assertTrue(ex.getMessage().contains("loses the records in [0, 20)"), ex.getMessage());
+    }
+
+    @Test
+    public void testStartPhaseTwoUsesHighestReportedRemoteEnd() throws Exception {
+        mockPhaseOnePartition();
+        mockReplica(1, WIPED);
+        mockReplica(2, replica(false, 0, 80, 80, 0, 0, 40));
+        mockReplica(3, replica(false, 0, 80, 80, 0, 0, 90));
+
+        String output = runStartPhaseTwoCommand(true, true);
+
+        assertTrue(output.contains("[dry-run] Would start phase 2 for test-topic-0 at seal 90"), output);
+        verify(adminClient, never()).alterDisklessSwitch(any(), anyInt(), anyLong(), any());
+    }
+
+    @Test
+    public void testStartPhaseTwoRefusesWithoutRemoteRange() {
+        mockPhaseOnePartition();
+        DisklessSwitchReplicaDescription unknownRemote = replica(false, 0, 80, 80, -1, -1, -1);
+        mockReplica(1, replica(true, 0, 0, 0, -1, -1, -1));
+        mockReplica(2, unknownRemote);
+        mockReplica(3, unknownRemote);
+
+        RuntimeException ex = assertThrows(RuntimeException.class, () -> runStartPhaseTwoCommand(true, false));
+
+        assertTrue(ex.getMessage().contains("Retry once the remote log manager is ready"), ex.getMessage());
+    }
+
+    @Test
+    public void testStartPhaseTwoWarnsAboutUnreachableReplica() throws Exception {
+        mockPhaseOnePartition();
+        mockReplica(1, WIPED);
+        mockReplica(2, LAGGING);
+        mockReplicaError(3, new TimeoutException("Timed out waiting for broker 3"));
+
+        String output = runStartPhaseTwoCommand(true, true);
+
+        assertTrue(output.contains("Warning: broker 3's replica isn't checked"), output);
+        assertTrue(output.contains("[dry-run] Would start phase 2 for test-topic-0 at seal 60"), output);
+    }
+
+    @Test
+    public void testDescribeCommandReportsEachReplica() throws Exception {
+        mockPhaseOnePartition();
+        mockReplica(1, WIPED);
+        mockReplica(2, COMPLETE);
+        mockReplicaError(3, new TimeoutException("Timed out waiting for broker 3"));
+
+        String output = runDescribeCommand();
+
+        assertTrue(output.contains("leader=1 epoch=7 isr=[1] replicas=[1, 2, 3]"), output);
+        assertTrue(output.contains("crossTierLogStartOffset=0 remoteStartOffset=0 remoteEndOffset=60"), output);
+        assertTrue(output.contains("Broker 1: offline=true logStartOffset=0 logEndOffset=0 highWatermark=0"), output);
+        assertTrue(output.contains("the broker took the partition offline"), output);
+        assertTrue(output.contains("Broker 2: offline=false logStartOffset=0 logEndOffset=100 highWatermark=100"),
+            output);
+        assertTrue(output.contains("Holds the whole classic prefix"), output);
+        assertTrue(output.contains("Broker 3: org.apache.kafka.common.errors.TimeoutException"), output);
+        assertTrue(output.contains("start-phase-2 would set the seal to 60. It would lose [60, 100)."), output);
+    }
+
+    private static DisklessSwitchReplicaDescription replica(boolean offline, long logStartOffset, long logEndOffset,
+                                                            long highWatermark, long crossTierLogStartOffset,
+                                                            long remoteStartOffset, long remoteEndOffset) {
+        return new DisklessSwitchReplicaDescription(offline, logStartOffset, logEndOffset, highWatermark,
+            crossTierLogStartOffset, remoteStartOffset, remoteEndOffset);
+    }
+
+    private void mockPhaseOnePartition() {
+        mockDescribe(List.of(buildPartition(0, 1, 7, SEAL, 7)
+            .setReplicaNodes(List.of(1, 2, 3))
+            .setIsrNodes(List.of(1))));
+    }
+
+    private void mockReplica(int brokerId, DisklessSwitchReplicaDescription description) {
+        DescribeDisklessSwitchReplicaResult result = mock(DescribeDisklessSwitchReplicaResult.class);
+        when(result.description()).thenReturn(KafkaFuture.completedFuture(description));
+        when(adminClient.describeDisklessSwitchReplica(TOPIC, 0, brokerId)).thenReturn(result);
+    }
+
+    private void mockReplicaError(int brokerId, Exception error) {
+        KafkaFutureImpl<DisklessSwitchReplicaDescription> future = new KafkaFutureImpl<>();
+        future.completeExceptionally(error);
+        DescribeDisklessSwitchReplicaResult result = mock(DescribeDisklessSwitchReplicaResult.class);
+        when(result.description()).thenReturn(future);
+        when(adminClient.describeDisklessSwitchReplica(TOPIC, 0, brokerId)).thenReturn(result);
+    }
+
+    private String runDescribeCommand() throws Exception {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        PrintStream stream = new PrintStream(out, false, StandardCharsets.UTF_8);
+        TopicSwitchCommand.describeCommand(stream, adminClient, TOPIC, 0);
+        return out.toString(StandardCharsets.UTF_8);
+    }
+
+    private String runElectCommand(int replica, boolean dryRun) throws Exception {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        PrintStream stream = new PrintStream(out, false, StandardCharsets.UTF_8);
+        TopicSwitchCommand.electCommand(stream, adminClient, TOPIC, 0, replica, dryRun);
+        return out.toString(StandardCharsets.UTF_8);
+    }
+
+    private String runStartPhaseTwoCommand(boolean acceptDataLoss, boolean dryRun) throws Exception {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        PrintStream stream = new PrintStream(out, false, StandardCharsets.UTF_8);
+        TopicSwitchCommand.startPhaseTwoCommand(stream, adminClient, TOPIC, 0, acceptDataLoss, dryRun);
+        return out.toString(StandardCharsets.UTF_8);
     }
 
     private void mockLogRange(int partition, long startOffset, long endOffset) {
