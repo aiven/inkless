@@ -441,6 +441,14 @@ class DisklessLeaderEndPointTest {
   }
 
   @Test
+  def testFetchEarliestLocalOffsetBeforeFirstPruneUsesSealAndDisklessEpoch(): Unit = {
+    // Before the first prune, the WAL start is the classic log start. The tier-state rebuild must
+    // start the local log at the seal and look up the remote segment that holds seal - 1.
+    val endPoint = listOffsetEndPointWithPlaceholderEpoch(offset = 0L, seal = 150000L, disklessLeaderEpoch = 5)
+    assertEquals(new OffsetAndEpoch(150000L, 5), endPoint.fetchEarliestLocalOffset(topicPartition, 3))
+  }
+
+  @Test
   def testFetchEarliestOffsetInClassicPrefixKeepsPlaceholderEpoch(): Unit = {
     // An offset below the seal belongs to the classic prefix; its epochs are restored from the remote
     // leader-epoch checkpoint during the rebuild, so the endpoint keeps the placeholder epoch (0) here.
@@ -1280,6 +1288,80 @@ class DisklessLeaderEndPointTest {
     assertEquals(Errors.NOT_LEADER_OR_FOLLOWER.code, pd.errorCode)
     assertEquals(0L, pd.logStartOffset)
     verify(replicaManager).markConsolidationRemotePrefixUnknown(eqTo(topicPartition), eqTo(true), eqTo(0L))
+  }
+
+  /**
+   * Wires a switched partition with seal 100 before its first prune: the control plane reports the WAL
+   * start at the classic log start (0), and a WAL read at offset 0 returns the first diskless batch at
+   * the seal. `remotePrefixEvidence` is RLMM readable coverage of `seal - 1`.
+   */
+  private def switchedBeforeFirstPruneEndPoint(
+    remotePrefixEvidence: Optional[java.lang.Boolean],
+    replicaManager: ReplicaManager
+  ): DisklessLeaderEndPoint = {
+    val fetchHandler = mock(classOf[FetchHandler])
+    val fetchOffsetHandler = mock(classOf[FetchOffsetHandler])
+    val partition = mock(classOf[Partition])
+    val localLog = mock(classOf[UnifiedLog])
+    when(partition.localLogOrException).thenReturn(localLog)
+    when(localLog.logStartOffset).thenReturn(0L)
+    when(localLog.remoteLogEnabled()).thenReturn(true)
+    when(replicaManager.getPartitionOrError(topicPartition)).thenReturn(Right(partition))
+    when(replicaManager.classicToDisklessStartOffset(topicPartition)).thenReturn(100L)
+    when(replicaManager.hasReadableRemoteLogCoverage(topicPartition, 99L)).thenReturn(remotePrefixEvidence)
+
+    val fetchData = new FetchPartitionData(
+      Errors.NONE,
+      200L,
+      0L,
+      singleBatch(baseOffset = 100L, numRecords = 1, valueSize = 10),
+      Optional.empty(),
+      OptionalLong.empty(),
+      Optional.empty(),
+      OptionalInt.empty(),
+      false
+    )
+    when(fetchHandler.handle(any(), any())).thenReturn(CompletableFuture.completedFuture(Map(topicIdPartition -> fetchData).asJava))
+    newEndPoint(fetchHandler, fetchOffsetHandler, replicaManager)
+  }
+
+  @Test
+  def testFetchSignalsOffsetMovedBelowSealBeforeFirstPrune(): Unit = {
+    // A switched leader that lost its local log fetches at 0 before any prune moved the WAL start to
+    // the seal. The WAL returns the batch at the seal. Only the seal tells the endpoint that [0, seal)
+    // has to come from the remote tier.
+    val replicaManager = replicaManagerMock()
+    val endPoint = switchedBeforeFirstPruneEndPoint(Optional.of(java.lang.Boolean.TRUE), replicaManager)
+    val pd = endPoint.fetch(fetchBuilderForOffset(requestedOffset = 0L)).get(topicPartition)
+
+    assertEquals(Errors.OFFSET_MOVED_TO_TIERED_STORAGE.code, pd.errorCode)
+    assertEquals(0, FetchResponse.recordsSize(pd))
+    assertEquals(0L, pd.logStartOffset)
+    verify(replicaManager).markConsolidationRemotePrefixUnknown(eqTo(topicPartition), eqTo(false), eqTo(0L))
+  }
+
+  @Test
+  def testFetchRetriesBelowSealBeforeFirstPruneWithoutRemoteCoverage(): Unit = {
+    // Appending the batch at the seal at offset 0 would hide the classic prefix. The fetcher retries
+    // with backoff until remote storage covers seal - 1.
+    val replicaManager = replicaManagerMock()
+    val endPoint = switchedBeforeFirstPruneEndPoint(Optional.of(java.lang.Boolean.FALSE), replicaManager)
+    val pd = endPoint.fetch(fetchBuilderForOffset(requestedOffset = 0L)).get(topicPartition)
+
+    assertEquals(Errors.NOT_LEADER_OR_FOLLOWER.code, pd.errorCode)
+    assertEquals(0, FetchResponse.recordsSize(pd))
+    verify(replicaManager).markConsolidationRemotePrefixUnknown(eqTo(topicPartition), eqTo(true), eqTo(0L))
+  }
+
+  @Test
+  def testFetchAtSealBeforeFirstPruneReadsTheWal(): Unit = {
+    val replicaManager = replicaManagerMock()
+    val endPoint = switchedBeforeFirstPruneEndPoint(Optional.of(java.lang.Boolean.TRUE), replicaManager)
+    val pd = endPoint.fetch(fetchBuilderForOffset(requestedOffset = 100L)).get(topicPartition)
+
+    assertEquals(Errors.NONE.code, pd.errorCode)
+    assertTrue(FetchResponse.recordsSize(pd) > 0)
+    verify(replicaManager, never()).hasReadableRemoteLogCoverage(any(), anyLong())
   }
 
   @Test
