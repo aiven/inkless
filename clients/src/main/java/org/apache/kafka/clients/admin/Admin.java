@@ -425,6 +425,38 @@ public interface Admin extends AutoCloseable {
     RepairDisklessLogResult repairDisklessLog(String topic, int partition, int brokerId, RepairDisklessLogOptions options);
 
     /**
+     * Describe one broker's replica of a partition that is switching from classic to diskless: its local
+     * log, whether the broker took it offline, and how much of the classic prefix remote storage holds.
+     * This is an operator tool that recovers a partition that lost part of its classic prefix.
+     *
+     * This is a convenience method for
+     * {@link #describeDisklessSwitchReplica(String, int, int, DescribeDisklessSwitchReplicaOptions)} with
+     * default options.
+     *
+     * @param topic     The topic name.
+     * @param partition The partition index.
+     * @param brokerId  The id of the broker that hosts the replica.
+     * @return The DescribeDisklessSwitchReplicaResult.
+     */
+    default DescribeDisklessSwitchReplicaResult describeDisklessSwitchReplica(String topic, int partition, int brokerId) {
+        return describeDisklessSwitchReplica(topic, partition, brokerId, new DescribeDisklessSwitchReplicaOptions());
+    }
+
+    /**
+     * Describe one broker's replica of a partition that is switching from classic to diskless: its local
+     * log, whether the broker took it offline, and how much of the classic prefix remote storage holds.
+     * This is an operator tool that recovers a partition that lost part of its classic prefix.
+     *
+     * @param topic     The topic name.
+     * @param partition The partition index.
+     * @param brokerId  The id of the broker that hosts the replica.
+     * @param options   The options to use.
+     * @return The DescribeDisklessSwitchReplicaResult.
+     */
+    DescribeDisklessSwitchReplicaResult describeDisklessSwitchReplica(String topic, int partition, int brokerId,
+                                                                      DescribeDisklessSwitchReplicaOptions options);
+
+    /**
      * Get information about the nodes in the cluster, using the default options.
      * <p>
      * This is a convenience method for {@link #describeCluster(DescribeClusterOptions)} with default options.

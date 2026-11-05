@@ -41,7 +41,7 @@ import org.apache.kafka.common.message.ListOffsetsResponseData.{ListOffsetsParti
 import org.apache.kafka.common.message.OffsetForLeaderEpochRequestData.{OffsetForLeaderPartition, OffsetForLeaderTopic}
 import org.apache.kafka.common.message.OffsetForLeaderEpochResponseData.{EpochEndOffset, OffsetForLeaderTopicResult}
 import org.apache.kafka.common.requests.OffsetsForLeaderEpochResponse
-import org.apache.kafka.common.message.{DescribeLogDirsResponseData, DescribeProducersResponseData, FetchResponseData}
+import org.apache.kafka.common.message.{DescribeDisklessSwitchReplicaResponseData, DescribeLogDirsResponseData, DescribeProducersResponseData, FetchResponseData}
 import org.apache.kafka.common.metrics.Metrics
 import org.apache.kafka.common.network.ListenerName
 import org.apache.kafka.common.protocol.Errors
@@ -63,7 +63,7 @@ import org.apache.kafka.server.LogAppendResult.LogAppendSummary
 import org.apache.kafka.server.common.{DirectoryEventHandler, RequestLocal, StopPartition, TransactionVersion}
 import org.apache.kafka.server.log.remote.TopicPartitionLog
 import org.apache.kafka.server.config.ReplicationConfigs
-import org.apache.kafka.server.log.remote.storage.{LeaderEpochNotAvailableException, RemoteLogManager}
+import org.apache.kafka.server.log.remote.storage.{LeaderEpochNotAvailableException, RemoteLogManager, RemoteLogSegmentState}
 import org.apache.kafka.server.metrics.KafkaMetricsGroup
 import org.apache.kafka.server.network.BrokerEndPoint
 import org.apache.kafka.server.partition.PartitionListener
@@ -4633,6 +4633,76 @@ class ReplicaManager(val config: KafkaConfig,
       }
     }
   }
+
+  /**
+   * Describes this broker's replica of a partition that is switching from classic to diskless, so an
+   * operator can recover a phase 1 partition that lost part of its classic prefix. Reads the log from the
+   * log manager, because the phase 1 fence takes the partition offline but keeps its log.
+   */
+  def describeDisklessSwitchReplica(topicPartition: TopicPartition): DescribeDisklessSwitchReplicaResponseData = {
+    val response = new DescribeDisklessSwitchReplicaResponseData()
+    if (!_inklessMetadataView.isDisklessTopic(topicPartition.topic)) {
+      return response.setErrorCode(Errors.INVALID_REQUEST.code)
+        .setErrorMessage(s"Topic ${topicPartition.topic} isn't diskless.")
+    }
+    val offline = switchFencedPartitions.contains(topicPartition)
+    val log = logManager.getLog(topicPartition)
+    getPartition(topicPartition) match {
+      case _: HostedPartition.Offline[Partition] if !offline =>
+        return response.setErrorCode(Errors.KAFKA_STORAGE_ERROR.code)
+          .setErrorMessage(s"Partition $topicPartition is in an offline log directory on this broker.")
+      case _: HostedPartition.None[Partition] if log.isEmpty =>
+        return response.setErrorCode(Errors.NOT_LEADER_OR_FOLLOWER.code)
+          .setErrorMessage(s"This broker doesn't host a replica of $topicPartition.")
+      case _ =>
+    }
+    log.foreach { log =>
+      response.setLogStartOffset(log.logStartOffset)
+        .setLogEndOffset(log.logEndOffset)
+        .setHighWatermark(log.highWatermark)
+    }
+    response.setOffline(offline)
+    val crossTierLogStart = crossTierEarliestOffset(topicPartition)
+    if (crossTierLogStart.isPresent) {
+      response.setCrossTierLogStartOffset(crossTierLogStart.getAsLong)
+      val seal = _inklessMetadataView.getClassicToDisklessStartOffset(topicPartition)
+      remoteClassicPrefixRange(topicPartition, crossTierLogStart.getAsLong, seal).foreach { case (start, end) =>
+        response.setRemoteStartOffset(start).setRemoteEndOffset(end)
+      }
+    }
+    response
+  }
+
+  /**
+   * Returns the range of the classic prefix that remote storage holds without a gap, starting from the
+   * first copied segment that holds an offset at or above `crossTierLogStart`. The end is exclusive and
+   * capped at the seal. The start is -1 and the end is `crossTierLogStart` if no copied segment holds such
+   * an offset. Returns `None` if the remote log manager can't list the partition's segments yet.
+   */
+  private def remoteClassicPrefixRange(topicPartition: TopicPartition, crossTierLogStart: Long,
+                                       seal: Long): Option[(Long, Long)] =
+    remoteLogManager.filter(_.isPartitionReady(topicPartition)).flatMap { rlm =>
+      try {
+        val segments = rlm.remoteLogMetadataManager.listRemoteLogSegments(topicIdPartition(topicPartition)).asScala
+          .filter(segment => segment.state == RemoteLogSegmentState.COPY_SEGMENT_FINISHED &&
+            segment.endOffset >= crossTierLogStart)
+          .toSeq
+          .sortBy(_.startOffset)
+        segments.headOption match {
+          case None => Some((-1L, crossTierLogStart))
+          case Some(first) =>
+            val start = math.max(crossTierLogStart, first.startOffset)
+            val end = segments.foldLeft(start) { (end, segment) =>
+              if (segment.startOffset <= end) math.max(end, segment.endOffset + 1) else end
+            }
+            Some((start, if (seal >= 0) math.min(end, seal) else end))
+        }
+      } catch {
+        case NonFatal(e) =>
+          warn(s"Failed to list the remote log segments of $topicPartition", e)
+          None
+      }
+    }
 
   def repairDisklessLog(topicPartition: TopicPartition): Errors = {
     val sharedState = inklessSharedState.getOrElse {

@@ -7746,8 +7746,17 @@ class ReplicaManagerInklessTest {
    * seal commit, the remote log manager, and the consolidation fetcher manager constructor.
    */
   private def withFencedPhaseOneLeader(
+      body: (ReplicaManager, Uuid, MetadataImage, RemoteLogManager, MockedConstruction[ConsolidationFetcherManager]) => Unit): Unit =
+    withFencedPhaseOneLeader(crossTierLogStart = None)(body)
+
+  private def withFencedPhaseOneLeader(crossTierLogStart: Option[Long])(
       body: (ReplicaManager, Uuid, MetadataImage, RemoteLogManager, MockedConstruction[ConsolidationFetcherManager]) => Unit): Unit = {
     val topicId = Uuid.randomUuid()
+    val crossTierLogStartCache = crossTierLogStart.map { start =>
+      val cache = mock(classOf[CrossTierLogStartCache])
+      when(cache.get(any())).thenReturn(java.lang.Long.valueOf(start))
+      cache
+    }
     val remoteLogManager = mock(classOf[RemoteLogManager])
     val mockFetcherManager = mock(classOf[ReplicaFetcherManager])
     when(mockFetcherManager.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
@@ -7759,11 +7768,13 @@ class ReplicaManagerInklessTest {
     try {
       val replicaManager = spy(createReplicaManager(
         Seq(fencedTopic),
+        topicIdMapping = Map(fencedTopic -> topicId),
         disklessRemoteStorageConsolidationEnabled = true,
         consolidatingDisklessTopics = Set(fencedTopic),
         mockReplicaFetcherManager = Some(mockFetcherManager),
         defaultLogConfig = Some(LogTestUtils.createLogConfig(remoteLogStorageEnable = true)),
         initDisklessLogManager = Some(mock(classOf[InitDisklessLogManager])),
+        crossTierLogStartCache = crossTierLogStartCache,
         remoteLogManager = Some(remoteLogManager),
       ))
       try {
@@ -7907,6 +7918,117 @@ class ReplicaManagerInklessTest {
       }
     } finally {
       consolidationCtor.close()
+    }
+  }
+
+  private def remoteSegment(tp: TopicPartition, startOffset: Long, endOffset: Long,
+                            state: RemoteLogSegmentState = RemoteLogSegmentState.COPY_SEGMENT_FINISHED): RemoteLogSegmentMetadata =
+    new RemoteLogSegmentMetadata(new RemoteLogSegmentId(new TopicIdPartition(Uuid.randomUuid(), tp), Uuid.randomUuid()),
+      startOffset, endOffset, -1L, 0, 0L, 1024, Optional.empty(), state, util.Map.of(0, startOffset))
+
+  private def stubRemoteSegments(remoteLogManager: RemoteLogManager, tp: TopicPartition,
+                                 segments: RemoteLogSegmentMetadata*): Unit = {
+    val rlmm = mock(classOf[RemoteLogMetadataManager])
+    when(rlmm.listRemoteLogSegments(any[TopicIdPartition]())).thenAnswer(_ => segments.iterator.asJava)
+    when(remoteLogManager.isPartitionReady(tp)).thenReturn(true)
+    when(remoteLogManager.remoteLogMetadataManager).thenReturn(rlmm)
+  }
+
+  private def assertDescribedRemoteRange(crossTierLogStart: Long, segments: Seq[(Long, Long, RemoteLogSegmentState)],
+                                         expectedStart: Long, expectedEnd: Long): Unit = {
+    withFencedPhaseOneLeader(crossTierLogStart = Some(crossTierLogStart)) { (replicaManager, _, _, remoteLogManager, _) =>
+      stubRemoteSegments(remoteLogManager, fencedTp,
+        segments.map { case (start, end, state) => remoteSegment(fencedTp, start, end, state) }.toList: _*)
+
+      val description = replicaManager.describeDisklessSwitchReplica(fencedTp)
+
+      assertEquals(Errors.NONE.code, description.errorCode)
+      assertEquals(crossTierLogStart, description.crossTierLogStartOffset)
+      assertEquals(expectedStart, description.remoteStartOffset)
+      assertEquals(expectedEnd, description.remoteEndOffset)
+    }
+  }
+
+  @Test
+  def testDescribeDisklessSwitchReplicaReportsFencedLeader(): Unit = {
+    withFencedPhaseOneLeader(crossTierLogStart = Some(0L)) { (replicaManager, _, _, remoteLogManager, _) =>
+      stubRemoteSegments(remoteLogManager, fencedTp, remoteSegment(fencedTp, 0L, 2L))
+
+      val description = replicaManager.describeDisklessSwitchReplica(fencedTp)
+
+      assertEquals(Errors.NONE.code, description.errorCode)
+      assertTrue(description.offline)
+      assertEquals(0L, description.logStartOffset)
+      assertEquals(fencedLocalLeo, description.logEndOffset)
+      assertEquals(fencedLocalLeo, description.highWatermark)
+      assertEquals(0L, description.remoteStartOffset)
+      assertEquals(3L, description.remoteEndOffset)
+    }
+  }
+
+  @Test
+  def testDescribeDisklessSwitchReplicaEndsRemoteRangeAtFirstGap(): Unit = {
+    val finished = RemoteLogSegmentState.COPY_SEGMENT_FINISHED
+    assertDescribedRemoteRange(0L, Seq((0L, 2L, finished), (3L, 6L, finished), (8L, 9L, finished)), 0L, 7L)
+  }
+
+  @Test
+  def testDescribeDisklessSwitchReplicaSkipsSegmentsThatArentCopied(): Unit = {
+    assertDescribedRemoteRange(0L, Seq(
+      (0L, 2L, RemoteLogSegmentState.COPY_SEGMENT_FINISHED),
+      (3L, 6L, RemoteLogSegmentState.COPY_SEGMENT_STARTED),
+      (3L, 4L, RemoteLogSegmentState.DELETE_SEGMENT_STARTED)), 0L, 3L)
+  }
+
+  @Test
+  def testDescribeDisklessSwitchReplicaStartsRemoteRangeAtFirstSegmentAboveCrossTierStart(): Unit = {
+    val finished = RemoteLogSegmentState.COPY_SEGMENT_FINISHED
+    assertDescribedRemoteRange(2L, Seq((0L, 1L, finished), (4L, 6L, finished), (7L, 8L, finished)), 4L, 9L)
+  }
+
+  @Test
+  def testDescribeDisklessSwitchReplicaCapsRemoteRangeAtSeal(): Unit = {
+    val finished = RemoteLogSegmentState.COPY_SEGMENT_FINISHED
+    assertDescribedRemoteRange(0L, Seq((0L, 4L, finished), (5L, fencedSeal + 4, finished)), 0L, fencedSeal)
+  }
+
+  @Test
+  def testDescribeDisklessSwitchReplicaWithoutRemoteSegmentsEndsAtCrossTierStart(): Unit = {
+    assertDescribedRemoteRange(3L, Seq.empty, -1L, 3L)
+  }
+
+  @Test
+  def testDescribeDisklessSwitchReplicaWithoutReadyRemoteLogManager(): Unit = {
+    withFencedPhaseOneLeader(crossTierLogStart = Some(0L)) { (replicaManager, _, _, _, _) =>
+      val description = replicaManager.describeDisklessSwitchReplica(fencedTp)
+
+      assertEquals(Errors.NONE.code, description.errorCode)
+      assertEquals(fencedLocalLeo, description.logEndOffset)
+      assertEquals(0L, description.crossTierLogStartOffset)
+      assertEquals(-1L, description.remoteStartOffset)
+      assertEquals(-1L, description.remoteEndOffset)
+    }
+  }
+
+  @Test
+  def testDescribeDisklessSwitchReplicaRejectsClassicTopic(): Unit = {
+    val replicaManager = createReplicaManager(Seq.empty)
+    try {
+      val description = replicaManager.describeDisklessSwitchReplica(new TopicPartition("classic-topic", 0))
+      assertEquals(Errors.INVALID_REQUEST.code, description.errorCode)
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testDescribeDisklessSwitchReplicaRejectsPartitionThatTheBrokerDoesntHost(): Unit = {
+    val replicaManager = createReplicaManager(Seq(fencedTopic))
+    try {
+      val description = replicaManager.describeDisklessSwitchReplica(fencedTp)
+      assertEquals(Errors.NOT_LEADER_OR_FOLLOWER.code, description.errorCode)
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
     }
   }
 

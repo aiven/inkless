@@ -147,6 +147,8 @@ import org.apache.kafka.common.message.DescribeClusterRequestData;
 import org.apache.kafka.common.message.DescribeClusterResponseData;
 import org.apache.kafka.common.message.DescribeConfigsRequestData;
 import org.apache.kafka.common.message.DescribeConfigsResponseData;
+import org.apache.kafka.common.message.DescribeDisklessSwitchReplicaRequestData;
+import org.apache.kafka.common.message.DescribeDisklessSwitchReplicaResponseData;
 import org.apache.kafka.common.message.DescribeLogDirsRequestData;
 import org.apache.kafka.common.message.DescribeLogDirsRequestData.DescribableLogDirTopic;
 import org.apache.kafka.common.message.DescribeLogDirsResponseData;
@@ -222,6 +224,8 @@ import org.apache.kafka.common.requests.DescribeConfigsRequest;
 import org.apache.kafka.common.requests.DescribeConfigsResponse;
 import org.apache.kafka.common.requests.DescribeDelegationTokenRequest;
 import org.apache.kafka.common.requests.DescribeDelegationTokenResponse;
+import org.apache.kafka.common.requests.DescribeDisklessSwitchReplicaRequest;
+import org.apache.kafka.common.requests.DescribeDisklessSwitchReplicaResponse;
 import org.apache.kafka.common.requests.DescribeLogDirsRequest;
 import org.apache.kafka.common.requests.DescribeLogDirsResponse;
 import org.apache.kafka.common.requests.DescribeQuorumRequest;
@@ -4979,6 +4983,45 @@ public class KafkaAdminClient extends AdminClient {
         };
         runnable.call(call, now);
         return new RepairDisklessLogResult(future);
+    }
+
+    @Override
+    public DescribeDisklessSwitchReplicaResult describeDisklessSwitchReplica(String topic, int partition, int brokerId,
+                                                                             DescribeDisklessSwitchReplicaOptions options) {
+        final KafkaFutureImpl<DisklessSwitchReplicaDescription> future = new KafkaFutureImpl<>();
+        final long now = time.milliseconds();
+        final Call call = new Call("describeDisklessSwitchReplica", calcDeadlineMs(now, options.timeoutMs()),
+            new ConstantNodeIdProvider(brokerId)) {
+
+            @Override
+            DescribeDisklessSwitchReplicaRequest.Builder createRequest(int timeoutMs) {
+                DescribeDisklessSwitchReplicaRequestData data = new DescribeDisklessSwitchReplicaRequestData()
+                    .setTopicName(topic)
+                    .setPartitionIndex(partition);
+                return new DescribeDisklessSwitchReplicaRequest.Builder(data);
+            }
+
+            @Override
+            void handleResponse(AbstractResponse abstractResponse) {
+                final DescribeDisklessSwitchReplicaResponse response = (DescribeDisklessSwitchReplicaResponse) abstractResponse;
+                final DescribeDisklessSwitchReplicaResponseData data = response.data();
+                Errors error = Errors.forCode(data.errorCode());
+                if (error == Errors.NONE) {
+                    future.complete(new DisklessSwitchReplicaDescription(data.offline(), data.logStartOffset(),
+                        data.logEndOffset(), data.highWatermark(), data.crossTierLogStartOffset(), data.remoteStartOffset(),
+                        data.remoteEndOffset()));
+                } else {
+                    future.completeExceptionally(error.exception(data.errorMessage()));
+                }
+            }
+
+            @Override
+            void handleFailure(Throwable throwable) {
+                future.completeExceptionally(throwable);
+            }
+        };
+        runnable.call(call, now);
+        return new DescribeDisklessSwitchReplicaResult(future);
     }
 
     @Override
