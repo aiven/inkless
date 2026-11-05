@@ -6642,6 +6642,248 @@ public class ReplicationControlManagerInklessTest {
                 .setTopicName("foo").setPartitionIndex(5).setSealOffset(100L)));
     }
 
+    @Nested
+    class RecoverLocalClassicPrefixTests {
+        private static final long SEAL = 100L;
+
+        private ControllerResult<AlterDisklessSwitchResponseData> alter(
+            ReplicationControlTestContext ctx,
+            AlterDisklessSwitchRequestData request
+        ) {
+            return ctx.replicationControl.alterDisklessSwitch(request.setTopicName("foo").setPartitionIndex(0));
+        }
+
+        private Uuid createSealedTopic(ReplicationControlTestContext ctx) {
+            Uuid topicId = createSwitchingTestTopic(ctx);
+            ctx.replay(alter(ctx, new AlterDisklessSwitchRequestData().setSealOffset(SEAL)).records());
+            return topicId;
+        }
+
+        private AlterDisklessSwitchRequestData elect(int leaderId) {
+            return new AlterDisklessSwitchRequestData().setSealOffset(SEAL).setLeaderId(leaderId);
+        }
+
+        private AlterDisklessSwitchRequestData startPhaseTwo(long seal) {
+            return new AlterDisklessSwitchRequestData().setSealOffset(seal).setClassicPrefixInRemoteStorage(true);
+        }
+
+        private void dropOutOfIsr(ReplicationControlTestContext ctx, Uuid topicId, int... brokers) {
+            for (int broker : brokers) {
+                ctx.fenceBrokers(broker);
+                ctx.unfenceBrokers(broker);
+            }
+            PartitionRegistration partition = ctx.replicationControl.getPartition(topicId, 0);
+            for (int broker : brokers) {
+                assertFalse(Replicas.contains(partition.isr, broker), "Expected " + broker + " out of the ISR: " + partition);
+            }
+        }
+
+        private void assertRejected(
+            ReplicationControlTestContext ctx,
+            AlterDisklessSwitchRequestData request,
+            String expectedMessage
+        ) {
+            InvalidRequestException exception = assertThrows(InvalidRequestException.class, () -> alter(ctx, request));
+            assertTrue(exception.getMessage().contains(expectedMessage),
+                "Expected \"" + expectedMessage + "\" in: " + exception.getMessage());
+        }
+
+        private void assertIsrAndElrDisjoint(PartitionRegistration partition) {
+            for (int replica : partition.isr) {
+                assertFalse(Replicas.contains(partition.elr, replica),
+                    "Replica " + replica + " is in both ISR and ELR: " + partition);
+            }
+        }
+
+        @Test
+        public void testElectReplicaOutsideIsr() {
+            ReplicationControlTestContext ctx = disklessSwitchTestContext();
+            Uuid topicId = createSealedTopic(ctx);
+            dropOutOfIsr(ctx, topicId, 1, 2);
+            PartitionRegistration before = ctx.replicationControl.getPartition(topicId, 0);
+            assertEquals(0, before.leader);
+
+            ControllerResult<AlterDisklessSwitchResponseData> result = alter(ctx, elect(2));
+            assertEquals(NONE.code(), result.response().errorCode());
+            assertEquals(1, result.records().size());
+            ctx.replay(result.records());
+
+            PartitionRegistration after = ctx.replicationControl.getPartition(topicId, 0);
+            assertEquals(2, after.leader);
+            assertEquals(List.of(2), Replicas.toList(after.isr));
+            assertEquals(before.leaderEpoch + 1, after.leaderEpoch);
+            assertEquals(LeaderRecoveryState.RECOVERED, after.leaderRecoveryState);
+            assertEquals(SEAL, after.classicToDisklessStartOffset);
+            assertEquals(before.disklessLeaderEpoch, after.disklessLeaderEpoch);
+            assertFalse(after.classicPrefixInRemoteStorage);
+            assertIsrAndElrDisjoint(after);
+        }
+
+        @Test
+        public void testElectReplicaOfLeaderlessPartition() {
+            ReplicationControlTestContext ctx = disklessSwitchTestContext();
+            Uuid topicId = createSealedTopic(ctx);
+            dropOutOfIsr(ctx, topicId, 1, 2);
+            ctx.fenceBrokers(0);
+            PartitionRegistration before = ctx.replicationControl.getPartition(topicId, 0);
+            assertFalse(before.hasLeader(), "Phase 1 must not elect a replica outside the ISR: " + before);
+
+            ctx.replay(alter(ctx, elect(1)).records());
+
+            PartitionRegistration after = ctx.replicationControl.getPartition(topicId, 0);
+            assertEquals(1, after.leader);
+            assertEquals(List.of(1), Replicas.toList(after.isr));
+            assertEquals(before.leaderEpoch + 1, after.leaderEpoch);
+            assertFalse(after.classicPrefixInRemoteStorage);
+            assertIsrAndElrDisjoint(after);
+        }
+
+        @Test
+        public void testElectRejectsFencedReplica() {
+            ReplicationControlTestContext ctx = disklessSwitchTestContext();
+            Uuid topicId = createSealedTopic(ctx);
+            ctx.fenceBrokers(2);
+            PartitionRegistration before = ctx.replicationControl.getPartition(topicId, 0);
+
+            assertRejected(ctx, elect(2), "it isn't active");
+            assertEquals(before, ctx.replicationControl.getPartition(topicId, 0));
+        }
+
+        @Test
+        public void testElectRejectsReplicaWithLostDirectory() {
+            ReplicationControlTestContext ctx = disklessSwitchTestContext();
+            Uuid topicId = createSealedTopic(ctx);
+            ctx.replay(List.of(new ApiMessageAndVersion(new PartitionChangeRecord()
+                .setTopicId(topicId)
+                .setPartitionId(0)
+                .setDirectories(List.of(DirectoryId.UNASSIGNED, DirectoryId.UNASSIGNED, DirectoryId.LOST)), (short) 1)));
+
+            assertRejected(ctx, elect(2), "the log directory that holds the partition is offline");
+        }
+
+        @Test
+        public void testElectRejectsCurrentLeader() {
+            ReplicationControlTestContext ctx = disklessSwitchTestContext();
+            Uuid topicId = createSealedTopic(ctx);
+            int leader = ctx.replicationControl.getPartition(topicId, 0).leader;
+
+            assertRejected(ctx, elect(leader), "is already the leader");
+        }
+
+        @Test
+        public void testElectRejectsBrokerThatIsNotAReplica() {
+            ReplicationControlTestContext ctx = disklessSwitchTestContext();
+            createSealedTopic(ctx);
+            ctx.registerBrokers(3);
+            ctx.unfenceBrokers(3);
+
+            assertRejected(ctx, elect(3), "it isn't a replica");
+        }
+
+        @Test
+        public void testElectRejectsSealOtherThanCommittedSeal() {
+            ReplicationControlTestContext ctx = disklessSwitchTestContext();
+            createSealedTopic(ctx);
+
+            assertRejected(ctx, elect(1).setSealOffset(SEAL - 1), "the committed seal is " + SEAL);
+            assertRejected(ctx, elect(1).setSealOffset(SEAL + 1), "the committed seal is " + SEAL);
+        }
+
+        @Test
+        public void testRecoveryRejectsPendingSeal() {
+            ReplicationControlTestContext ctx = disklessSwitchTestContext();
+            createSwitchingTestTopic(ctx);
+
+            assertRejected(ctx, elect(1), "seal isn't committed");
+            assertRejected(ctx, startPhaseTwo(SEAL), "seal isn't committed");
+        }
+
+        @Test
+        public void testRecoveryRejectsCombinedOptions() {
+            ReplicationControlTestContext ctx = disklessSwitchTestContext();
+            createSealedTopic(ctx);
+
+            assertRejected(ctx, elect(1).setClassicPrefixInRemoteStorage(true), "can't be combined");
+            assertRejected(ctx, elect(1).setClearProducerStates(true), "can't be combined");
+            assertRejected(ctx, startPhaseTwo(SEAL).setClearProducerStates(true), "can't be combined");
+        }
+
+        @Test
+        public void testStartPhaseTwoAtLowerSeal() {
+            ReplicationControlTestContext ctx = disklessSwitchTestContext();
+            Uuid topicId = createSealedTopic(ctx);
+            dropOutOfIsr(ctx, topicId, 2);
+            PartitionRegistration before = ctx.replicationControl.getPartition(topicId, 0);
+
+            ControllerResult<AlterDisklessSwitchResponseData> result = alter(ctx, startPhaseTwo(60L));
+            assertEquals(NONE.code(), result.response().errorCode());
+            assertEquals(1, result.records().size());
+            ctx.replay(result.records());
+
+            PartitionRegistration after = ctx.replicationControl.getPartition(topicId, 0);
+            assertTrue(after.classicPrefixInRemoteStorage);
+            assertEquals(60L, after.classicToDisklessStartOffset);
+            assertEquals(before.leader, after.leader);
+            assertEquals(before.leaderEpoch + 1, after.leaderEpoch);
+            assertEquals(after.leaderEpoch, after.disklessLeaderEpoch);
+            assertEquals(Set.of(0, 1, 2), new HashSet<>(Replicas.toList(after.isr)));
+            assertIsrAndElrDisjoint(after);
+        }
+
+        @Test
+        public void testStartPhaseTwoAtCommittedSeal() {
+            ReplicationControlTestContext ctx = disklessSwitchTestContext();
+            Uuid topicId = createSealedTopic(ctx);
+
+            ctx.replay(alter(ctx, startPhaseTwo(SEAL)).records());
+
+            PartitionRegistration after = ctx.replicationControl.getPartition(topicId, 0);
+            assertTrue(after.classicPrefixInRemoteStorage);
+            assertEquals(SEAL, after.classicToDisklessStartOffset);
+        }
+
+        @Test
+        public void testStartPhaseTwoElectsActiveReplicaOfLeaderlessPartition() {
+            ReplicationControlTestContext ctx = disklessSwitchTestContext();
+            Uuid topicId = createSealedTopic(ctx);
+            dropOutOfIsr(ctx, topicId, 1, 2);
+            ctx.fenceBrokers(0);
+            assertFalse(ctx.replicationControl.getPartition(topicId, 0).hasLeader());
+
+            ctx.replay(alter(ctx, startPhaseTwo(0L)).records());
+
+            PartitionRegistration after = ctx.replicationControl.getPartition(topicId, 0);
+            assertTrue(after.classicPrefixInRemoteStorage);
+            assertEquals(0L, after.classicToDisklessStartOffset);
+            assertTrue(after.leader == 1 || after.leader == 2, "Expected an active replica as leader: " + after);
+            assertEquals(Set.of(1, 2), new HashSet<>(Replicas.toList(after.isr)));
+            assertEquals(after.leaderEpoch, after.disklessLeaderEpoch);
+            assertIsrAndElrDisjoint(after);
+        }
+
+        @Test
+        public void testStartPhaseTwoRejectsSealOutsideCommittedPrefix() {
+            ReplicationControlTestContext ctx = disklessSwitchTestContext();
+            Uuid topicId = createSealedTopic(ctx);
+            PartitionRegistration before = ctx.replicationControl.getPartition(topicId, 0);
+
+            for (long seal : List.of(SEAL + 1, -1L, -2L)) {
+                assertRejected(ctx, startPhaseTwo(seal), "must be between 0 and the committed seal " + SEAL);
+            }
+            assertEquals(before, ctx.replicationControl.getPartition(topicId, 0));
+        }
+
+        @Test
+        public void testRecoveryRejectedAfterClassicPrefixInRemoteStorage() {
+            ReplicationControlTestContext ctx = disklessSwitchTestContext();
+            createSealedTopic(ctx);
+            ctx.replay(alter(ctx, startPhaseTwo(60L)).records());
+
+            assertRejected(ctx, startPhaseTwo(60L), "classic prefix is already in remote storage");
+            assertRejected(ctx, elect(1).setSealOffset(60L), "classic prefix is already in remote storage");
+        }
+    }
+
     private static ReplicationControlTestContext disklessSwitchTestContext() {
         return new ReplicationControlTestContext.Builder()
             .setStaticConfig(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, true)

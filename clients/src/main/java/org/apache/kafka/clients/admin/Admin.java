@@ -384,6 +384,11 @@ public interface Admin extends AutoCloseable {
      * set), the controller rejects every seal offset and the result fails with
      * {@code InvalidRequestException}.
      *
+     * In phase 1 of the switch, the options can also recover a partition that lost part of its classic
+     * prefix: {@link AlterDisklessSwitchOptions#leaderId(int)} elects a replica that holds the whole
+     * prefix, and {@link AlterDisklessSwitchOptions#classicPrefixInRemoteStorage(boolean)} starts phase 2
+     * with a lower seal and loses the records above it.
+     *
      * @param topic       The topic name.
      * @param partition   The partition index.
      * @param sealOffset  The seal offset to commit: {@code >= 0} forces (re-)sealing at that offset,
