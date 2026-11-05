@@ -83,6 +83,8 @@ import org.apache.kafka.clients.admin.DescribeConsumerGroupsOptions;
 import org.apache.kafka.clients.admin.DescribeConsumerGroupsResult;
 import org.apache.kafka.clients.admin.DescribeDelegationTokenOptions;
 import org.apache.kafka.clients.admin.DescribeDelegationTokenResult;
+import org.apache.kafka.clients.admin.DescribeDisklessSwitchReplicaOptions;
+import org.apache.kafka.clients.admin.DescribeDisklessSwitchReplicaResult;
 import org.apache.kafka.clients.admin.DescribeFeaturesOptions;
 import org.apache.kafka.clients.admin.DescribeFeaturesResult;
 import org.apache.kafka.clients.admin.DescribeLogDirsOptions;
@@ -416,6 +418,12 @@ public class TestingMetricsInterceptingAdminClient extends AdminClient {
     @Override
     public RepairDisklessLogResult repairDisklessLog(final String topic, final int partition, final int brokerId, final RepairDisklessLogOptions options) {
         return adminDelegate.repairDisklessLog(topic, partition, brokerId, options);
+    }
+
+    @Override
+    public DescribeDisklessSwitchReplicaResult describeDisklessSwitchReplica(final String topic, final int partition, final int brokerId,
+                                                                             final DescribeDisklessSwitchReplicaOptions options) {
+        return adminDelegate.describeDisklessSwitchReplica(topic, partition, brokerId, options);
     }
 
     @Override

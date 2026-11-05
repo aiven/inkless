@@ -57,6 +57,7 @@ import org.apache.kafka.metadata.{InitDisklessLogFields, KRaftMetadataCache, Lea
 import org.apache.kafka.server.HostedPartition
 import org.apache.kafka.server.common.{KRaftVersion, MetadataVersion, OffsetAndEpoch}
 import org.apache.kafka.server.config.ServerConfigs
+import org.apache.kafka.server.log.remote.TopicPartitionLog
 import org.apache.kafka.server.log.remote.storage.{LeaderEpochNotAvailableException, RemoteLogManager, RemoteLogManagerConfig, RemoteLogMetadataManager, RemoteLogSegmentId, RemoteLogSegmentMetadata, RemoteLogSegmentState}
 import org.apache.kafka.server.network.BrokerEndPoint
 import org.apache.kafka.server.PartitionFetchState
@@ -7729,6 +7730,305 @@ class ReplicaManagerInklessTest {
       }
     } finally {
       consolidationCtor.close()
+    }
+  }
+
+  private val fencedTopic = "switched-consolidating-topic"
+  private val fencedTp = new TopicPartition(fencedTopic, 0)
+  private val fencedLeaderId = 1
+  private val fencedOtherReplica = 2
+  private val fencedSeal = 10L
+  private val fencedLocalLeo = 5L
+
+  /**
+   * Runs the body against a broker that fenced its phase 1 leader of `fencedTp`, whose local log ends at
+   * `fencedLocalLeo` below `fencedSeal`. The body gets the replica manager, the topic ID, the image after the
+   * seal commit, the remote log manager, and the consolidation fetcher manager constructor.
+   */
+  private def withFencedPhaseOneLeader(
+      body: (ReplicaManager, Uuid, MetadataImage, RemoteLogManager, MockedConstruction[ConsolidationFetcherManager]) => Unit): Unit =
+    withFencedPhaseOneLeader(crossTierLogStart = None)(body)
+
+  private def withFencedPhaseOneLeader(crossTierLogStart: Option[Long])(
+      body: (ReplicaManager, Uuid, MetadataImage, RemoteLogManager, MockedConstruction[ConsolidationFetcherManager]) => Unit): Unit = {
+    val topicId = Uuid.randomUuid()
+    val crossTierLogStartCache = crossTierLogStart.map { start =>
+      val cache = mock(classOf[CrossTierLogStartCache])
+      when(cache.get(any())).thenReturn(java.lang.Long.valueOf(start))
+      cache
+    }
+    val remoteLogManager = mock(classOf[RemoteLogManager])
+    val mockFetcherManager = mock(classOf[ReplicaFetcherManager])
+    when(mockFetcherManager.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    val ctorInit: MockedConstruction.MockInitializer[ConsolidationFetcherManager] = {
+      case (mockCfm, _) =>
+        when(mockCfm.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    }
+    val consolidationCtor = mockConstruction(classOf[ConsolidationFetcherManager], ctorInit)
+    try {
+      val replicaManager = spy(createReplicaManager(
+        Seq(fencedTopic),
+        topicIdMapping = Map(fencedTopic -> topicId),
+        disklessRemoteStorageConsolidationEnabled = true,
+        consolidatingDisklessTopics = Set(fencedTopic),
+        mockReplicaFetcherManager = Some(mockFetcherManager),
+        defaultLogConfig = Some(LogTestUtils.createLogConfig(remoteLogStorageEnable = true)),
+        initDisklessLogManager = Some(mock(classOf[InitDisklessLogManager])),
+        crossTierLogStartCache = crossTierLogStartCache,
+        remoteLogManager = Some(remoteLogManager),
+      ))
+      try {
+        val pendingImage = applyPendingSwitchDelta(replicaManager, fencedTopic, topicId, fencedTp, fencedLeaderId,
+          fencedOtherReplica, fencedLocalLeo)
+        val sealImage = commitSealDelta(replicaManager, pendingImage, topicId, fencedTp, fencedLeaderId, fencedSeal)
+        assertTrue(replicaManager.getPartition(fencedTp).isInstanceOf[HostedPartition.Offline[Partition]])
+        body(replicaManager, topicId, sealImage, remoteLogManager, consolidationCtor)
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
+    } finally {
+      consolidationCtor.close()
+    }
+  }
+
+  private def verifyRegisteredAsRemoteLogFollower(remoteLogManager: RemoteLogManager, tp: TopicPartition,
+                                                  topicId: Uuid): Unit = {
+    verify(remoteLogManager).onLeadershipChange(
+      ArgumentMatchers.eq(util.Set.of[TopicPartitionLog]()),
+      argThat((followers: util.Set[TopicPartitionLog]) => followers.asScala.map(_.topicPartition) == Set(tp)),
+      ArgumentMatchers.eq(util.Map.of(tp.topic, topicId)))
+  }
+
+  @Test
+  def testFencedPhaseOneLeaderRegistersWithRemoteLogManagerAsFollower(): Unit = {
+    withFencedPhaseOneLeader { (replicaManager, topicId, _, remoteLogManager, _) =>
+      // The fence clears the partition's log, and the remote log manager skips a partition without one.
+      // Registering before the fence lets the broker report the remote copy of the prefix while offline.
+      verifyRegisteredAsRemoteLogFollower(remoteLogManager, fencedTp, topicId)
+      assertEquals(fencedLocalLeo, replicaManager.logManager.getLog(fencedTp).get.logEndOffset)
+    }
+  }
+
+  @Test
+  def testFencedPhaseOneLeaderComesBackOnClassicPrefixFlagCommit(): Unit = {
+    withFencedPhaseOneLeader { (replicaManager, topicId, sealImage, _, consolidationCtor) =>
+      // An operator accepts the loss of the part of the prefix that isn't in remote storage and commits
+      // the flag. The broker brings the partition back without a restart, and consolidation rebuilds
+      // the prefix from the remote tier.
+      commitClassicPrefixFlagDelta(replicaManager, sealImage, topicId, fencedTp, fencedLeaderId)
+
+      val partition = replicaManager.getPartition(fencedTp)
+      assertTrue(partition.isInstanceOf[HostedPartition.Online[Partition]],
+        s"Fenced leader must come back online in phase 2, but was $partition")
+      assertTrue(partition.asInstanceOf[HostedPartition.Online[Partition]].partition.isLeader)
+      assertEquals(fencedLocalLeo, replicaManager.localLogOrException(fencedTp).logEndOffset)
+      verify(consolidationCtor.constructed().get(0), atLeastOnce()).addFetcherForPartitions(
+        Map(fencedTp -> InitialFetchState(
+          topicId = Some(topicId),
+          leader = new BrokerEndPoint(-1, "diskless", -1),
+          currentLeaderEpoch = 1,
+          initOffset = fencedLocalLeo
+        ))
+      )
+    }
+  }
+
+  @Test
+  def testFencedPhaseOneLeaderComesBackAsFollowerAfterElection(): Unit = {
+    withFencedPhaseOneLeader { (replicaManager, topicId, sealImage, _, _) =>
+      // An operator elects the replica that holds the whole prefix. The fenced broker becomes its
+      // follower without a restart.
+      val electionDelta = new TopicsDelta(sealImage.topics())
+      electionDelta.replay(new PartitionChangeRecord()
+        .setTopicId(topicId)
+        .setPartitionId(fencedTp.partition)
+        .setLeader(fencedOtherReplica))
+      replicaManager.applyDelta(electionDelta, imageFromTopics(electionDelta.apply()))
+
+      val partition = replicaManager.getPartition(fencedTp)
+      assertTrue(partition.isInstanceOf[HostedPartition.Online[Partition]],
+        s"Fenced leader must come back online as a follower, but was $partition")
+      assertFalse(partition.asInstanceOf[HostedPartition.Online[Partition]].partition.isLeader)
+      assertEquals(fencedLocalLeo, replicaManager.localLogOrException(fencedTp).logEndOffset)
+    }
+  }
+
+  @Test
+  def testFencedPhaseOneLeaderStaysOfflineAfterLogDirFailure(): Unit = {
+    withFencedPhaseOneLeader { (replicaManager, topicId, sealImage, _, _) =>
+      replicaManager.logManager.handleLogDirFailure(replicaManager.logManager.getLog(fencedTp).get.parentDir)
+
+      commitClassicPrefixFlagDelta(replicaManager, sealImage, topicId, fencedTp, fencedLeaderId)
+
+      val partition = replicaManager.getPartition(fencedTp)
+      assertTrue(partition.isInstanceOf[HostedPartition.Offline[Partition]],
+        s"A fenced partition in a failed log directory must stay offline, but was $partition")
+    }
+  }
+
+  @Test
+  def testApplyDeltaCreatesEmptyLogForWipedPhaseOneLeaderAndFencesIt(): Unit = {
+    val topicId = Uuid.randomUuid()
+    val remoteLogManager = mock(classOf[RemoteLogManager])
+    val mockFetcherManager = mock(classOf[ReplicaFetcherManager])
+    when(mockFetcherManager.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    val ctorInit: MockedConstruction.MockInitializer[ConsolidationFetcherManager] = {
+      case (mockCfm, _) =>
+        when(mockCfm.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    }
+    val consolidationCtor = mockConstruction(classOf[ConsolidationFetcherManager], ctorInit)
+    try {
+      val replicaManager = spy(createReplicaManager(
+        Seq(fencedTopic),
+        disklessRemoteStorageConsolidationEnabled = true,
+        consolidatingDisklessTopics = Set(fencedTopic),
+        mockReplicaFetcherManager = Some(mockFetcherManager),
+        defaultLogConfig = Some(LogTestUtils.createLogConfig(remoteLogStorageEnable = true)),
+        initDisklessLogManager = Some(mock(classOf[InitDisklessLogManager])),
+        remoteLogManager = Some(remoteLogManager),
+      ))
+      try {
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(fencedTp)).thenReturn(fencedSeal)
+        when(replicaManager.inklessMetadataView().isClassicPrefixWaitingForUpload(fencedTp)).thenReturn(true)
+        val delta = new TopicsDelta(TopicsImage.EMPTY)
+        delta.replay(new TopicRecord().setName(fencedTopic).setTopicId(topicId))
+        val record = new PartitionRecord()
+          .setPartitionId(fencedTp.partition)
+          .setTopicId(topicId)
+          .setReplicas(util.Arrays.asList(fencedLeaderId, fencedOtherReplica))
+          .setIsr(util.Arrays.asList(fencedLeaderId, fencedOtherReplica))
+          .setLeader(fencedLeaderId)
+          .setLeaderEpoch(0)
+          .setPartitionEpoch(0)
+        record.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicToDisklessStartOffset(fencedSeal))
+        delta.replay(record)
+        assertTrue(replicaManager.logManager.getLog(fencedTp).isEmpty)
+
+        replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))
+
+        // The leader lost its whole local log. The broker creates an empty one, so the fence can
+        // register the partition with the remote log manager before taking it offline.
+        val partition = replicaManager.getPartition(fencedTp)
+        assertTrue(partition.isInstanceOf[HostedPartition.Offline[Partition]],
+          s"Wiped leader must be fenced in phase 1, but was $partition")
+        assertEquals(0L, replicaManager.logManager.getLog(fencedTp).get.logEndOffset)
+        verifyRegisteredAsRemoteLogFollower(remoteLogManager, fencedTp, topicId)
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
+    } finally {
+      consolidationCtor.close()
+    }
+  }
+
+  private def remoteSegment(tp: TopicPartition, startOffset: Long, endOffset: Long,
+                            state: RemoteLogSegmentState = RemoteLogSegmentState.COPY_SEGMENT_FINISHED): RemoteLogSegmentMetadata =
+    new RemoteLogSegmentMetadata(new RemoteLogSegmentId(new TopicIdPartition(Uuid.randomUuid(), tp), Uuid.randomUuid()),
+      startOffset, endOffset, -1L, 0, 0L, 1024, Optional.empty(), state, util.Map.of(0, startOffset))
+
+  private def stubRemoteSegments(remoteLogManager: RemoteLogManager, tp: TopicPartition,
+                                 segments: RemoteLogSegmentMetadata*): Unit = {
+    val rlmm = mock(classOf[RemoteLogMetadataManager])
+    when(rlmm.listRemoteLogSegments(any[TopicIdPartition]())).thenAnswer(_ => segments.iterator.asJava)
+    when(remoteLogManager.isPartitionReady(tp)).thenReturn(true)
+    when(remoteLogManager.remoteLogMetadataManager).thenReturn(rlmm)
+  }
+
+  private def assertDescribedRemoteRange(crossTierLogStart: Long, segments: Seq[(Long, Long, RemoteLogSegmentState)],
+                                         expectedStart: Long, expectedEnd: Long): Unit = {
+    withFencedPhaseOneLeader(crossTierLogStart = Some(crossTierLogStart)) { (replicaManager, _, _, remoteLogManager, _) =>
+      stubRemoteSegments(remoteLogManager, fencedTp,
+        segments.map { case (start, end, state) => remoteSegment(fencedTp, start, end, state) }.toList: _*)
+
+      val description = replicaManager.describeDisklessSwitchReplica(fencedTp)
+
+      assertEquals(Errors.NONE.code, description.errorCode)
+      assertEquals(crossTierLogStart, description.crossTierLogStartOffset)
+      assertEquals(expectedStart, description.remoteStartOffset)
+      assertEquals(expectedEnd, description.remoteEndOffset)
+    }
+  }
+
+  @Test
+  def testDescribeDisklessSwitchReplicaReportsFencedLeader(): Unit = {
+    withFencedPhaseOneLeader(crossTierLogStart = Some(0L)) { (replicaManager, _, _, remoteLogManager, _) =>
+      stubRemoteSegments(remoteLogManager, fencedTp, remoteSegment(fencedTp, 0L, 2L))
+
+      val description = replicaManager.describeDisklessSwitchReplica(fencedTp)
+
+      assertEquals(Errors.NONE.code, description.errorCode)
+      assertTrue(description.offline)
+      assertEquals(0L, description.logStartOffset)
+      assertEquals(fencedLocalLeo, description.logEndOffset)
+      assertEquals(fencedLocalLeo, description.highWatermark)
+      assertEquals(0L, description.remoteStartOffset)
+      assertEquals(3L, description.remoteEndOffset)
+    }
+  }
+
+  @Test
+  def testDescribeDisklessSwitchReplicaEndsRemoteRangeAtFirstGap(): Unit = {
+    val finished = RemoteLogSegmentState.COPY_SEGMENT_FINISHED
+    assertDescribedRemoteRange(0L, Seq((0L, 2L, finished), (3L, 6L, finished), (8L, 9L, finished)), 0L, 7L)
+  }
+
+  @Test
+  def testDescribeDisklessSwitchReplicaSkipsSegmentsThatArentCopied(): Unit = {
+    assertDescribedRemoteRange(0L, Seq(
+      (0L, 2L, RemoteLogSegmentState.COPY_SEGMENT_FINISHED),
+      (3L, 6L, RemoteLogSegmentState.COPY_SEGMENT_STARTED),
+      (3L, 4L, RemoteLogSegmentState.DELETE_SEGMENT_STARTED)), 0L, 3L)
+  }
+
+  @Test
+  def testDescribeDisklessSwitchReplicaStartsRemoteRangeAtFirstSegmentAboveCrossTierStart(): Unit = {
+    val finished = RemoteLogSegmentState.COPY_SEGMENT_FINISHED
+    assertDescribedRemoteRange(2L, Seq((0L, 1L, finished), (4L, 6L, finished), (7L, 8L, finished)), 4L, 9L)
+  }
+
+  @Test
+  def testDescribeDisklessSwitchReplicaCapsRemoteRangeAtSeal(): Unit = {
+    val finished = RemoteLogSegmentState.COPY_SEGMENT_FINISHED
+    assertDescribedRemoteRange(0L, Seq((0L, 4L, finished), (5L, fencedSeal + 4, finished)), 0L, fencedSeal)
+  }
+
+  @Test
+  def testDescribeDisklessSwitchReplicaWithoutRemoteSegmentsEndsAtCrossTierStart(): Unit = {
+    assertDescribedRemoteRange(3L, Seq.empty, -1L, 3L)
+  }
+
+  @Test
+  def testDescribeDisklessSwitchReplicaWithoutReadyRemoteLogManager(): Unit = {
+    withFencedPhaseOneLeader(crossTierLogStart = Some(0L)) { (replicaManager, _, _, _, _) =>
+      val description = replicaManager.describeDisklessSwitchReplica(fencedTp)
+
+      assertEquals(Errors.NONE.code, description.errorCode)
+      assertEquals(fencedLocalLeo, description.logEndOffset)
+      assertEquals(0L, description.crossTierLogStartOffset)
+      assertEquals(-1L, description.remoteStartOffset)
+      assertEquals(-1L, description.remoteEndOffset)
+    }
+  }
+
+  @Test
+  def testDescribeDisklessSwitchReplicaRejectsClassicTopic(): Unit = {
+    val replicaManager = createReplicaManager(Seq.empty)
+    try {
+      val description = replicaManager.describeDisklessSwitchReplica(new TopicPartition("classic-topic", 0))
+      assertEquals(Errors.INVALID_REQUEST.code, description.errorCode)
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testDescribeDisklessSwitchReplicaRejectsPartitionThatTheBrokerDoesntHost(): Unit = {
+    val replicaManager = createReplicaManager(Seq(fencedTopic))
+    try {
+      val description = replicaManager.describeDisklessSwitchReplica(fencedTp)
+      assertEquals(Errors.NOT_LEADER_OR_FOLLOWER.code, description.errorCode)
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
     }
   }
 

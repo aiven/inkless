@@ -27,6 +27,8 @@ import org.apache.kafka.common.annotation.InterfaceStability;
 @InterfaceStability.Unstable
 public class AlterDisklessSwitchOptions extends AbstractOptions<AlterDisklessSwitchOptions> {
     private boolean clearProducerStates = false;
+    private int leaderId = -1;
+    private boolean classicPrefixInRemoteStorage = false;
 
     /**
      * When forcing a seal (offset {@code >= 0}), whether to clear the committed producer states.
@@ -39,5 +41,33 @@ public class AlterDisklessSwitchOptions extends AbstractOptions<AlterDisklessSwi
 
     public boolean clearProducerStates() {
         return clearProducerStates;
+    }
+
+    /**
+     * In phase 1 of the switch, the replica to elect as the only member of the ISR. The replica must hold
+     * the whole classic prefix, and the seal offset must be the committed seal. The controller elects it
+     * even if it's outside the ISR. The default, -1, keeps the leader.
+     */
+    public AlterDisklessSwitchOptions leaderId(int leaderId) {
+        this.leaderId = leaderId;
+        return this;
+    }
+
+    public int leaderId() {
+        return leaderId;
+    }
+
+    /**
+     * In phase 1 of the switch, whether to set {@code classicPrefixInRemoteStorage} and start phase 2 with
+     * the seal offset as the seal. The seal offset must be at most the committed seal. The records from the
+     * seal offset to the committed seal are lost.
+     */
+    public AlterDisklessSwitchOptions classicPrefixInRemoteStorage(boolean classicPrefixInRemoteStorage) {
+        this.classicPrefixInRemoteStorage = classicPrefixInRemoteStorage;
+        return this;
+    }
+
+    public boolean classicPrefixInRemoteStorage() {
+        return classicPrefixInRemoteStorage;
     }
 }

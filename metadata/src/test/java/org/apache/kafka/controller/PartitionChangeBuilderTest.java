@@ -581,6 +581,37 @@ public class PartitionChangeBuilderTest {
 
     @ParameterizedTest
     @MethodSource("partitionChangeRecordVersions")
+    public void testClassicPrefixFlagWritesLoweredSeal(short version) {
+        PartitionRegistration sealed = new PartitionRegistration.Builder().
+            setReplicas(FOO.replicas).
+            setDirectories(FOO.directories).
+            setIsr(FOO.isr).
+            setLeader(FOO.leader).
+            setLeaderRecoveryState(FOO.leaderRecoveryState).
+            setLeaderEpoch(FOO.leaderEpoch).
+            setPartitionEpoch(FOO.partitionEpoch).
+            setClassicToDisklessStartOffset(1000L).
+            setDisklessLeaderEpoch(90).
+            build();
+        PartitionChangeBuilder builder = new PartitionChangeBuilder(sealed,
+                FOO_ID,
+                0,
+                r -> r != 3,
+                metadataVersionForPartitionChangeRecordVersion(version),
+                2,
+                isElrEnabled(version)).
+                setDefaultDirProvider(DEFAULT_DIR_PROVIDER).
+                setClassicToDisklessStartOffset(600L);
+
+        PartitionChangeRecord record = buildClassicPrefixFlagRecord(builder);
+
+        assertEquals(1, countTag(record, InitDisklessLogFields.CLASSIC_TO_DISKLESS_START_OFFSET_TAG));
+        PartitionRegistration merged = assertClassicPrefixFlagCommit(sealed, record);
+        assertEquals(600L, merged.classicToDisklessStartOffset);
+    }
+
+    @ParameterizedTest
+    @MethodSource("partitionChangeRecordVersions")
     public void testRevertReassignment(short version) {
         PartitionReassignmentRevert revert = new PartitionReassignmentRevert(BAR);
         assertEquals(List.of(1, 2, 3), revert.replicas());

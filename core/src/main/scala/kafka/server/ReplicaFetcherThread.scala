@@ -186,19 +186,23 @@ class ReplicaFetcherThread(name: String,
     // Stop fetching once the switch is complete: seal is committed, local LEO has reached it,
     // and this replica is in ISR. A consolidating partition evicts without waiting for ISR so
     // it can hand off to the consolidation fetcher. In phase 1 of the classic-to-diskless switch nothing
-    // consolidates, so the partition follows the ISR rule.
+    // consolidates, so the partition follows the ISR rule. It also waits for the high watermark to reach
+    // the seal: the response that brings the last records carries an older high watermark, and only a
+    // high watermark at the seal shows that this replica holds the committed prefix. An operator relies on
+    // it to elect this replica after the leader loses its prefix.
     val inklessMetadataView = replicaMgr.inklessMetadataView()
     val classicToDisklessStartOffset = inklessMetadataView.getClassicToDisklessStartOffset(topicPartition)
     if (shouldEvictFullySwitchedDisklessPartitions &&
         classicToDisklessStartOffset >= 0 &&
         log.logEndOffset >= classicToDisklessStartOffset) {
       if (replicaMgr.consolidationActiveFor(topicPartition) ||
-          inklessMetadataView.isReplicaInIsr(topicPartition, brokerConfig.brokerId)) {
+          (inklessMetadataView.isReplicaInIsr(topicPartition, brokerConfig.brokerId) &&
+            log.highWatermark >= classicToDisklessStartOffset)) {
         partitionsToEvictAfterDisklessSwitch += topicPartition
       } else {
         // The leader answers this fetch from immediateFetchResponses and does not park it
         // in the fetch purgatory, so maxWaitMs is ignored. Delay here or we re-fetch at
-        // network rate until the ISR expansion lands.
+        // network rate until the ISR expansion or the high watermark lands.
         partitionsAwaitingIsrRecovery += topicPartition
       }
     }

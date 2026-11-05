@@ -21,6 +21,7 @@ import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AlterDisklessSwitchOptions;
 import org.apache.kafka.clients.admin.DescribeTopicPartitionsResult;
 import org.apache.kafka.clients.admin.DescribeTopicsOptions;
+import org.apache.kafka.clients.admin.DisklessSwitchReplicaDescription;
 import org.apache.kafka.clients.admin.ListOffsetsResult;
 import org.apache.kafka.clients.admin.OffsetSpec;
 import org.apache.kafka.common.TopicPartition;
@@ -42,11 +43,14 @@ import net.sourceforge.argparse4j.inf.Subparser;
 import net.sourceforge.argparse4j.inf.Subparsers;
 
 import java.io.PrintStream;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
+import java.util.concurrent.ExecutionException;
 
 import static net.sourceforge.argparse4j.impl.Arguments.store;
 import static net.sourceforge.argparse4j.impl.Arguments.storeTrue;
@@ -100,6 +104,27 @@ public abstract class TopicSwitchCommand {
                         Optional.ofNullable(namespace.getInt("partition")));
                 }
                 break;
+            case "describe":
+                try (Admin adminClient = Admin.create(properties)) {
+                    describeCommand(System.out, adminClient, topic, namespace.getInt("partition"));
+                }
+                break;
+            case "elect":
+                try (Admin adminClient = Admin.create(properties)) {
+                    electCommand(System.out, adminClient, topic,
+                        namespace.getInt("partition"),
+                        namespace.getInt("replica"),
+                        namespace.getBoolean("dry_run"));
+                }
+                break;
+            case "start-phase-2":
+                try (Admin adminClient = Admin.create(properties)) {
+                    startPhaseTwoCommand(System.out, adminClient, topic,
+                        namespace.getInt("partition"),
+                        namespace.getBoolean("accept_data_loss"),
+                        namespace.getBoolean("dry_run"));
+                }
+                break;
             default:
                 throw new RuntimeException("Unknown command " + command);
         }
@@ -118,6 +143,16 @@ public abstract class TopicSwitchCommand {
                 .help("Override the topic seal offset. Use --dry-run to perform validation only.");
         Subparser repairParser = commandParsers.addParser("repair")
                 .help("Repair the control-plane diskless log entry.");
+        Subparser describeParser = commandParsers.addParser("describe")
+                .help("Describe each replica of a partition in phase 1 of the switch, and how much of the "
+                        + "classic prefix it and remote storage hold.");
+        Subparser electParser = commandParsers.addParser("elect")
+                .help("Elect a replica that holds the whole classic prefix as the leader of a phase 1 partition, "
+                        + "even if it's outside the ISR. Use --dry-run to perform validation only.");
+        Subparser startPhaseTwoParser = commandParsers.addParser("start-phase-2")
+                .help("Start phase 2 of a phase 1 partition at the end of its classic prefix in remote storage. "
+                        + "The records from there to the seal are lost. Use --dry-run to perform validation only.");
+        List<Subparser> recoveryParsers = List.of(describeParser, electParser, startPhaseTwoParser);
 
         for (Subparser subparser : List.of(stateParser, sealParser)) {
             MutuallyExclusiveGroup connectionOptions = subparser.addMutuallyExclusiveGroup().required(true);
@@ -128,12 +163,15 @@ public abstract class TopicSwitchCommand {
                     .action(store())
                     .help("A list of host/port pairs to use for establishing the connection to the KRaft controllers.");
         }
-        repairParser.addArgument("--bootstrap-server", "-b")
-                .action(store())
-                .required(true)
-                .help("A list of host/port pairs to use for establishing the connection to the Kafka cluster.");
+        for (Subparser subparser : List.of(repairParser, describeParser, electParser, startPhaseTwoParser)) {
+            subparser.addArgument("--bootstrap-server", "-b")
+                    .action(store())
+                    .required(true)
+                    .help("A list of host/port pairs to use for establishing the connection to the Kafka cluster.");
+        }
 
-        for (Subparser subparser : List.of(stateParser, sealParser, repairParser)) {
+        for (Subparser subparser : List.of(stateParser, sealParser, repairParser, describeParser, electParser,
+                startPhaseTwoParser)) {
             subparser.addArgument("--command-config", "-c")
                     .action(store())
                     .help("Config properties file for the Admin client.");
@@ -172,6 +210,29 @@ public abstract class TopicSwitchCommand {
                 .action(store())
                 .type(Integer.class)
                 .help("The partition index to repair. If omitted, all switched partitions of the topic are repaired.");
+
+        for (Subparser subparser : recoveryParsers) {
+            subparser.addArgument("--partition", "-p")
+                    .action(store())
+                    .type(Integer.class)
+                    .required(true)
+                    .help("The partition index.");
+        }
+        electParser.addArgument("--replica", "-r")
+                .action(store())
+                .type(Integer.class)
+                .required(true)
+                .help("The broker ID of the replica to elect. The command checks that it holds the whole "
+                        + "classic prefix, together with remote storage.");
+        startPhaseTwoParser.addArgument("--accept-data-loss")
+                .action(storeTrue())
+                .help("Start phase 2 even if remote storage doesn't hold the whole classic prefix. The records "
+                        + "that only the local disks held are lost.");
+        for (Subparser subparser : List.of(electParser, startPhaseTwoParser)) {
+            subparser.addArgument("--dry-run", "-d")
+                    .action(storeTrue())
+                    .help("Whether to only perform validation. The controller can still reject the request.");
+        }
 
         return parser;
     }
@@ -342,6 +403,248 @@ public abstract class TopicSwitchCommand {
         stream.printf("Repaired %d partition(s) of topic %s.%n", repaired, topic);
     }
 
+    static void describeCommand(PrintStream stream, Admin adminClient, String topic, int partition) throws Exception {
+        RecoveryView view = readRecoveryView(adminClient, topic, partition);
+        DescribeTopicPartitionsResponsePartition metadata = view.partition();
+        stream.printf("Partition %s-%d:%n", topic, partition);
+        stream.printf("  leader=%d epoch=%d isr=%s replicas=%s%n",
+            metadata.leaderId(), metadata.leaderEpoch(), metadata.isrNodes(), metadata.replicaNodes());
+        stream.printf("  classicToDisklessStartOffset=%s classicPrefixInRemoteStorage=%s%n",
+            formatStartOffset(view.seal()),
+            formatClassicPrefixInRemoteStorage(view.classicPrefixInRemoteStorage(), view.seal()));
+        stream.printf("  crossTierLogStartOffset=%d remoteStartOffset=%d remoteEndOffset=%d%n",
+            view.crossTierLogStart(), view.remoteStart(), view.remoteEnd());
+        for (ReplicaView replica : view.replicas()) {
+            if (replica.description().isEmpty()) {
+                stream.printf("  Broker %d: %s%n", replica.brokerId(), replica.error());
+                continue;
+            }
+            DisklessSwitchReplicaDescription description = replica.description().get();
+            stream.printf("  Broker %d: offline=%s logStartOffset=%d logEndOffset=%d highWatermark=%d%n",
+                replica.brokerId(), description.offline(), description.logStartOffset(),
+                description.logEndOffset(), description.highWatermark());
+            if (view.isPhaseOne()) {
+                stream.printf("    %s%n", view.missingClassicPrefix(description)
+                    .map(reason -> "Misses part of the classic prefix: " + reason + ".")
+                    .orElse("Holds the whole classic prefix, together with remote storage."));
+            }
+        }
+        if (!view.isPhaseOne()) {
+            stream.println("  The partition isn't in phase 1, so it doesn't need recovery.");
+            return;
+        }
+        if (view.remoteEnd() >= 0) {
+            stream.printf("  start-phase-2 would set the seal to %d.%s%n",
+                view.remoteEnd(), view.lostRanges().map(lost -> " It would lose " + lost + ".").orElse(""));
+        }
+    }
+
+    static void electCommand(PrintStream stream, Admin adminClient, String topic, int partition, int replica,
+                             boolean dryRun) throws Exception {
+        RecoveryView view = readRecoveryView(adminClient, topic, partition);
+        view.requirePhaseOne(topic, partition);
+        if (!view.partition().replicaNodes().contains(replica)) {
+            throw new RuntimeException(String.format("Broker %d isn't a replica of %s-%d (replicas=%s).",
+                replica, topic, partition, view.partition().replicaNodes()));
+        }
+        if (view.partition().leaderId() == replica) {
+            throw new RuntimeException(String.format("Broker %d is already the leader of %s-%d.",
+                replica, topic, partition));
+        }
+        ReplicaView replicaView = view.replica(replica);
+        DisklessSwitchReplicaDescription description = replicaView.description().orElseThrow(() ->
+            new RuntimeException(String.format("Cannot describe broker %d's replica of %s-%d: %s",
+                replica, topic, partition, replicaView.error())));
+        Optional<String> missing = view.missingClassicPrefix(description);
+        if (missing.isPresent()) {
+            throw new RuntimeException(String.format(
+                "Cannot elect broker %d for %s-%d: it misses part of the classic prefix below the seal %d: %s.",
+                replica, topic, partition, view.seal(), missing.get()));
+        }
+        stream.printf("Validated %s-%d: broker %d holds the classic prefix up to the seal %d "
+                + "(logStartOffset=%d highWatermark=%d), together with remote storage.%n",
+            topic, partition, replica, view.seal(), description.logStartOffset(), description.highWatermark());
+
+        if (dryRun) {
+            stream.printf("[dry-run] Would elect broker %d as the leader of %s-%d.%n", replica, topic, partition);
+            return;
+        }
+        adminClient.alterDisklessSwitch(topic, partition, view.seal(),
+            new AlterDisklessSwitchOptions().leaderId(replica)).all().get();
+        stream.printf("Elected broker %d as the leader of %s-%d. The other replicas rejoin the ISR once they "
+            + "catch up.%n", replica, topic, partition);
+    }
+
+    static void startPhaseTwoCommand(PrintStream stream, Admin adminClient, String topic, int partition,
+                                     boolean acceptDataLoss, boolean dryRun) throws Exception {
+        RecoveryView view = readRecoveryView(adminClient, topic, partition);
+        view.requirePhaseOne(topic, partition);
+        for (ReplicaView replica : view.replicas()) {
+            if (replica.description().isPresent()
+                    && view.missingClassicPrefix(replica.description().get()).isEmpty()) {
+                if (replica.brokerId() == view.partition().leaderId()) {
+                    throw new RuntimeException(String.format(
+                        "The leader of %s-%d (broker %d) holds the whole classic prefix, so the partition doesn't "
+                            + "need recovery. The leader starts phase 2 once remote storage holds the prefix.",
+                        topic, partition, replica.brokerId()));
+                }
+                throw new RuntimeException(String.format(
+                    "Broker %d holds the whole classic prefix of %s-%d. Elect it with the elect command instead, "
+                        + "which loses no records.", replica.brokerId(), topic, partition));
+            }
+        }
+        if (view.remoteEnd() < 0) {
+            throw new RuntimeException(String.format(
+                "No replica of %s-%d reports how much of the classic prefix remote storage holds. Retry once "
+                    + "the remote log manager is ready.", topic, partition));
+        }
+        for (ReplicaView replica : view.replicas()) {
+            if (replica.description().isEmpty()) {
+                stream.printf("Warning: broker %d's replica isn't checked: %s%n", replica.brokerId(), replica.error());
+            }
+        }
+        long newSeal = view.remoteEnd();
+        Optional<String> lostRanges = view.lostRanges();
+        if (lostRanges.isPresent() && !acceptDataLoss) {
+            throw new RuntimeException(String.format(
+                "Starting phase 2 for %s-%d at seal %d loses the records in %s, which no replica or remote "
+                    + "storage holds. Pass --accept-data-loss to start phase 2 anyway.",
+                topic, partition, newSeal, lostRanges.get()));
+        }
+        stream.printf("Validated %s-%d: remote storage holds the classic prefix up to %d, and the committed seal "
+            + "is %d.%n", topic, partition, newSeal, view.seal());
+        lostRanges.ifPresent(lost -> stream.printf("Accepting the loss of the records in %s.%n", lost));
+
+        if (dryRun) {
+            stream.printf("[dry-run] Would start phase 2 for %s-%d at seal %d.%n", topic, partition, newSeal);
+            return;
+        }
+        adminClient.alterDisklessSwitch(topic, partition, newSeal,
+            new AlterDisklessSwitchOptions().classicPrefixInRemoteStorage(true)).all().get();
+        stream.printf("Started phase 2 for %s-%d at seal %d.%n", topic, partition, newSeal);
+        if (newSeal != view.seal()) {
+            stream.printf("Run the repair command for %s-%d to set the control-plane diskless log start to %d.%n",
+                topic, partition, newSeal);
+        }
+    }
+
+    private record ReplicaView(int brokerId, Optional<DisklessSwitchReplicaDescription> description, String error) { }
+
+    /**
+     * Holds a switching partition, its replicas, and the run of remote segments without a gap that the
+     * replica with the highest remote end reports. Brokers read the remote log metadata at different
+     * speeds, so that replica has the most current view.
+     */
+    private record RecoveryView(
+        DescribeTopicPartitionsResponsePartition partition,
+        long seal,
+        boolean classicPrefixInRemoteStorage,
+        List<ReplicaView> replicas,
+        long crossTierLogStart,
+        long remoteStart,
+        long remoteEnd
+    ) {
+        boolean isPhaseOne() {
+            return seal >= 0 && !classicPrefixInRemoteStorage;
+        }
+
+        void requirePhaseOne(String topic, int partitionIndex) {
+            if (!isPhaseOne()) {
+                throw new RuntimeException(String.format(
+                    "%s-%d isn't in phase 1 of the switch (classicToDisklessStartOffset=%s, "
+                        + "classicPrefixInRemoteStorage=%s).",
+                    topic, partitionIndex, formatStartOffset(seal), classicPrefixInRemoteStorage));
+            }
+        }
+
+        ReplicaView replica(int brokerId) {
+            return replicas.stream().filter(replica -> replica.brokerId() == brokerId).findFirst().orElseThrow();
+        }
+
+        /**
+         * Returns why the replica and remote storage together don't hold every offset from the cross-tier
+         * log start to the seal, or empty if they do. Only records below the high watermark count, because
+         * the replica may not have committed the records above it.
+         */
+        Optional<String> missingClassicPrefix(DisklessSwitchReplicaDescription description) {
+            if (description.offline()) {
+                return Optional.of("the broker took the partition offline because its log ends below the seal");
+            }
+            if (description.logEndOffset() < 0) {
+                return Optional.of("it has no local log");
+            }
+            if (description.highWatermark() < seal) {
+                return Optional.of("its high watermark " + description.highWatermark() + " is below the seal");
+            }
+            long logStart = description.logStartOffset();
+            if (logStart == 0 || (crossTierLogStart >= 0 && logStart <= crossTierLogStart)) {
+                return Optional.empty();
+            }
+            if (remoteEnd < 0) {
+                return Optional.of("its log starts at " + logStart + ", and no replica reports the remote copy "
+                    + "of the prefix");
+            }
+            if (remoteStart > crossTierLogStart) {
+                return Optional.of("its log starts at " + logStart + ", and remote storage misses the offsets "
+                    + "from " + crossTierLogStart + " to " + remoteStart);
+            }
+            if (logStart > remoteEnd) {
+                return Optional.of("its log starts at " + logStart + ", and remote storage holds the prefix "
+                    + "only up to " + remoteEnd);
+            }
+            return Optional.empty();
+        }
+
+        /**
+         * Returns the offset ranges that starting phase 2 at {@link #remoteEnd()} loses, or empty if it
+         * loses none.
+         */
+        Optional<String> lostRanges() {
+            List<String> lost = new ArrayList<>();
+            if (remoteStart > crossTierLogStart) {
+                lost.add("[" + crossTierLogStart + ", " + remoteStart + ")");
+            }
+            if (remoteEnd < seal) {
+                lost.add("[" + remoteEnd + ", " + seal + ")");
+            }
+            return lost.isEmpty() ? Optional.empty() : Optional.of(String.join(" and ", lost));
+        }
+    }
+
+    private static RecoveryView readRecoveryView(Admin adminClient, String topic, int partition) throws Exception {
+        DescribeTopicPartitionsResponsePartition metadata = describePartition(adminClient, topic, partition);
+        List<ReplicaView> replicas = new ArrayList<>();
+        for (int brokerId : metadata.replicaNodes()) {
+            try {
+                DisklessSwitchReplicaDescription description = adminClient
+                    .describeDisklessSwitchReplica(topic, partition, brokerId).description().get();
+                replicas.add(new ReplicaView(brokerId, Optional.of(description), null));
+            } catch (ExecutionException e) {
+                replicas.add(new ReplicaView(brokerId, Optional.empty(), e.getCause().toString()));
+            }
+        }
+        List<DisklessSwitchReplicaDescription> descriptions = replicas.stream()
+            .flatMap(replica -> replica.description().stream())
+            .toList();
+        Optional<DisklessSwitchReplicaDescription> latestRemote = descriptions.stream()
+            .filter(description -> description.remoteEndOffset() >= 0)
+            .max(Comparator.comparingLong(DisklessSwitchReplicaDescription::remoteEndOffset));
+        long crossTierLogStart = latestRemote
+            .map(DisklessSwitchReplicaDescription::crossTierLogStartOffset)
+            .orElseGet(() -> descriptions.stream()
+                .mapToLong(DisklessSwitchReplicaDescription::crossTierLogStartOffset)
+                .max()
+                .orElse(-1L));
+        return new RecoveryView(
+            metadata,
+            InitDisklessLogFields.decodeClassicToDisklessStartOffset(metadata.unknownTaggedFields()),
+            InitDisklessLogFields.decodeClassicPrefixInRemoteStorage(metadata.unknownTaggedFields()),
+            replicas,
+            crossTierLogStart,
+            latestRemote.map(DisklessSwitchReplicaDescription::remoteStartOffset).orElse(-1L),
+            latestRemote.map(DisklessSwitchReplicaDescription::remoteEndOffset).orElse(-1L));
+    }
+
     private static long startOffset(Admin adminClient, String topic, int partition) throws Exception {
         TopicPartition tp = new TopicPartition(topic, partition);
         return adminClient.listOffsets(Map.of(tp, OffsetSpec.earliest())).all().get().get(tp).offset();
@@ -355,6 +658,14 @@ public abstract class TopicSwitchCommand {
     private record SwitchState(long classicToDisklessStartOffset, boolean classicPrefixInRemoteStorage) { }
 
     private static SwitchState readSwitchState(Admin adminClient, String topic, int partition) throws Exception {
+        DescribeTopicPartitionsResponsePartition p = describePartition(adminClient, topic, partition);
+        return new SwitchState(
+            InitDisklessLogFields.decodeClassicToDisklessStartOffset(p.unknownTaggedFields()),
+            InitDisklessLogFields.decodeClassicPrefixInRemoteStorage(p.unknownTaggedFields()));
+    }
+
+    private static DescribeTopicPartitionsResponsePartition describePartition(Admin adminClient, String topic,
+                                                                              int partition) throws Exception {
         DescribeTopicPartitionsResponseData responseData = adminClient
             .describeTopicPartitions(List.of(topic), new DescribeTopicsOptions()).rawResponse().get();
         DescribeTopicPartitionsResponseTopic topicData = responseData.topics().find(topic);
@@ -364,9 +675,6 @@ public abstract class TopicSwitchCommand {
         return topicData.partitions().stream()
             .filter(p -> p.partitionIndex() == partition)
             .findFirst()
-            .map(p -> new SwitchState(
-                InitDisklessLogFields.decodeClassicToDisklessStartOffset(p.unknownTaggedFields()),
-                InitDisklessLogFields.decodeClassicPrefixInRemoteStorage(p.unknownTaggedFields())))
             .orElseThrow(() -> new RuntimeException("Partition not found: " + topic + "-" + partition));
     }
 

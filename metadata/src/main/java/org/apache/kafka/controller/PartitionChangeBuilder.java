@@ -38,6 +38,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.function.IntPredicate;
 import java.util.stream.Collectors;
@@ -108,6 +109,8 @@ public class PartitionChangeBuilder {
     // record, the flag commit also sets the ISR and can complete a reassignment and elect a leader.
     // The flag and those changes must be in one record, so the leader epoch moves once and tag 102 matches it.
     private boolean classicPrefixInRemoteStorage = false;
+    // Inkless: a lower seal that an operator commits with the flag, giving up the classic records above it.
+    private OptionalLong classicToDisklessStartOffset = OptionalLong.empty();
 
     public PartitionChangeBuilder(
         PartitionRegistration partition,
@@ -200,6 +203,15 @@ public class PartitionChangeBuilder {
 
     public PartitionChangeBuilder setClassicPrefixInRemoteStorage() {
         this.classicPrefixInRemoteStorage = true;
+        return this;
+    }
+
+    /**
+     * Sets the seal that the {@code classicPrefixInRemoteStorage} commit writes. The builder writes it only
+     * together with the flag.
+     */
+    public PartitionChangeBuilder setClassicToDisklessStartOffset(long classicToDisklessStartOffset) {
+        this.classicToDisklessStartOffset = OptionalLong.of(classicToDisklessStartOffset);
         return this;
     }
 
@@ -486,7 +498,11 @@ public class PartitionChangeBuilder {
             }
             // The diskless leader epoch is the leader epoch that this record produces.
             // The leader field is set at this point, and merge() increments the leader epoch once per record.
-            // Raw tags must be in increasing tag order for serialization: tag 102 before tag 103.
+            // Raw tags must be in increasing tag order for serialization: tag 100, then 102, then 103.
+            if (classicToDisklessStartOffset.isPresent()) {
+                record.unknownTaggedFields().add(
+                    InitDisklessLogFields.encodeClassicToDisklessStartOffset(classicToDisklessStartOffset.getAsLong()));
+            }
             record.unknownTaggedFields().add(InitDisklessLogFields.encodeDisklessLeaderEpoch(partition.leaderEpoch + 1));
             record.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicPrefixInRemoteStorage());
         }

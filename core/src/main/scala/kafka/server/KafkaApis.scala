@@ -255,6 +255,7 @@ class KafkaApis(val requestChannel: RequestChannel,
         case ApiKeys.STREAMS_GROUP_HEARTBEAT => handleStreamsGroupHeartbeat(request).exceptionally(handleError)
         case ApiKeys.ALTER_DISKLESS_SWITCH => forwardToController(request)
         case ApiKeys.REPAIR_DISKLESS_LOG => handleRepairDisklessLogRequest(request)
+        case ApiKeys.DESCRIBE_DISKLESS_SWITCH_REPLICA => handleDescribeDisklessSwitchReplicaRequest(request)
         case _ => throw new IllegalStateException(s"No handler for request api key ${request.header.apiKey}")
       }
     } catch {
@@ -4049,6 +4050,15 @@ class KafkaApis(val requestChannel: RequestChannel,
         .setThrottleTimeMs(requestThrottleMs)
         .setErrorCode(error.code)
         .setErrorMessage(if (error == Errors.NONE) null else error.message)))
+  }
+
+  def handleDescribeDisklessSwitchReplicaRequest(request: RequestChannel.Request): Unit = {
+    val describeRequest = request.body[DescribeDisklessSwitchReplicaRequest]
+    authHelper.authorizeClusterOperation(request, DESCRIBE)
+    val tp = new TopicPartition(describeRequest.data.topicName, describeRequest.data.partitionIndex)
+    val responseData = replicaManager.describeDisklessSwitchReplica(tp)
+    requestHelper.sendResponseMaybeThrottle(request, requestThrottleMs =>
+      new DescribeDisklessSwitchReplicaResponse(responseData.setThrottleTimeMs(requestThrottleMs)))
   }
 
   // Visible for Testing

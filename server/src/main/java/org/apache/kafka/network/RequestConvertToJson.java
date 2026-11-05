@@ -86,6 +86,8 @@ import org.apache.kafka.common.message.DescribeConfigsRequestDataJsonConverter;
 import org.apache.kafka.common.message.DescribeConfigsResponseDataJsonConverter;
 import org.apache.kafka.common.message.DescribeDelegationTokenRequestDataJsonConverter;
 import org.apache.kafka.common.message.DescribeDelegationTokenResponseDataJsonConverter;
+import org.apache.kafka.common.message.DescribeDisklessSwitchReplicaRequestDataJsonConverter;
+import org.apache.kafka.common.message.DescribeDisklessSwitchReplicaResponseDataJsonConverter;
 import org.apache.kafka.common.message.DescribeGroupsRequestDataJsonConverter;
 import org.apache.kafka.common.message.DescribeGroupsResponseDataJsonConverter;
 import org.apache.kafka.common.message.DescribeLogDirsRequestDataJsonConverter;
@@ -276,6 +278,8 @@ import org.apache.kafka.common.requests.DescribeConfigsRequest;
 import org.apache.kafka.common.requests.DescribeConfigsResponse;
 import org.apache.kafka.common.requests.DescribeDelegationTokenRequest;
 import org.apache.kafka.common.requests.DescribeDelegationTokenResponse;
+import org.apache.kafka.common.requests.DescribeDisklessSwitchReplicaRequest;
+import org.apache.kafka.common.requests.DescribeDisklessSwitchReplicaResponse;
 import org.apache.kafka.common.requests.DescribeGroupsRequest;
 import org.apache.kafka.common.requests.DescribeGroupsResponse;
 import org.apache.kafka.common.requests.DescribeLogDirsRequest;
@@ -521,6 +525,8 @@ public class RequestConvertToJson {
                 RepairDisklessLogRequestDataJsonConverter.write(((RepairDisklessLogRequest) request).data(), request.version());
             case SET_CLASSIC_PREFIX_IN_REMOTE_STORAGE ->
                 SetClassicPrefixInRemoteStorageRequestDataJsonConverter.write(((SetClassicPrefixInRemoteStorageRequest) request).data(), request.version());
+            case DESCRIBE_DISKLESS_SWITCH_REPLICA ->
+                DescribeDisklessSwitchReplicaRequestDataJsonConverter.write(((DescribeDisklessSwitchReplicaRequest) request).data(), request.version());
             case INITIALIZE_SHARE_GROUP_STATE ->
                 InitializeShareGroupStateRequestDataJsonConverter.write(((InitializeShareGroupStateRequest) request).data(), request.version());
             case INIT_PRODUCER_ID ->
@@ -710,6 +716,8 @@ public class RequestConvertToJson {
                 RepairDisklessLogResponseDataJsonConverter.write(((RepairDisklessLogResponse) response).data(), version);
             case SET_CLASSIC_PREFIX_IN_REMOTE_STORAGE ->
                 SetClassicPrefixInRemoteStorageResponseDataJsonConverter.write(((SetClassicPrefixInRemoteStorageResponse) response).data(), version);
+            case DESCRIBE_DISKLESS_SWITCH_REPLICA ->
+                DescribeDisklessSwitchReplicaResponseDataJsonConverter.write(((DescribeDisklessSwitchReplicaResponse) response).data(), version);
             case INITIALIZE_SHARE_GROUP_STATE ->
                 InitializeShareGroupStateResponseDataJsonConverter.write(((InitializeShareGroupStateResponse) response).data(), version);
             case INIT_PRODUCER_ID ->

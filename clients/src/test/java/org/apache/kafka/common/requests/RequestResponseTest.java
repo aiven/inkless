@@ -128,6 +128,8 @@ import org.apache.kafka.common.message.DescribeConfigsRequestData;
 import org.apache.kafka.common.message.DescribeConfigsResponseData;
 import org.apache.kafka.common.message.DescribeConfigsResponseData.DescribeConfigsResourceResult;
 import org.apache.kafka.common.message.DescribeConfigsResponseData.DescribeConfigsResult;
+import org.apache.kafka.common.message.DescribeDisklessSwitchReplicaRequestData;
+import org.apache.kafka.common.message.DescribeDisklessSwitchReplicaResponseData;
 import org.apache.kafka.common.message.DescribeGroupsRequestData;
 import org.apache.kafka.common.message.DescribeGroupsResponseData;
 import org.apache.kafka.common.message.DescribeGroupsResponseData.DescribedGroup;
@@ -1087,6 +1089,7 @@ public class RequestResponseTest {
             case ALTER_DISKLESS_SWITCH: return createAlterDisklessSwitchRequest(version);
             case REPAIR_DISKLESS_LOG: return createRepairDisklessLogRequest(version);
             case SET_CLASSIC_PREFIX_IN_REMOTE_STORAGE: return createSetClassicPrefixInRemoteStorageRequest(version);
+            case DESCRIBE_DISKLESS_SWITCH_REPLICA: return createDescribeDisklessSwitchReplicaRequest(version);
             default: throw new IllegalArgumentException("Unknown API key " + apikey);
         }
     }
@@ -1186,6 +1189,7 @@ public class RequestResponseTest {
             case ALTER_DISKLESS_SWITCH: return createAlterDisklessSwitchResponse();
             case REPAIR_DISKLESS_LOG: return createRepairDisklessLogResponse();
             case SET_CLASSIC_PREFIX_IN_REMOTE_STORAGE: return createSetClassicPrefixInRemoteStorageResponse();
+            case DESCRIBE_DISKLESS_SWITCH_REPLICA: return createDescribeDisklessSwitchReplicaResponse();
             default: throw new IllegalArgumentException("Unknown API key " + apikey);
         }
     }
@@ -1345,6 +1349,26 @@ public class RequestResponseTest {
         return new RepairDisklessLogResponse(new RepairDisklessLogResponseData()
                 .setThrottleTimeMs(123)
                 .setErrorCode(Errors.NONE.code()));
+    }
+
+    private DescribeDisklessSwitchReplicaRequest createDescribeDisklessSwitchReplicaRequest(short version) {
+        DescribeDisklessSwitchReplicaRequestData data = new DescribeDisklessSwitchReplicaRequestData()
+                .setTopicName("foo")
+                .setPartitionIndex(0);
+        return new DescribeDisklessSwitchReplicaRequest.Builder(data).build(version);
+    }
+
+    private DescribeDisklessSwitchReplicaResponse createDescribeDisklessSwitchReplicaResponse() {
+        return new DescribeDisklessSwitchReplicaResponse(new DescribeDisklessSwitchReplicaResponseData()
+                .setThrottleTimeMs(123)
+                .setErrorCode(Errors.NONE.code())
+                .setOffline(true)
+                .setLogStartOffset(10L)
+                .setLogEndOffset(60L)
+                .setHighWatermark(60L)
+                .setCrossTierLogStartOffset(10L)
+                .setRemoteStartOffset(10L)
+                .setRemoteEndOffset(60L));
     }
 
     private SetClassicPrefixInRemoteStorageRequest createSetClassicPrefixInRemoteStorageRequest(short version) {
