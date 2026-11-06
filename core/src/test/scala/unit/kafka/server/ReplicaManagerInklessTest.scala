@@ -20,9 +20,10 @@ package kafka.server
 import io.aiven.inkless.cache.CrossTierLogStartCache
 import io.aiven.inkless.common.SharedState
 import io.aiven.inkless.config.InklessConfig
-import io.aiven.inkless.consolidation.{ConsolidatedDisklessLogPruner, ConsolidationFetcherManager}
+import io.aiven.inkless.consolidation.{ConsolidatedDisklessLogPruner, ConsolidationFetcherManager, DisklessLeaderEndPoint}
 import io.aiven.inkless.consume.{ConcatenatedRecords, FetchHandler, FetchOffsetHandler}
-import io.aiven.inkless.control_plane.{AdvanceCrossTierLogStartOffsetResponse, BatchInfo, BatchMetadata, ControlPlane, ControlPlaneException, FindBatchResponse, RepairDisklessLogRequest, RepairDisklessLogResponse, DeleteRecordsResponse => CpDeleteRecordsResponse, ListOffsetsRequest => CpListOffsetsRequest, ListOffsetsResponse => CpListOffsetsResponse}
+import io.aiven.inkless.control_plane.{AdvanceCrossTierLogStartOffsetResponse, BatchInfo, BatchMetadata, ControlPlane, ControlPlaneException, FindBatchResponse, PruneDisklessLogsRequest, RepairDisklessLogRequest, RepairDisklessLogResponse, DeleteRecordsResponse => CpDeleteRecordsResponse, ListOffsetsRequest => CpListOffsetsRequest, ListOffsetsResponse => CpListOffsetsResponse}
+import io.aiven.inkless.delete.ConsolidatedDisklessLogPrunerMetrics
 import io.aiven.inkless.produce.AppendHandler
 import kafka.cluster.Partition
 import kafka.server.QuotaFactory.QuotaManagers
@@ -51,13 +52,14 @@ import org.apache.kafka.common.security.auth.KafkaPrincipal
 import org.apache.kafka.common.requests._
 import org.apache.kafka.common.requests.FetchRequest.PartitionData
 import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse
-import org.apache.kafka.common.utils.Time
+import org.apache.kafka.common.utils.{Time, Utils}
 import org.apache.kafka.image._
 import org.apache.kafka.metadata.{InitDisklessLogFields, KRaftMetadataCache, LeaderAndIsr, LeaderRecoveryState, PartitionRegistration}
 import org.apache.kafka.server.HostedPartition
-import org.apache.kafka.server.common.{KRaftVersion, MetadataVersion}
+import org.apache.kafka.server.LeaderEndPoint
+import org.apache.kafka.server.common.{KRaftVersion, MetadataVersion, OffsetAndEpoch, StopPartition}
 import org.apache.kafka.server.config.ServerConfigs
-import org.apache.kafka.server.log.remote.storage.{LeaderEpochNotAvailableException, RemoteLogManager, RemoteLogManagerConfig}
+import org.apache.kafka.server.log.remote.storage.{LeaderEpochNotAvailableException, RemoteLogManager, RemoteLogManagerConfig, RemoteLogSegmentId, RemoteLogSegmentMetadata, RemoteLogSegmentState, RemoteStorageManager}
 import org.apache.kafka.server.network.BrokerEndPoint
 import org.apache.kafka.server.PartitionFetchState
 import org.apache.kafka.server.purgatory.{DelayedDeleteRecords, DelayedOperationPurgatory, DelayedProduce, DelayedRemoteFetch, DelayedRemoteListOffsets, TopicPartitionOperationKey}
@@ -67,7 +69,8 @@ import org.apache.kafka.server.util.timer.MockTimer
 import org.apache.kafka.server.metrics.KafkaYammerMetrics
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats
 import org.apache.kafka.storage.internals.checkpoint.LazyOffsetCheckpoints
-import org.apache.kafka.storage.internals.log.{AppendOrigin, AsyncOffsetReadFutureHolder, EpochEntry, FetchDataInfo, LogConfig, LogDirFailureChannel, LogOffsetMetadata, LogOffsetSnapshot, LogReadInfo, LogReadResult, OffsetResultHolder, RemoteLogReadResult, RemoteStorageFetchInfo, UnifiedLog}
+import org.apache.kafka.storage.internals.epoch.LeaderEpochFileCache
+import org.apache.kafka.storage.internals.log.{AppendOrigin, AsyncOffsetReadFutureHolder, EpochEntry, FetchDataInfo, LogConfig, LogDirFailureChannel, LogOffsetMetadata, LogOffsetSnapshot, LogReadInfo, LogReadResult, OffsetResultHolder, ProducerStateManager, RemoteLogReadResult, RemoteStorageFetchInfo, UnifiedLog}
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.{AfterEach, BeforeEach, Test}
 import org.junit.jupiter.params.ParameterizedTest
@@ -76,8 +79,9 @@ import org.mockito.ArgumentMatchers._
 import org.mockito.Mockito._
 import org.mockito.{Answers, ArgumentCaptor, ArgumentMatchers, MockedConstruction, Mockito}
 
-import java.io.{File, IOException}
+import java.io.{ByteArrayInputStream, File, IOException}
 import java.net.InetAddress
+import java.nio.charset.StandardCharsets
 import java.util
 import java.util.{Collections, Optional, OptionalInt, OptionalLong, Properties}
 import java.util.concurrent.{CompletableFuture, CountDownLatch, TimeUnit}
@@ -7876,6 +7880,314 @@ class ReplicaManagerInklessTest {
     }
   }
 
+  // This replica led epoch 1, wrote [7, 20), and uploaded the records up to 19 before an unclean election made
+  // the leader of epoch 2 seal the partition at 10. If the broker was down when the controller committed the seal,
+  // the replica still holds [10, 20) when it leads in phase 2. Otherwise, it truncated to the seal and kept the
+  // remote progress. The replica is recreated if the classic prefix ends in epoch 2, if it holds classic records
+  // past the seal, or if its remote progress isn't below its log end offset. The new log has no remote progress,
+  // so the WAL pruner doesn't delete the diskless records from 10 on before consolidation uploads them. A replica
+  // that holds the committed history up to the seal keeps its log, and the pruner only completes the cross-tier
+  // start handoff at the seal.
+  @ParameterizedTest(name = "testSwitchedLeaderInPhaseTwoDropsRemoteProgressPastTheSeal with lastClassicLeaderEpoch: {0}, logEndOffset: {1}, highestOffsetInRemoteStorage: {2}")
+  @CsvSource(Array("2, 20, 19", "1, 20, 19", "1, 10, 19", "1, 10, 9"))
+  def testSwitchedLeaderInPhaseTwoDropsRemoteProgressPastTheSeal(lastClassicLeaderEpoch: Int,
+                                                                 logEndOffset: Long,
+                                                                 highestOffsetInRemoteStorage: Long): Unit = {
+    val topicName = "switched-consolidating-topic"
+    val topicId = Uuid.randomUuid()
+    val tp = new TopicPartition(topicName, 0)
+    val brokerId = 1
+    val followerId = 2
+    val leaderEpoch = 5
+    val sealOffset = 10L
+    val classicTailStart = 7L
+    val recreated = lastClassicLeaderEpoch != 1 || logEndOffset > sealOffset || highestOffsetInRemoteStorage >= logEndOffset
+
+    val mockFetcherManager = mock(classOf[ReplicaFetcherManager])
+    when(mockFetcherManager.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    val ctorInit: MockedConstruction.MockInitializer[ConsolidationFetcherManager] = {
+      case (mockCfm, _) =>
+        when(mockCfm.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    }
+    val consolidationCtor = mockConstruction(classOf[ConsolidationFetcherManager], ctorInit)
+    try {
+      val replicaManager = createReplicaManager(
+        Seq(topicName),
+        disklessRemoteStorageConsolidationEnabled = true,
+        consolidatingDisklessTopics = Set(topicName),
+        mockReplicaFetcherManager = Some(mockFetcherManager),
+        defaultLogConfig = Some(LogTestUtils.createLogConfig(remoteLogStorageEnable = true)),
+        initDisklessLogManager = Some(mock(classOf[InitDisklessLogManager])),
+      )
+      try {
+        val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+        val classicRecords = (0 until classicTailStart.toInt).map(i => new SimpleRecord(s"classic-$i".getBytes))
+        log.appendAsFollower(TestUtils.records(classicRecords, partitionLeaderEpoch = 0), 0)
+        val classicTail = (classicTailStart.toInt until logEndOffset.toInt).map(i => new SimpleRecord(s"tail-$i".getBytes))
+        log.appendAsFollower(TestUtils.records(classicTail, baseOffset = classicTailStart, partitionLeaderEpoch = 1), 1)
+        log.updateHighestOffsetInRemoteStorage(highestOffsetInRemoteStorage)
+        replicaManager.highWatermarkCheckpoints(log.parentDir).write(util.Map.of(tp, java.lang.Long.valueOf(sealOffset)))
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(sealOffset)
+        when(replicaManager.inklessMetadataView().isClassicPrefixInRemoteStorage(tp)).thenReturn(true)
+        when(replicaManager.inklessMetadataView().getLastClassicLeaderEpoch(tp)).thenReturn(lastClassicLeaderEpoch)
+        when(replicaManager.inklessMetadataView().getConsolidatingDisklessTopicPartitions)
+          .thenReturn(util.Set.of(new TopicIdPartition(topicId, tp)))
+
+        val delta = new TopicsDelta(TopicsImage.EMPTY)
+        delta.replay(new TopicRecord().setName(topicName).setTopicId(topicId))
+        val partitionRecord = new PartitionRecord()
+          .setPartitionId(tp.partition)
+          .setTopicId(topicId)
+          .setReplicas(util.Arrays.asList(brokerId, followerId))
+          .setIsr(util.Arrays.asList(brokerId, followerId))
+          .setLeader(brokerId)
+          .setLeaderEpoch(leaderEpoch)
+          .setPartitionEpoch(0)
+        partitionRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicToDisklessStartOffset(sealOffset))
+        partitionRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicPrefixInRemoteStorage())
+        partitionRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeLastClassicLeaderEpoch(lastClassicLeaderEpoch))
+        delta.replay(partitionRecord)
+        replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))
+
+        val currentLog = replicaManager.logManager.getLog(tp).get
+        if (recreated) {
+          assertNotSame(log, currentLog)
+          assertTrue(log.dir.getName.endsWith(UnifiedLog.DELETE_DIR_SUFFIX))
+        } else {
+          assertSame(log, currentLog)
+        }
+        assertEquals(if (recreated) 0L else sealOffset, currentLog.logEndOffset)
+        assertEquals(if (recreated) -1L else sealOffset - 1, currentLog.highestOffsetInRemoteStorage)
+
+        val controlPlane = mock(classOf[ControlPlane])
+        new ConsolidatedDisklessLogPruner(replicaManager, replicaManager.inklessMetadataView(), controlPlane, 100,
+          mock(classOf[ConsolidatedDisklessLogPrunerMetrics])).run()
+        if (recreated) {
+          verify(controlPlane, never()).pruneDisklessLogs(any(), anyInt())
+        } else {
+          verify(controlPlane).pruneDisklessLogs(
+            util.List.of(new PruneDisklessLogsRequest(new TopicIdPartition(topicId, tp), sealOffset - 1)), 100)
+        }
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
+    } finally {
+      consolidationCtor.close()
+    }
+  }
+
+  // The classic prefix ends in epoch 2, and epochs 3 and 4 ended without committed records. Remote storage also
+  // holds a segment at seal - 1 from epoch 3, uploaded by a leader that an unclean election replaced. The first
+  // tiered fetch of a rebuild looks up the last classic record by the recorded epoch, not by that segment.
+  @Test
+  def testTierStateMachineLooksUpLastClassicSegmentByRecordedEpoch(): Unit = {
+    val tp = new TopicPartition("switched-consolidating-topic", 0)
+    val sealOffset = 100L
+    val disklessLeaderEpoch = 5
+    val lastClassicLeaderEpoch = 2
+    val discardedEpoch = 3
+
+    val tip = new TopicIdPartition(Uuid.randomUuid(), tp)
+    def segment(startOffset: Long, endOffset: Long, epochs: util.Map[Integer, java.lang.Long]) = new RemoteLogSegmentMetadata(
+      new RemoteLogSegmentId(tip, Uuid.randomUuid()), startOffset, endOffset, -1L, 0, 0L, 1024, Optional.empty(),
+      RemoteLogSegmentState.COPY_SEGMENT_FINISHED, epochs)
+    val lastClassicSegment = segment(0L, sealOffset - 1, util.Map.of(0, 0L, lastClassicLeaderEpoch, 60L))
+    val discardedSegment = segment(50L, sealOffset + 19, util.Map.of(discardedEpoch, 50L))
+    val rlm = mock(classOf[RemoteLogManager])
+    when(rlm.isPartitionReady(tp)).thenReturn(true)
+    when(rlm.fetchRemoteLogSegmentMetadata(tp, lastClassicLeaderEpoch, sealOffset - 1))
+      .thenReturn(Optional.of(lastClassicSegment))
+    when(rlm.fetchRemoteLogSegmentMetadata(tp, discardedEpoch, sealOffset - 1))
+      .thenReturn(Optional.of(discardedSegment))
+    val log = mock(classOf[UnifiedLog])
+    when(log.remoteLogEnabled()).thenReturn(true)
+    val replicaManager = mock(classOf[ReplicaManager])
+    when(replicaManager.brokerTopicStats).thenReturn(new BrokerTopicStats(true))
+    when(replicaManager.topicIdPartition(tp)).thenReturn(tip)
+    when(replicaManager.localLogOrException(tp)).thenReturn(log)
+    when(replicaManager.remoteLogManager).thenReturn(Some(rlm))
+    when(replicaManager.classicToDisklessStartOffset(tp)).thenReturn(sealOffset)
+    when(replicaManager.disklessLeaderEpoch(tp)).thenReturn(disklessLeaderEpoch)
+    when(replicaManager.lastClassicLeaderEpoch(tp)).thenReturn(lastClassicLeaderEpoch)
+    // The test stops at the first step after the remote segment lookup.
+    val lookupSucceeded = new IllegalStateException("remote segment found")
+    when(replicaManager.getPartitionOrException(tp)).thenThrow(lookupSucceeded)
+
+    val fetchOffsetHandler = mock(classOf[FetchOffsetHandler])
+    val job = mock(classOf[FetchOffsetHandler.Job])
+    when(fetchOffsetHandler.createJob()).thenReturn(job)
+    when(job.mustHandle(tp.topic)).thenReturn(true)
+    val endPoint = new DisklessLeaderEndPoint(
+      new BrokerEndPoint(-1, "diskless", -1),
+      mock(classOf[FetchHandler]),
+      fetchOffsetHandler,
+      replicaManager,
+      KafkaConfig.fromProps(TestUtils.createBrokerConfig(1)),
+      QuotaFactory.UNBOUNDED_QUOTA,
+      () => MetadataVersion.LATEST_PRODUCTION,
+      () => 1L
+    )
+
+    val tierStateMachine = new TierStateMachine(endPoint, replicaManager, false)
+    val thrown = assertThrows(classOf[IllegalStateException], () =>
+      tierStateMachine.start(tp, Optional.empty(), disklessLeaderEpoch, new OffsetAndEpoch(sealOffset, disklessLeaderEpoch), 0L))
+    assertSame(lookupSucceeded, thrown)
+    verify(rlm).fetchRemoteLogSegmentMetadata(tp, lastClassicLeaderEpoch, sealOffset - 1)
+    verify(rlm, never()).fetchRemoteLogSegmentMetadata(tp, discardedEpoch, sealOffset - 1)
+  }
+
+  // The segment that covers seal - 1 in the recorded epoch can also hold records past the seal that an
+  // unclean election discarded, in the same epoch or in a later one. Restoring the whole segment would skip
+  // the diskless records up to its end, so the rebuild stops at the seal.
+  @ParameterizedTest
+  @ValueSource(booleans = Array(true, false))
+  def testTierStateMachineStopsAtSealForSegmentCrossingIt(mixedEpochs: Boolean): Unit = {
+    val tp = new TopicPartition("switched-consolidating-topic", 0)
+    val sealOffset = 100L
+    val disklessLeaderEpoch = 5
+    val lastClassicLeaderEpoch = 2
+    val discardedEpoch = 3
+
+    val lastClassicEpochEntry = new EpochEntry(lastClassicLeaderEpoch, 50L)
+    val epochEntries =
+      if (mixedEpochs) Seq(lastClassicEpochEntry, new EpochEntry(discardedEpoch, sealOffset))
+      else Seq(lastClassicEpochEntry)
+    val segmentEpochs = new util.HashMap[Integer, java.lang.Long]()
+    epochEntries.foreach(entry => segmentEpochs.put(entry.epoch, entry.startOffset))
+    val tip = new TopicIdPartition(Uuid.randomUuid(), tp)
+    val crossingSegment = new RemoteLogSegmentMetadata(
+      new RemoteLogSegmentId(tip, Uuid.randomUuid()), 50L, sealOffset + 19, -1L, 0, 0L, 1024, Optional.empty(),
+      RemoteLogSegmentState.COPY_SEGMENT_FINISHED, segmentEpochs)
+    val epochCheckpoint = (Seq("0", epochEntries.size.toString) ++ epochEntries.map(entry => s"${entry.epoch} ${entry.startOffset}"))
+      .mkString("", "\n", "\n")
+    val rsm = mock(classOf[RemoteStorageManager])
+    when(rsm.fetchIndex(crossingSegment, RemoteStorageManager.IndexType.LEADER_EPOCH))
+      .thenReturn(new ByteArrayInputStream(epochCheckpoint.getBytes(StandardCharsets.UTF_8)))
+    when(rsm.fetchIndex(crossingSegment, RemoteStorageManager.IndexType.PRODUCER_SNAPSHOT))
+      .thenReturn(new ByteArrayInputStream(Array.emptyByteArray))
+    val rlm = mock(classOf[RemoteLogManager])
+    when(rlm.isPartitionReady(tp)).thenReturn(true)
+    when(rlm.storageManager()).thenReturn(rsm)
+    when(rlm.fetchRemoteLogSegmentMetadata(tp, lastClassicLeaderEpoch, sealOffset - 1))
+      .thenReturn(Optional.of(crossingSegment))
+    val epochCache = mock(classOf[LeaderEpochFileCache])
+    val log = mock(classOf[UnifiedLog])
+    when(log.remoteLogEnabled()).thenReturn(true)
+    when(log.leaderEpochCache).thenReturn(epochCache)
+    when(log.producerStateManager).thenReturn(mock(classOf[ProducerStateManager]))
+    when(log.dir).thenReturn(TestUtils.tempDir())
+    val partition = mock(classOf[Partition])
+    val replicaManager = mock(classOf[ReplicaManager])
+    when(replicaManager.brokerTopicStats).thenReturn(new BrokerTopicStats(true))
+    when(replicaManager.topicIdPartition(tp)).thenReturn(tip)
+    when(replicaManager.localLogOrException(tp)).thenReturn(log)
+    when(replicaManager.remoteLogManager).thenReturn(Some(rlm))
+    when(replicaManager.classicToDisklessStartOffset(tp)).thenReturn(sealOffset)
+    when(replicaManager.disklessLeaderEpoch(tp)).thenReturn(disklessLeaderEpoch)
+    when(replicaManager.lastClassicLeaderEpoch(tp)).thenReturn(lastClassicLeaderEpoch)
+    when(replicaManager.getPartitionOrException(tp)).thenReturn(partition)
+
+    val fetchOffsetHandler = mock(classOf[FetchOffsetHandler])
+    val job = mock(classOf[FetchOffsetHandler.Job])
+    when(fetchOffsetHandler.createJob()).thenReturn(job)
+    when(job.mustHandle(tp.topic)).thenReturn(true)
+    when(job.add(any(), any())).thenReturn(CompletableFuture.completedFuture(new OffsetResultHolder.FileRecordsOrError(
+      Optional.empty(),
+      Optional.of(new FileRecords.TimestampAndOffset(RecordBatch.NO_TIMESTAMP, 200L, Optional.of[Integer](disklessLeaderEpoch))))))
+    val endPoint = new DisklessLeaderEndPoint(
+      new BrokerEndPoint(-1, "diskless", -1),
+      mock(classOf[FetchHandler]),
+      fetchOffsetHandler,
+      replicaManager,
+      KafkaConfig.fromProps(TestUtils.createBrokerConfig(1)),
+      QuotaFactory.UNBOUNDED_QUOTA,
+      () => MetadataVersion.LATEST_PRODUCTION,
+      () => 1L
+    )
+
+    val fetchState = new TierStateMachine(endPoint, replicaManager, false)
+      .start(tp, Optional.empty(), disklessLeaderEpoch, new OffsetAndEpoch(sealOffset, disklessLeaderEpoch), 0L)
+
+    assertEquals(sealOffset, fetchState.fetchOffset)
+    verify(partition).truncateFullyAndStartAt(sealOffset, false, Optional.of[java.lang.Long](0L))
+    verify(log).maybeIncrementLocalLogStartOffset(ArgumentMatchers.eq(sealOffset), any())
+    verify(epochCache).assign(util.List.of(lastClassicEpochEntry))
+    verify(rsm, never()).fetchIndex(any(), ArgumentMatchers.eq(RemoteStorageManager.IndexType.PRODUCER_SNAPSHOT))
+  }
+
+  // In phase 2, a classic leader or the current log of a log directory move can still hold local classic segments
+  // below the seal. The segment that holds the record before that local log start can come from a leader epoch that
+  // an unclean election discarded: epoch 1 wrote [80, 120) and uploaded [0, 119], and epoch 2 replaced it from 80. The
+  // rebuild looks up seal - 1 in the recorded epoch instead, and that segment can also cross the seal.
+  @ParameterizedTest
+  @ValueSource(booleans = Array(true, false))
+  def testTierStateMachineLooksUpRecordedEpochForSourceWithLocalClassicPrefix(crossing: Boolean): Unit = {
+    val tp = new TopicPartition("switched-consolidating-topic", 0)
+    val sealOffset = 100L
+    val sourceLocalLogStartOffset = 50L
+    val currentLeaderEpoch = 4
+    val lastClassicLeaderEpoch = 2
+    val discardedEpochs = Seq(new EpochEntry(0, 0L), new EpochEntry(1, 80L))
+    val committedEpochs = Seq(new EpochEntry(0, 0L), new EpochEntry(lastClassicLeaderEpoch, 80L))
+    val lastClassicSegmentEpochs =
+      if (crossing) committedEpochs :+ new EpochEntry(currentLeaderEpoch - 1, sealOffset)
+      else committedEpochs
+    val tip = new TopicIdPartition(Uuid.randomUuid(), tp)
+    def segment(startOffset: Long, endOffset: Long, epochs: Seq[EpochEntry]) = {
+      val segmentEpochs = new util.HashMap[Integer, java.lang.Long]()
+      epochs.foreach(entry => segmentEpochs.put(entry.epoch, math.max(entry.startOffset, startOffset)))
+      new RemoteLogSegmentMetadata(new RemoteLogSegmentId(tip, Uuid.randomUuid()), startOffset, endOffset, -1L, 0, 0L,
+        1024, Optional.empty(), RemoteLogSegmentState.COPY_SEGMENT_FINISHED, segmentEpochs)
+    }
+    def epochCheckpoint(epochs: Seq[EpochEntry]) = new ByteArrayInputStream(
+      (Seq("0", epochs.size.toString) ++ epochs.map(entry => s"${entry.epoch} ${entry.startOffset}"))
+        .mkString("", "\n", "\n").getBytes(StandardCharsets.UTF_8))
+    val discardedSegment = segment(0L, sealOffset + 19, discardedEpochs)
+    val lastClassicSegment = segment(sourceLocalLogStartOffset, if (crossing) sealOffset + 19 else sealOffset - 1,
+      lastClassicSegmentEpochs)
+    val rsm = mock(classOf[RemoteStorageManager])
+    when(rsm.fetchIndex(discardedSegment, RemoteStorageManager.IndexType.LEADER_EPOCH))
+      .thenReturn(epochCheckpoint(discardedEpochs))
+    when(rsm.fetchIndex(lastClassicSegment, RemoteStorageManager.IndexType.LEADER_EPOCH))
+      .thenReturn(epochCheckpoint(lastClassicSegmentEpochs))
+    when(rsm.fetchIndex(any(), ArgumentMatchers.eq(RemoteStorageManager.IndexType.PRODUCER_SNAPSHOT)))
+      .thenAnswer(_ => new ByteArrayInputStream(Array.emptyByteArray))
+    val rlm = mock(classOf[RemoteLogManager])
+    when(rlm.isPartitionReady(tp)).thenReturn(true)
+    when(rlm.storageManager()).thenReturn(rsm)
+    when(rlm.fetchRemoteLogSegmentMetadata(tp, 0, sourceLocalLogStartOffset - 1))
+      .thenReturn(Optional.of(discardedSegment))
+    when(rlm.fetchRemoteLogSegmentMetadata(tp, lastClassicLeaderEpoch, sealOffset - 1))
+      .thenReturn(Optional.of(lastClassicSegment))
+    val epochCache = mock(classOf[LeaderEpochFileCache])
+    val log = mock(classOf[UnifiedLog])
+    when(log.remoteLogEnabled()).thenReturn(true)
+    when(log.leaderEpochCache).thenReturn(epochCache)
+    when(log.producerStateManager).thenReturn(mock(classOf[ProducerStateManager]))
+    when(log.dir).thenReturn(TestUtils.tempDir())
+    val partition = mock(classOf[Partition])
+    val replicaManager = mock(classOf[ReplicaManager])
+    when(replicaManager.brokerTopicStats).thenReturn(new BrokerTopicStats(true))
+    when(replicaManager.localLogOrException(tp)).thenReturn(log)
+    when(replicaManager.remoteLogManager).thenReturn(Some(rlm))
+    when(replicaManager.classicToDisklessStartOffset(tp)).thenReturn(sealOffset)
+    when(replicaManager.lastClassicLeaderEpoch(tp)).thenReturn(lastClassicLeaderEpoch)
+    when(replicaManager.getPartitionOrException(tp)).thenReturn(partition)
+    val source = mock(classOf[LeaderEndPoint])
+    when(source.fetchLatestOffset(tp, currentLeaderEpoch)).thenReturn(new OffsetAndEpoch(150L, currentLeaderEpoch))
+
+    val fetchState = new TierStateMachine(source, replicaManager, false).start(tp, Optional.empty(),
+      currentLeaderEpoch, new OffsetAndEpoch(sourceLocalLogStartOffset, 0), 0L)
+
+    assertEquals(sealOffset, fetchState.fetchOffset)
+    verify(rlm, never()).fetchRemoteLogSegmentMetadata(tp, 0, sourceLocalLogStartOffset - 1)
+    verify(partition).truncateFullyAndStartAt(sealOffset, false, Optional.of[java.lang.Long](0L))
+    verify(log).maybeIncrementLocalLogStartOffset(ArgumentMatchers.eq(sealOffset), any())
+    verify(epochCache).assign(util.List.of(committedEpochs.toSeq: _*))
+    verify(rsm, if (crossing) never() else times(1))
+      .fetchIndex(lastClassicSegment, RemoteStorageManager.IndexType.PRODUCER_SNAPSHOT)
+  }
+
   // The classic fetcher thread deletes the prefix when it evicts a partition. If it took
   // replicaStateChangeLock through markPartitionOffline, it would deadlock with applyDelta, which
   // holds that lock while it shuts down idle fetcher threads.
@@ -8044,6 +8356,498 @@ class ReplicaManagerInklessTest {
           initOffset = sealOffset
         )))
         verify(mockCfm, never()).addFetcherForPartitions(any())
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
+    } finally {
+      consolidationCtor.close()
+    }
+  }
+
+  // This replica led epoch 1 and wrote [7, 10), and a log directory move copied its log into a future log. If the
+  // classic prefix ends in epoch 0, an unclean election discarded that tail. The replica keeps both logs only if the
+  // current log ends below the seal in the recorded epoch, and the future log ends in the epoch that the current log
+  // has at the same offset. A partial copy that ends in epoch 0 matches. Otherwise, the replica deletes both logs,
+  // cancels its remote log tasks without stopping the remote log metadata subscription, and leads from an empty log.
+  @ParameterizedTest(name = "testSwitchedLeaderInPhaseTwoRecreatesReplicaWithoutCommittedHistory with lastClassicLeaderEpoch: {0}, futureLogEndOffset: {1}, futureTailEpoch: {2}")
+  @CsvSource(Array("0, 10, 1", "1, 10, 1", "1, 7, 1", "1, 10, 0"))
+  def testSwitchedLeaderInPhaseTwoRecreatesReplicaWithoutCommittedHistory(lastClassicLeaderEpoch: Int,
+                                                                          futureLogEndOffset: Long,
+                                                                          futureTailEpoch: Int): Unit = {
+    val topicName = "switched-consolidating-topic"
+    val topicId = Uuid.randomUuid()
+    val tp = new TopicPartition(topicName, 0)
+    val brokerId = 1
+    val followerId = 2
+    val leaderEpoch = 5
+    val sealOffset = 10L
+    val divergentTailStart = 7L
+    val recreated = lastClassicLeaderEpoch == 0 || futureTailEpoch == 0
+
+    val mockFetcherManager = mock(classOf[ReplicaFetcherManager])
+    when(mockFetcherManager.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    val mockAlterLogDirsManager = mock(classOf[ReplicaAlterLogDirsManager])
+    when(mockAlterLogDirsManager.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    val mockRemoteLogManager = mock(classOf[RemoteLogManager])
+    val ctorInit: MockedConstruction.MockInitializer[ConsolidationFetcherManager] = {
+      case (mockCfm, _) =>
+        when(mockCfm.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    }
+    val consolidationCtor = mockConstruction(classOf[ConsolidationFetcherManager], ctorInit)
+    try {
+      val replicaManager = createReplicaManager(
+        Seq(topicName),
+        disklessRemoteStorageConsolidationEnabled = true,
+        consolidatingDisklessTopics = Set(topicName),
+        mockReplicaFetcherManager = Some(mockFetcherManager),
+        mockReplicaAlterLogDirsManager = Some(mockAlterLogDirsManager),
+        defaultLogConfig = Some(LogTestUtils.createLogConfig(remoteLogStorageEnable = true)),
+        initDisklessLogManager = Some(mock(classOf[InitDisklessLogManager])),
+        remoteLogManager = Some(mockRemoteLogManager),
+      )
+      try {
+        val mockCfm = consolidationCtor.constructed().get(0)
+        val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+        val futureLogDir = replicaManager.logManager.liveLogDirs.map(_.getAbsolutePath).find(_ != log.parentDir).get
+        replicaManager.logManager.maybeUpdatePreferredLogDir(tp, futureLogDir)
+        val futureLog = replicaManager.logManager.getOrCreateLog(tp, isNew = true, isFuture = true, topicId = Optional.of(topicId))
+        Seq((log, sealOffset, 1), (futureLog, futureLogEndOffset, futureTailEpoch)).foreach {
+          case (replicaLog, logEndOffset, tailEpoch) =>
+            val classicRecords = (0 until divergentTailStart.toInt).map(i => new SimpleRecord(s"classic-$i".getBytes))
+            replicaLog.appendAsFollower(TestUtils.records(classicRecords, partitionLeaderEpoch = 0), 0)
+            if (logEndOffset > divergentTailStart) {
+              val tail = (divergentTailStart.toInt until logEndOffset.toInt).map(i => new SimpleRecord(s"tail-$i".getBytes))
+              replicaLog.appendAsFollower(
+                TestUtils.records(tail, baseOffset = divergentTailStart, partitionLeaderEpoch = tailEpoch), tailEpoch)
+            }
+            replicaManager.highWatermarkCheckpoints(replicaLog.parentDir).write(util.Map.of(tp, java.lang.Long.valueOf(logEndOffset)))
+        }
+        log.updateHighestOffsetInRemoteStorage(sealOffset - 1)
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(sealOffset)
+        when(replicaManager.inklessMetadataView().isClassicPrefixInRemoteStorage(tp)).thenReturn(true)
+        when(replicaManager.inklessMetadataView().getLastClassicLeaderEpoch(tp)).thenReturn(lastClassicLeaderEpoch)
+        val delta = new TopicsDelta(TopicsImage.EMPTY)
+        delta.replay(new TopicRecord().setName(topicName).setTopicId(topicId))
+        val partitionRecord = new PartitionRecord()
+          .setPartitionId(tp.partition)
+          .setTopicId(topicId)
+          .setReplicas(util.Arrays.asList(brokerId, followerId))
+          .setIsr(util.Arrays.asList(brokerId, followerId))
+          .setLeader(brokerId)
+          .setLeaderEpoch(leaderEpoch)
+          .setPartitionEpoch(0)
+        partitionRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicToDisklessStartOffset(sealOffset))
+        partitionRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicPrefixInRemoteStorage())
+        partitionRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeLastClassicLeaderEpoch(lastClassicLeaderEpoch))
+        delta.replay(partitionRecord)
+        replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))
+
+        val partition = replicaManager.onlinePartition(tp).get
+        assertTrue(partition.isLeader)
+        val currentLog = replicaManager.logManager.getLog(tp).get
+        assertEquals(Some(currentLog), partition.log)
+        verify(mockAlterLogDirsManager, atLeastOnce()).removeFetcherForPartitions(Set(tp))
+        if (recreated) {
+          assertNotSame(log, currentLog)
+          assertTrue(log.dir.getName.endsWith(UnifiedLog.DELETE_DIR_SUFFIX))
+          assertTrue(futureLog.dir.getName.endsWith(UnifiedLog.DELETE_DIR_SUFFIX))
+          assertEquals(None, replicaManager.logManager.getLog(tp, isFuture = true))
+          assertEquals(None, partition.futureLog)
+          assertEquals(0L, currentLog.logStartOffset)
+          assertEquals(0L, currentLog.logEndOffset)
+          assertEquals(0L, currentLog.highWatermark)
+          assertEquals(-1L, currentLog.highestOffsetInRemoteStorage)
+          assertEquals(util.List.of(new EpochEntry(leaderEpoch, 0L)), currentLog.leaderEpochCache.epochEntries)
+          val remoteLogManagerCalls = inOrder(mockRemoteLogManager)
+          remoteLogManagerCalls.verify(mockRemoteLogManager).stopPartitions(
+            ArgumentMatchers.eq(util.Set.of(new StopPartition(tp, false, false, false))), any())
+          remoteLogManagerCalls.verify(mockRemoteLogManager).onLeadershipChange(any(), any(), any())
+          verify(mockAlterLogDirsManager, never()).addFetcherForPartitions(any())
+          verify(mockCfm).addFetcherForPartitions(Map(tp -> InitialFetchState(
+            topicId = Some(topicId),
+            leader = new BrokerEndPoint(-1, "diskless", -1),
+            currentLeaderEpoch = leaderEpoch,
+            initOffset = 0L
+          )))
+        } else {
+          assertSame(log, currentLog)
+          assertEquals(sealOffset, currentLog.logEndOffset)
+          assertEquals(sealOffset - 1, currentLog.highestOffsetInRemoteStorage)
+          assertEquals(Some(futureLog), replicaManager.logManager.getLog(tp, isFuture = true))
+          assertEquals(Some(futureLog), partition.futureLog)
+          assertEquals(futureLogEndOffset, futureLog.logEndOffset)
+          verify(mockRemoteLogManager, never()).stopPartitions(any(), any())
+          verify(mockAlterLogDirsManager).addFetcherForPartitions(Map(tp -> InitialFetchState(
+            topicId = Some(topicId),
+            leader = new BrokerEndPoint(brokerId, "localhost", -1),
+            currentLeaderEpoch = leaderEpoch,
+            initOffset = futureLogEndOffset
+          )))
+        }
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
+    } finally {
+      consolidationCtor.close()
+    }
+  }
+
+  // This replica and its future log end in epoch 1, but the classic prefix ends in epoch 0. A missing directory
+  // fails the deletion of one log. If the current log fails, the deletion never reaches the future log, which
+  // would restart the move on a recreated replica. The broker marks the replica offline for this and later leader
+  // epochs, and the remote log manager still cancels the copy task that holds the old copy progress.
+  @ParameterizedTest(name = "testSwitchedReplicaStaysOfflineWhenItsDeletionFails with failingLog: {0}")
+  @ValueSource(strings = Array("current", "future"))
+  def testSwitchedReplicaStaysOfflineWhenItsDeletionFails(failingLog: String): Unit = {
+    val topicName = "switched-consolidating-topic"
+    val topicId = Uuid.randomUuid()
+    val tp = new TopicPartition(topicName, 0)
+    val brokerId = 1
+    val followerId = 2
+    val sealOffset = 10L
+
+    val mockFetcherManager = mock(classOf[ReplicaFetcherManager])
+    when(mockFetcherManager.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    val mockAlterLogDirsManager = mock(classOf[ReplicaAlterLogDirsManager])
+    when(mockAlterLogDirsManager.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    val mockRemoteLogManager = mock(classOf[RemoteLogManager])
+    val ctorInit: MockedConstruction.MockInitializer[ConsolidationFetcherManager] = {
+      case (mockCfm, _) =>
+        when(mockCfm.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    }
+    val consolidationCtor = mockConstruction(classOf[ConsolidationFetcherManager], ctorInit)
+    try {
+      val replicaManager = createReplicaManager(
+        Seq(topicName),
+        disklessRemoteStorageConsolidationEnabled = true,
+        consolidatingDisklessTopics = Set(topicName),
+        mockReplicaFetcherManager = Some(mockFetcherManager),
+        mockReplicaAlterLogDirsManager = Some(mockAlterLogDirsManager),
+        defaultLogConfig = Some(LogTestUtils.createLogConfig(remoteLogStorageEnable = true)),
+        initDisklessLogManager = Some(mock(classOf[InitDisklessLogManager])),
+        remoteLogManager = Some(mockRemoteLogManager),
+      )
+      try {
+        val mockCfm = consolidationCtor.constructed().get(0)
+        val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+        val futureLogDir = replicaManager.logManager.liveLogDirs.map(_.getAbsolutePath).find(_ != log.parentDir).get
+        replicaManager.logManager.maybeUpdatePreferredLogDir(tp, futureLogDir)
+        val futureLog = replicaManager.logManager.getOrCreateLog(tp, isNew = true, isFuture = true, topicId = Optional.of(topicId))
+        Seq(log, futureLog).foreach { replicaLog =>
+          val records = (0 until sealOffset.toInt).map(i => new SimpleRecord(s"classic-$i".getBytes))
+          replicaLog.appendAsFollower(TestUtils.records(records, partitionLeaderEpoch = 1), 1)
+          replicaManager.highWatermarkCheckpoints(replicaLog.parentDir).write(util.Map.of(tp, java.lang.Long.valueOf(sealOffset)))
+        }
+        Utils.delete(if (failingLog == "current") log.dir else futureLog.dir)
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(sealOffset)
+        when(replicaManager.inklessMetadataView().isClassicPrefixInRemoteStorage(tp)).thenReturn(true)
+        when(replicaManager.inklessMetadataView().getLastClassicLeaderEpoch(tp)).thenReturn(0)
+        val leaderDelta = new TopicsDelta(TopicsImage.EMPTY)
+        leaderDelta.replay(new TopicRecord().setName(topicName).setTopicId(topicId))
+        val partitionRecord = new PartitionRecord()
+          .setPartitionId(tp.partition)
+          .setTopicId(topicId)
+          .setReplicas(util.Arrays.asList(brokerId, followerId))
+          .setIsr(util.Arrays.asList(brokerId, followerId))
+          .setLeader(brokerId)
+          .setLeaderEpoch(5)
+          .setPartitionEpoch(0)
+        partitionRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicToDisklessStartOffset(sealOffset))
+        partitionRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicPrefixInRemoteStorage())
+        partitionRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeLastClassicLeaderEpoch(0))
+        leaderDelta.replay(partitionRecord)
+        val leaderImage = imageFromTopics(leaderDelta.apply())
+        replicaManager.applyDelta(leaderDelta, leaderImage)
+
+        assertTrue(replicaManager.getPartition(tp).isInstanceOf[HostedPartition.Offline[_]])
+        assertEquals(None, replicaManager.logManager.getLog(tp))
+        if (failingLog == "current") {
+          assertEquals(Some(futureLog), replicaManager.logManager.getLog(tp, isFuture = true))
+        } else {
+          assertTrue(log.dir.getName.endsWith(UnifiedLog.DELETE_DIR_SUFFIX))
+          assertEquals(None, replicaManager.logManager.getLog(tp, isFuture = true))
+        }
+        verify(mockRemoteLogManager).stopPartitions(
+          ArgumentMatchers.eq(util.Set.of(new StopPartition(tp, false, false, false))), any())
+
+        val followerDelta = new TopicsDelta(leaderImage.topics())
+        followerDelta.replay(new PartitionChangeRecord().setPartitionId(tp.partition).setTopicId(topicId)
+          .setLeader(followerId))
+        replicaManager.applyDelta(followerDelta, imageFromTopics(followerDelta.apply()))
+
+        assertTrue(replicaManager.getPartition(tp).isInstanceOf[HostedPartition.Offline[_]])
+        assertEquals(None, replicaManager.logManager.getLog(tp))
+        verify(mockAlterLogDirsManager, never()).addFetcherForPartitions(any())
+        verify(mockCfm, never()).addFetcherForPartitions(any())
+        verify(mockFetcherManager, never()).addFetcherForPartitions(any())
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
+    } finally {
+      consolidationCtor.close()
+    }
+  }
+
+  // This replica holds the classic prefix [0, 10) that ends in the recorded epoch 1, and consolidated [10, 15) in
+  // the diskless leader epoch 3, uploaded up to 12. It keeps its log on a new leader epoch and resumes
+  // consolidation at its log end offset.
+  @Test
+  def testSwitchedLeaderInPhaseTwoKeepsConsolidatedReplica(): Unit = {
+    val topicName = "switched-consolidating-topic"
+    val topicId = Uuid.randomUuid()
+    val tp = new TopicPartition(topicName, 0)
+    val brokerId = 1
+    val followerId = 2
+    val leaderEpoch = 5
+    val disklessLeaderEpoch = 3
+    val sealOffset = 10L
+    val logEndOffset = 15L
+
+    val mockFetcherManager = mock(classOf[ReplicaFetcherManager])
+    when(mockFetcherManager.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    val mockRemoteLogManager = mock(classOf[RemoteLogManager])
+    val ctorInit: MockedConstruction.MockInitializer[ConsolidationFetcherManager] = {
+      case (mockCfm, _) =>
+        when(mockCfm.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    }
+    val consolidationCtor = mockConstruction(classOf[ConsolidationFetcherManager], ctorInit)
+    try {
+      val replicaManager = createReplicaManager(
+        Seq(topicName),
+        disklessRemoteStorageConsolidationEnabled = true,
+        consolidatingDisklessTopics = Set(topicName),
+        mockReplicaFetcherManager = Some(mockFetcherManager),
+        defaultLogConfig = Some(LogTestUtils.createLogConfig(remoteLogStorageEnable = true)),
+        initDisklessLogManager = Some(mock(classOf[InitDisklessLogManager])),
+        remoteLogManager = Some(mockRemoteLogManager),
+      )
+      try {
+        val mockCfm = consolidationCtor.constructed().get(0)
+        val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+        val classicRecords = (0 until sealOffset.toInt).map(i => new SimpleRecord(s"classic-$i".getBytes))
+        log.appendAsFollower(TestUtils.records(classicRecords, partitionLeaderEpoch = 1), 1)
+        val disklessRecords = (sealOffset.toInt until logEndOffset.toInt).map(i => new SimpleRecord(s"diskless-$i".getBytes))
+        log.appendAsFollower(TestUtils.records(disklessRecords, baseOffset = sealOffset,
+          partitionLeaderEpoch = disklessLeaderEpoch), disklessLeaderEpoch)
+        log.updateHighestOffsetInRemoteStorage(12L)
+        replicaManager.highWatermarkCheckpoints(log.parentDir).write(util.Map.of(tp, java.lang.Long.valueOf(logEndOffset)))
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(sealOffset)
+        when(replicaManager.inklessMetadataView().isClassicPrefixInRemoteStorage(tp)).thenReturn(true)
+        when(replicaManager.inklessMetadataView().getLastClassicLeaderEpoch(tp)).thenReturn(1)
+        when(replicaManager.inklessMetadataView().getDisklessLeaderEpoch(tp)).thenReturn(disklessLeaderEpoch)
+
+        val delta = new TopicsDelta(TopicsImage.EMPTY)
+        delta.replay(new TopicRecord().setName(topicName).setTopicId(topicId))
+        val partitionRecord = new PartitionRecord()
+          .setPartitionId(tp.partition)
+          .setTopicId(topicId)
+          .setReplicas(util.Arrays.asList(brokerId, followerId))
+          .setIsr(util.Arrays.asList(brokerId, followerId))
+          .setLeader(brokerId)
+          .setLeaderEpoch(leaderEpoch)
+          .setPartitionEpoch(0)
+        partitionRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicToDisklessStartOffset(sealOffset))
+        partitionRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeDisklessLeaderEpoch(disklessLeaderEpoch))
+        partitionRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicPrefixInRemoteStorage())
+        partitionRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeLastClassicLeaderEpoch(1))
+        delta.replay(partitionRecord)
+        replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))
+
+        assertTrue(replicaManager.onlinePartition(tp).get.isLeader)
+        assertSame(log, replicaManager.logManager.getLog(tp).get)
+        assertEquals(logEndOffset, log.logEndOffset)
+        assertEquals(12L, log.highestOffsetInRemoteStorage)
+        verify(mockRemoteLogManager, never()).stopPartitions(any(), any())
+        verify(mockCfm).addFetcherForPartitions(Map(tp -> InitialFetchState(
+          topicId = Some(topicId),
+          leader = new BrokerEndPoint(-1, "diskless", -1),
+          currentLeaderEpoch = leaderEpoch,
+          initOffset = logEndOffset
+        )))
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
+    } finally {
+      consolidationCtor.close()
+    }
+  }
+
+  // In phase 2 of the classic-to-diskless switch, the controller adds every live replica to the ISR without
+  // checking its local log. This follower holds [0, 10) in epoch 0 with its high watermark at the seal. If the
+  // classic prefix ends in epoch 1, the follower's records diverge from it. The follower deletes its log, recreates
+  // it empty, and rebuilds the prefix on the classic fetcher from offset 0.
+  @ParameterizedTest(name = "testSwitchedConsolidatingFollowerInPhaseTwoRecreatesReplicaWithoutCommittedHistory with lastClassicLeaderEpoch: {0}")
+  @ValueSource(ints = Array(0, 1))
+  def testSwitchedConsolidatingFollowerInPhaseTwoRecreatesReplicaWithoutCommittedHistory(lastClassicLeaderEpoch: Int): Unit = {
+    val topicName = "switched-consolidating-topic"
+    val topicId = Uuid.randomUuid()
+    val tp = new TopicPartition(topicName, 0)
+    val followerId = 1
+    val leaderId = 2
+    val sealOffset = 10L
+    val recreated = lastClassicLeaderEpoch != 0
+
+    val mockFetcherManager = mock(classOf[ReplicaFetcherManager])
+    when(mockFetcherManager.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    val mockRemoteLogManager = mock(classOf[RemoteLogManager])
+    val ctorInit: MockedConstruction.MockInitializer[ConsolidationFetcherManager] = {
+      case (mockCfm, _) =>
+        when(mockCfm.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    }
+    val consolidationCtor = mockConstruction(classOf[ConsolidationFetcherManager], ctorInit)
+    try {
+      val replicaManager = createReplicaManager(
+        Seq(topicName),
+        disklessRemoteStorageConsolidationEnabled = true,
+        consolidatingDisklessTopics = Set(topicName),
+        mockReplicaFetcherManager = Some(mockFetcherManager),
+        defaultLogConfig = Some(LogTestUtils.createLogConfig(remoteLogStorageEnable = true)),
+        remoteLogManager = Some(mockRemoteLogManager),
+      )
+      try {
+        val mockCfm = consolidationCtor.constructed().get(0)
+        val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+        populateLocalLogAtLeoAndCheckpointedHwm(replicaManager, tp, log, leo = sealOffset, hw = sealOffset)
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(sealOffset)
+        when(replicaManager.inklessMetadataView().isClassicPrefixInRemoteStorage(tp)).thenReturn(true)
+        when(replicaManager.inklessMetadataView().getLastClassicLeaderEpoch(tp)).thenReturn(lastClassicLeaderEpoch)
+
+        val delta = disklessFollowerDelta(topicName, topicId, followerId, leaderId,
+          classicToDisklessStartOffset = sealOffset, classicPrefixInRemoteStorage = true)
+        replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))
+
+        val partition = replicaManager.onlinePartition(tp).get
+        assertFalse(partition.isLeader)
+        val currentLog = replicaManager.logManager.getLog(tp).get
+        assertEquals(Some(currentLog), partition.log)
+        if (recreated) {
+          assertNotSame(log, currentLog)
+          assertTrue(log.dir.getName.endsWith(UnifiedLog.DELETE_DIR_SUFFIX))
+          assertEquals(0L, currentLog.logEndOffset)
+          assertEquals(0L, currentLog.highWatermark)
+          assertTrue(currentLog.leaderEpochCache.epochEntries.isEmpty)
+          val remoteLogManagerCalls = inOrder(mockRemoteLogManager)
+          remoteLogManagerCalls.verify(mockRemoteLogManager).stopPartitions(
+            ArgumentMatchers.eq(util.Set.of(new StopPartition(tp, false, false, false))), any())
+          remoteLogManagerCalls.verify(mockRemoteLogManager).onLeadershipChange(any(), any(), any())
+          val leaderEndpoint = ClusterImageTest.IMAGE1.broker(leaderId).listeners().get("PLAINTEXT")
+          verify(mockFetcherManager).addFetcherForPartitions(Map(tp -> InitialFetchState(
+            topicId = Some(topicId),
+            leader = new BrokerEndPoint(leaderId, leaderEndpoint.host(), leaderEndpoint.port()),
+            currentLeaderEpoch = 0,
+            initOffset = 0L
+          )))
+          verify(mockCfm, never()).addFetcherForPartitions(any())
+        } else {
+          assertSame(log, currentLog)
+          assertEquals(sealOffset, currentLog.logEndOffset)
+          assertEquals(sealOffset, currentLog.highWatermark)
+          verify(mockRemoteLogManager, never()).stopPartitions(any(), any())
+          verify(mockCfm).addFetcherForPartitions(Map(tp -> InitialFetchState(
+            topicId = Some(topicId),
+            leader = new BrokerEndPoint(-1, "diskless", -1),
+            currentLeaderEpoch = 0,
+            initOffset = sealOffset
+          )))
+        }
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
+    } finally {
+      consolidationCtor.close()
+    }
+  }
+
+  // The replica follows in phase 2 with [0, 10) in epoch 0 and no recorded last classic epoch, so it consolidates at
+  // the seal. The epoch is recorded as 1, but an ISR change keeps leader epoch 0. The broker checks a replica only
+  // on a new leader epoch, because only then do its fetchers restart. A later delta makes the replica the leader of
+  // epoch 1. The broker stops the online partition and its consolidation fetcher, deletes the log, and leads from a
+  // new partition with an empty log.
+  @Test
+  def testOnlineSwitchedReplicaWithoutCommittedHistoryRecreatedOnNewLeaderEpoch(): Unit = {
+    val topicName = "switched-consolidating-topic"
+    val topicId = Uuid.randomUuid()
+    val tp = new TopicPartition(topicName, 0)
+    val brokerId = 1
+    val otherId = 2
+    val sealOffset = 10L
+
+    val mockFetcherManager = mock(classOf[ReplicaFetcherManager])
+    when(mockFetcherManager.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    val mockRemoteLogManager = mock(classOf[RemoteLogManager])
+    val ctorInit: MockedConstruction.MockInitializer[ConsolidationFetcherManager] = {
+      case (mockCfm, _) =>
+        when(mockCfm.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    }
+    val consolidationCtor = mockConstruction(classOf[ConsolidationFetcherManager], ctorInit)
+    try {
+      val replicaManager = createReplicaManager(
+        Seq(topicName),
+        disklessRemoteStorageConsolidationEnabled = true,
+        consolidatingDisklessTopics = Set(topicName),
+        mockReplicaFetcherManager = Some(mockFetcherManager),
+        defaultLogConfig = Some(LogTestUtils.createLogConfig(remoteLogStorageEnable = true)),
+        initDisklessLogManager = Some(mock(classOf[InitDisklessLogManager])),
+        remoteLogManager = Some(mockRemoteLogManager),
+      )
+      try {
+        val mockCfm = consolidationCtor.constructed().get(0)
+        val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+        populateLocalLogAtLeoAndCheckpointedHwm(replicaManager, tp, log, leo = sealOffset, hw = sealOffset)
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(sealOffset)
+        when(replicaManager.inklessMetadataView().isClassicPrefixInRemoteStorage(tp)).thenReturn(true)
+
+        val followerDelta = disklessFollowerDelta(topicName, topicId, brokerId, otherId,
+          classicToDisklessStartOffset = sealOffset, classicPrefixInRemoteStorage = true)
+        val followerImage = imageFromTopics(followerDelta.apply())
+        replicaManager.applyDelta(followerDelta, followerImage)
+        val followerPartition = replicaManager.onlinePartition(tp).get
+        assertEquals(Some(log), followerPartition.log)
+        verify(mockCfm).addFetcherForPartitions(Map(tp -> InitialFetchState(
+          topicId = Some(topicId),
+          leader = new BrokerEndPoint(-1, "diskless", -1),
+          currentLeaderEpoch = 0,
+          initOffset = sealOffset
+        )))
+        clearInvocations(mockCfm)
+
+        when(replicaManager.inklessMetadataView().getLastClassicLeaderEpoch(tp)).thenReturn(1)
+        val isrDelta = new TopicsDelta(followerImage.topics())
+        isrDelta.replay(new PartitionChangeRecord().setPartitionId(0).setTopicId(topicId)
+          .setIsr(util.Arrays.asList(otherId)))
+        val isrImage = imageFromTopics(isrDelta.apply())
+        replicaManager.applyDelta(isrDelta, isrImage)
+        assertSame(followerPartition, replicaManager.onlinePartition(tp).get)
+        assertSame(log, replicaManager.logManager.getLog(tp).get)
+        verify(mockCfm, never()).removeFetcherForPartitions(Set(tp))
+        verify(mockRemoteLogManager, never()).stopPartitions(any(), any())
+
+        val leaderDelta = new TopicsDelta(isrImage.topics())
+        leaderDelta.replay(new PartitionChangeRecord().setPartitionId(0).setTopicId(topicId).setLeader(brokerId)
+          .setIsr(util.Arrays.asList(brokerId, otherId)))
+        replicaManager.applyDelta(leaderDelta, imageFromTopics(leaderDelta.apply()))
+
+        val leaderPartition = replicaManager.onlinePartition(tp).get
+        assertNotSame(followerPartition, leaderPartition)
+        assertTrue(leaderPartition.isLeader)
+        assertEquals(None, followerPartition.log)
+        val currentLog = replicaManager.logManager.getLog(tp).get
+        assertNotSame(log, currentLog)
+        assertEquals(Some(currentLog), leaderPartition.log)
+        assertTrue(log.dir.getName.endsWith(UnifiedLog.DELETE_DIR_SUFFIX))
+        assertEquals(0L, currentLog.logEndOffset)
+        assertEquals(util.List.of(new EpochEntry(1, 0L)), currentLog.leaderEpochCache.epochEntries)
+        verify(mockCfm, atLeastOnce()).removeFetcherForPartitions(Set(tp))
+        verify(mockCfm).addFetcherForPartitions(Map(tp -> InitialFetchState(
+          topicId = Some(topicId),
+          leader = new BrokerEndPoint(-1, "diskless", -1),
+          currentLeaderEpoch = 1,
+          initOffset = 0L
+        )))
+        val remoteLogManagerCalls = inOrder(mockRemoteLogManager)
+        remoteLogManagerCalls.verify(mockRemoteLogManager).stopPartitions(
+          ArgumentMatchers.eq(util.Set.of(new StopPartition(tp, false, false, false))), any())
+        remoteLogManagerCalls.verify(mockRemoteLogManager).onLeadershipChange(any(), any(), any())
       } finally {
         replicaManager.shutdown(checkpointHW = false)
       }
@@ -10615,6 +11419,7 @@ class ReplicaManagerInklessTest {
     disklessRemoteStorageConsolidationEnabled: Boolean = false,
     consolidatingDisklessTopics: Set[String] = Set.empty,
     mockReplicaFetcherManager: Option[ReplicaFetcherManager] = None,
+    mockReplicaAlterLogDirsManager: Option[ReplicaAlterLogDirsManager] = None,
     inklessSharedStateEnabled: Boolean = true,
     initDisklessLogManager: Option[InitDisklessLogManager] = None,
     delayedFetchPurgatory: Option[DelayedOperationPurgatory[DelayedFetch]] = None,
@@ -10657,6 +11462,8 @@ class ReplicaManagerInklessTest {
       .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
     when(inklessMetadata.getDisklessLeaderEpoch(any()))
       .thenReturn(PartitionRegistration.NO_DISKLESS_LEADER_EPOCH)
+    when(inklessMetadata.getLastClassicLeaderEpoch(any()))
+      .thenReturn(PartitionRegistration.NO_LAST_CLASSIC_LEADER_EPOCH)
     when(inklessMetadata.classicPrefixWaitingForUploadSeal(any())).thenReturn(None)
     when(inklessMetadata.getTopicId(anyString())).thenAnswer{ invocation =>
       val topicName = invocation.getArgument(0, classOf[String])
@@ -10694,6 +11501,13 @@ class ReplicaManagerInklessTest {
         quotaManager: ReplicationQuotaManager
       ): ReplicaFetcherManager = {
         mockReplicaFetcherManager.getOrElse(super.createReplicaFetcherManager(metrics, time, quotaManager))
+      }
+
+      override protected def createReplicaAlterLogDirsManager(
+        quotaManager: ReplicationQuotaManager,
+        brokerTopicStats: BrokerTopicStats
+      ): ReplicaAlterLogDirsManager = {
+        mockReplicaAlterLogDirsManager.getOrElse(super.createReplicaAlterLogDirsManager(quotaManager, brokerTopicStats))
       }
     }
   }

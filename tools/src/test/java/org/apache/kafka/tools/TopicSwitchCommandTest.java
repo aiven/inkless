@@ -148,8 +148,10 @@ public class TopicSwitchCommandTest {
 
     @Test
     public void testStateCommandShowsPhase2WhenFlagSet() throws Exception {
+        DescribeTopicPartitionsResponsePartition phaseTwo = buildPartition(0, 1, 6, 100L, 6, true);
+        phaseTwo.unknownTaggedFields().add(InitDisklessLogFields.encodeLastClassicLeaderEpoch(4));
         DescribeTopicPartitionsResponseData responseData = buildResponseData(
-            List.of(buildPartition(0, 1, 6, 100L, 6, true), buildPartition(1, 2, 5, 200L, 5, false))
+            List.of(phaseTwo, buildPartition(1, 2, 5, 200L, 5, false))
         );
         mockAdminCalls(responseData, Map.of(
             new TopicPartition(TOPIC, 0), new ListOffsetsResult.ListOffsetsResultInfo(150, -1, java.util.Optional.empty()),
@@ -164,7 +166,9 @@ public class TopicSwitchCommandTest {
         int partition1 = output.indexOf("Partition 1:");
         assertTrue(partition1 > 0, output);
         assertTrue(output.substring(0, partition1).contains("classicPrefixInRemoteStorage=true (phase 2)"), output);
+        assertTrue(output.substring(0, partition1).contains("lastClassicLeaderEpoch=4" + System.lineSeparator()), output);
         assertTrue(output.substring(partition1).contains("classicPrefixInRemoteStorage=false (phase 1)"), output);
+        assertTrue(output.substring(partition1).contains("lastClassicLeaderEpoch=-1 (none)"), output);
     }
 
     @Test

@@ -65,9 +65,10 @@ core/src/main/scala/kafka/server/DynamicBrokerConfig.scala @aiven/inkless @apach
 core/src/main/scala/kafka/server/ConfigHandler.scala       @aiven/inkless @apache/kafka  # topic-config propagation
 core/src/main/scala/kafka/server/ControllerServer.scala    @aiven/inkless @apache/kafka  # controller-side diskless wiring
 core/src/main/scala/kafka/server/AbstractFetcherThread.scala @aiven/inkless @apache/kafka  # consolidation fetcher skips ConsumerLag JMX registration
+core/src/main/java/kafka/server/TierStateMachine.java     @aiven/inkless @apache/kafka  # phase 2 remote rebuild starts at the classic-to-diskless seal
 metadata/src/main/java/org/apache/kafka/controller/ReplicationControlManager.java @aiven/inkless @apache/kafka  # diskless placement, election, and classic-to-diskless switch commits
 metadata/src/main/java/org/apache/kafka/controller/PartitionChangeBuilder.java @aiven/inkless @apache/kafka  # classic-to-diskless switch flag commit
-storage/src/main/java/org/apache/kafka/storage/internals/log/UnifiedLog.java @aiven/inkless @apache/kafka  # forced deletion of the local classic prefix
+storage/src/main/java/org/apache/kafka/storage/internals/log/UnifiedLog.java @aiven/inkless @apache/kafka  # forced deletion of the local classic prefix; truncation count that fences remote offset updates
 core/src/main/scala/kafka/server/ReplicaAlterLogDirsThread.scala @aiven/inkless @apache/kafka  # future log rolls at the seal; promotion waits for classic prefix deletion
-storage/src/main/java/org/apache/kafka/server/log/remote/storage/RemoteLogManager.java @aiven/inkless @apache/kafka  # remote read throws LeaderEpochNotAvailableException when the epoch cache has no epoch
+storage/src/main/java/org/apache/kafka/server/log/remote/storage/RemoteLogManager.java @aiven/inkless @apache/kafka  # remote read throws LeaderEpochNotAvailableException when the epoch cache has no epoch; remote offset updates skip a log that truncated during the task
 core/src/main/scala/kafka/cluster/Partition.scala          @aiven/inkless @apache/kafka  # classic-to-diskless seal; ISR checks capped at the seal in phase 1; no new epoch entry for a consolidating leader

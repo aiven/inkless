@@ -151,6 +151,10 @@ public class UnifiedLog implements AutoCloseable {
     private volatile Optional<PartitionMetadataFile> partitionMetadataFile = Optional.empty();
     // This is the offset(inclusive) until which segments are copied to the remote storage.
     private volatile long highestOffsetInRemoteStorage = -1L;
+    // Remote log tasks compute the highest offset in remote storage without the log lock. They read this count first,
+    // so the log drops an offset that a task computed from records that a truncation removed. A truncation holds the
+    // lock from the increment to its last change, so readers and writers of the count hold it too.
+    private long truncationCount = 0L;
 
     /* Keep track of the current high watermark in order to ensure that segments containing offsets at or above it are
      * not eligible for deletion. This means that the active segment is only eligible for deletion if the high watermark
@@ -395,6 +399,16 @@ public class UnifiedLog implements AutoCloseable {
 
     public long highestOffsetInRemoteStorage() {
         return highestOffsetInRemoteStorage;
+    }
+
+    /**
+     * Returns the number of truncations of this log, for {@link #updateHighestOffsetInRemoteStorage(long, long)}.
+     * Waits for a running truncation to finish, so the caller never pairs its count with the state from before it.
+     */
+    public long truncationCount() {
+        synchronized (lock) {
+            return truncationCount;
+        }
     }
 
     public Optional<PartitionMetadataFile> partitionMetadataFile() {
@@ -818,6 +832,22 @@ public class UnifiedLog implements AutoCloseable {
             logger.warn("Unable to update the highest offset in remote storage with offset {} since remote storage is not enabled. The existing highest offset is {}.", offset, highestOffsetInRemoteStorage());
         } else if (offset > highestOffsetInRemoteStorage()) {
             highestOffsetInRemoteStorage = offset;
+        }
+    }
+
+    /**
+     * Updates the highest offset in remote storage unless the log has truncated since the caller read
+     * {@link #truncationCount()}. The caller reads the count before it reads the leader epoch cache or the segments
+     * that the offset comes from.
+     */
+    public void updateHighestOffsetInRemoteStorage(long offset, long expectedTruncationCount) {
+        synchronized (lock) {
+            if (truncationCount == expectedTruncationCount) {
+                updateHighestOffsetInRemoteStorage(offset);
+            } else {
+                logger.info("Ignoring the highest offset in remote storage {}, because the log truncated while a " +
+                        "remote log task computed it", offset);
+            }
         }
     }
 
@@ -2407,6 +2437,7 @@ public class UnifiedLog implements AutoCloseable {
                             if (localLog.segments().firstSegmentBaseOffset().getAsLong() > targetOffset) {
                                 truncateFullyAndStartAt(targetOffset, Optional.empty());
                             } else {
+                                truncationCount++;
                                 Collection<LogSegment> deletedSegments = localLog.truncateTo(targetOffset);
                                 deleteProducerSnapshots(deletedSegments, true);
                                 leaderEpochCache.truncateFromEndAsyncFlush(targetOffset);
@@ -2433,6 +2464,7 @@ public class UnifiedLog implements AutoCloseable {
                 () -> {
                     logger.debug("Truncate and start at offset {}, logStartOffset: {}", newOffset, logStartOffsetOpt.orElse(newOffset));
                     synchronized (lock)  {
+                        truncationCount++;
                         localLog.truncateFullyAndStartAt(newOffset);
                         leaderEpochCache.clearAndFlush();
                         producerStateManager.truncateFullyAndStartAt(newOffset);

@@ -485,6 +485,81 @@ public class RemoteLogManagerTest {
         assertCopyExpectedLogSegmentsToRemote(oldSegmentStartOffset, nextSegmentStartOffset, lso, leo);
     }
 
+    @Test
+    void testCopyTaskFindsCopiedOffsetAgainAfterTruncationDuringUpload() throws Exception {
+        // Inkless: the log truncates while the copy task uploads [0, 149]. The task installs 149 with the truncation
+        // count from before the upload, which the log drops. The next run finds the copied offset again instead of
+        // resuming after 149.
+        AtomicLong truncationCount = new AtomicLong();
+        when(mockLog.truncationCount()).thenAnswer(ans -> truncationCount.get());
+        when(mockLog.topicPartition()).thenReturn(leaderTopicIdPartition.topicPartition());
+        checkpoint.write(totalEpochEntries);
+        when(mockLog.leaderEpochCache()).thenReturn(
+                new LeaderEpochFileCache(leaderTopicIdPartition.topicPartition(), checkpoint, scheduler));
+        when(remoteLogMetadataManager.highestOffsetForEpoch(any(TopicIdPartition.class), anyInt())).thenReturn(Optional.of(-1L));
+
+        File tempDir = TestUtils.tempDirectory();
+        LogSegment oldSegment = mock(LogSegment.class);
+        LogSegment activeSegment = mock(LogSegment.class);
+        when(oldSegment.baseOffset()).thenReturn(0L);
+        when(activeSegment.baseOffset()).thenReturn(150L);
+        FileRecords fileRecords = mock(FileRecords.class);
+        when(oldSegment.log()).thenReturn(fileRecords);
+        when(fileRecords.file()).thenReturn(TestUtils.tempFile());
+        when(fileRecords.sizeInBytes()).thenReturn(10);
+        when(oldSegment.offsetIndex()).thenReturn(
+                LazyIndex.forOffset(LogFileUtils.offsetIndexFile(tempDir, 0L, ""), 0L, 1000).get());
+        when(oldSegment.timeIndex()).thenReturn(
+                LazyIndex.forTime(LogFileUtils.timeIndexFile(tempDir, 0L, ""), 0L, 1500).get());
+        File txnFile = UnifiedLog.transactionIndexFile(tempDir, 0L, "");
+        txnFile.createNewFile();
+        when(oldSegment.txnIndex()).thenReturn(new TransactionIndex(0L, txnFile));
+        when(mockLog.activeSegment()).thenReturn(activeSegment);
+        when(mockLog.logSegments(anyLong(), anyLong())).thenReturn(List.of(oldSegment, activeSegment));
+        ProducerStateManager mockStateManager = mock(ProducerStateManager.class);
+        when(mockLog.producerStateManager()).thenReturn(mockStateManager);
+        when(mockStateManager.fetchSnapshot(anyLong())).thenReturn(Optional.of(TestUtils.tempFile()));
+        when(mockLog.lastStableOffset()).thenReturn(250L);
+        when(mockLog.logEndOffset()).thenReturn(300L);
+        when(remoteLogMetadataManager.addRemoteLogSegmentMetadata(any(RemoteLogSegmentMetadata.class)))
+                .thenReturn(CompletableFuture.completedFuture(null));
+        when(remoteLogMetadataManager.updateRemoteLogSegmentMetadata(any(RemoteLogSegmentMetadataUpdate.class)))
+                .thenReturn(CompletableFuture.completedFuture(null));
+        when(remoteStorageManager.copyLogSegmentData(any(RemoteLogSegmentMetadata.class), any(LogSegmentData.class)))
+                .thenAnswer(ans -> {
+                    truncationCount.incrementAndGet();
+                    return Optional.empty();
+                });
+
+        RemoteLogManager.RLMCopyTask task = remoteLogManager.new RLMCopyTask(leaderTopicIdPartition, 128);
+        task.copyLogSegmentsToRemote(mockLog);
+        verify(mockLog).updateHighestOffsetInRemoteStorage(-1L, 0L);
+        verify(mockLog).updateHighestOffsetInRemoteStorage(149L, 0L);
+
+        task.copyLogSegmentsToRemote(mockLog);
+        verify(mockLog).updateHighestOffsetInRemoteStorage(-1L, 1L);
+    }
+
+    @Test
+    void testFollowerTaskInstallsHighestRemoteOffsetWithTruncationCountFromBeforeTheLookup() throws Exception {
+        // Inkless: the log truncates after the follower task reads the truncation count. The task installs the
+        // offset that it found with that count, so the log drops it.
+        AtomicLong truncationCount = new AtomicLong();
+        when(mockLog.truncationCount()).thenAnswer(ans -> truncationCount.get());
+        checkpoint.write(totalEpochEntries);
+        when(mockLog.leaderEpochCache()).thenReturn(
+                new LeaderEpochFileCache(followerTopicIdPartition.topicPartition(), checkpoint, scheduler));
+        when(mockLog.logEndOffset()).thenReturn(300L);
+        when(remoteLogMetadataManager.highestOffsetForEpoch(eq(followerTopicIdPartition), anyInt())).thenAnswer(ans -> {
+            truncationCount.incrementAndGet();
+            return Optional.of(249L);
+        });
+
+        remoteLogManager.new RLMFollowerTask(followerTopicIdPartition).execute(mockLog);
+
+        verify(mockLog).updateHighestOffsetInRemoteStorage(249L, 0L);
+    }
+
     private void assertCopyExpectedLogSegmentsToRemote(long oldSegmentStartOffset,
                                                        long nextSegmentStartOffset,
                                                        long lastStableOffset,
@@ -581,7 +656,7 @@ public class RemoteLogManagerTest {
 
         // verify the highest remote offset is updated to the expected value
         ArgumentCaptor<Long> argument = ArgumentCaptor.forClass(Long.class);
-        verify(mockLog, times(2)).updateHighestOffsetInRemoteStorage(argument.capture());
+        verify(mockLog, times(2)).updateHighestOffsetInRemoteStorage(argument.capture(), anyLong());
         assertEquals(oldSegmentEndOffset, argument.getValue());
 
         // Verify the metric for remote writes is updated correctly
@@ -1061,7 +1136,7 @@ public class RemoteLogManagerTest {
 
         TestUtils.waitForCondition(() -> {
             ArgumentCaptor<Long> argument = ArgumentCaptor.forClass(Long.class);
-            verify(mockLog, times(1)).updateHighestOffsetInRemoteStorage(argument.capture());
+            verify(mockLog, times(1)).updateHighestOffsetInRemoteStorage(argument.capture(), anyLong());
             return 0L == argument.getValue();
         }, "Timed out waiting for updateHighestOffsetInRemoteStorage(0) get invoked for dir1 log");
 
@@ -1081,14 +1156,14 @@ public class RemoteLogManagerTest {
         copyLogSegmentLatch.countDown();
         TestUtils.waitForCondition(() -> {
             ArgumentCaptor<Long> argument = ArgumentCaptor.forClass(Long.class);
-            verify(oldMockLog, times(1)).updateHighestOffsetInRemoteStorage(argument.capture());
+            verify(oldMockLog, times(1)).updateHighestOffsetInRemoteStorage(argument.capture(), anyLong());
             return nextSegmentStartOffset - 1 == argument.getValue();
         }, "Timed out waiting for updateHighestOffsetInRemoteStorage(149) get invoked for dir1 log");
 
         // On the next run of RLMTask, the log in dir2 will be picked and start by updateHighestOffsetInRemoteStorage to the expected offset
         TestUtils.waitForCondition(() -> {
             ArgumentCaptor<Long> argument = ArgumentCaptor.forClass(Long.class);
-            verify(mockLog, times(1)).updateHighestOffsetInRemoteStorage(argument.capture());
+            verify(mockLog, times(1)).updateHighestOffsetInRemoteStorage(argument.capture(), anyLong());
             return nextSegmentStartOffset - 1 == argument.getValue();
         }, "Timed out waiting for updateHighestOffsetInRemoteStorage(149) get invoked for dir2 log");
 
@@ -1325,7 +1400,7 @@ public class RemoteLogManagerTest {
         verify(remoteStorageManager, times(1)).copyLogSegmentData(any(RemoteLogSegmentMetadata.class), any(LogSegmentData.class));
 
         // Verify we should not have updated the highest offset because of write failure
-        verify(mockLog).updateHighestOffsetInRemoteStorage(anyLong());
+        verify(mockLog).updateHighestOffsetInRemoteStorage(anyLong(), anyLong());
         // Verify the metric for remote write requests/failures was updated.
         assertEquals(1, brokerTopicStats.topicStats(leaderTopicIdPartition.topic()).remoteCopyRequestRate().count());
         assertEquals(1, brokerTopicStats.topicStats(leaderTopicIdPartition.topic()).failedRemoteCopyRequestRate().count());
@@ -1376,7 +1451,7 @@ public class RemoteLogManagerTest {
         verify(remoteLogMetadataManager, never()).addRemoteLogSegmentMetadata(any(RemoteLogSegmentMetadata.class));
         verify(remoteStorageManager, never()).copyLogSegmentData(any(RemoteLogSegmentMetadata.class), any(LogSegmentData.class));
         verify(remoteLogMetadataManager, never()).updateRemoteLogSegmentMetadata(any(RemoteLogSegmentMetadataUpdate.class));
-        verify(mockLog, never()).updateHighestOffsetInRemoteStorage(anyLong());
+        verify(mockLog, never()).updateHighestOffsetInRemoteStorage(anyLong(), anyLong());
 
         // Verify the metric for remote write requests/failures was not updated.
         assertEquals(0, brokerTopicStats.topicStats(leaderTopicIdPartition.topic()).remoteCopyRequestRate().count());
@@ -4592,7 +4667,7 @@ public class RemoteLogManagerTest {
 
             // Verify the highest offset in remote storage is updated only once
             ArgumentCaptor<Long> capture = ArgumentCaptor.forClass(Long.class);
-            verify(mockLog, times(1)).updateHighestOffsetInRemoteStorage(capture.capture());
+            verify(mockLog, times(1)).updateHighestOffsetInRemoteStorage(capture.capture(), anyLong());
             // Verify the highest offset in remote storage was -1L before the copy started
             assertEquals(-1L, capture.getValue());
         } else {
@@ -4618,7 +4693,7 @@ public class RemoteLogManagerTest {
 
             // Verify the highest offset in remote storage is updated
             ArgumentCaptor<Long> capture = ArgumentCaptor.forClass(Long.class);
-            verify(mockLog, times(2)).updateHighestOffsetInRemoteStorage(capture.capture());
+            verify(mockLog, times(2)).updateHighestOffsetInRemoteStorage(capture.capture(), anyLong());
             List<Long> capturedValues = capture.getAllValues();
             // Verify the highest offset in remote storage was -1L before the copy
             assertEquals(-1L, capturedValues.get(0).longValue());
@@ -4779,7 +4854,7 @@ public class RemoteLogManagerTest {
 
         // Verify the highest offset in remote storage is updated corresponding to the only segment that was copied
         ArgumentCaptor<Long> capture = ArgumentCaptor.forClass(Long.class);
-        verify(mockLog, times(2)).updateHighestOffsetInRemoteStorage(capture.capture());
+        verify(mockLog, times(2)).updateHighestOffsetInRemoteStorage(capture.capture(), anyLong());
         List<Long> capturedValues = capture.getAllValues();
         // Verify the highest offset in remote storage was -1L before the copy
         assertEquals(-1L, capturedValues.get(0).longValue());

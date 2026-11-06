@@ -155,6 +155,16 @@ class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConf
       .getOrElse(PartitionRegistration.NO_DISKLESS_LEADER_EPOCH)
   }
 
+  /**
+   * Returns the leader epoch of the record at `seal - 1` that the phase-1 leader recorded with
+   * `classicPrefixInRemoteStorage`, or [[PartitionRegistration.NO_LAST_CLASSIC_LEADER_EPOCH]] when the
+   * partition has none.
+   */
+  def getLastClassicLeaderEpoch(topicPartition: TopicPartition): Int =
+    partitionRegistration(topicPartition)
+      .map(_.lastClassicLeaderEpoch)
+      .getOrElse(PartitionRegistration.NO_LAST_CLASSIC_LEADER_EPOCH)
+
   override def getTopicConfig(topicName: String): LogConfig = topicConfigs.computeIfAbsent(topicName, t => {
     val props = metadataCache.topicConfig(t)
     if (props.isEmpty) new LogConfig(getDefaultConfig)

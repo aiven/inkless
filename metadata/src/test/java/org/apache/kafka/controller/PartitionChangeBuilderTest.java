@@ -475,8 +475,14 @@ public class PartitionChangeBuilderTest {
                 newIsrToSimpleNewIsrWithBrokerEpochs(List.of(1, 2, 3, 4))).build());
     }
 
+    private static final int LAST_CLASSIC_LEADER_EPOCH = 7;
+
     private static PartitionChangeRecord buildClassicPrefixFlagRecord(PartitionChangeBuilder builder) {
-        Optional<ApiMessageAndVersion> built = builder.setClassicPrefixInRemoteStorage().build();
+        return buildClassicPrefixFlagRecord(builder, LAST_CLASSIC_LEADER_EPOCH);
+    }
+
+    private static PartitionChangeRecord buildClassicPrefixFlagRecord(PartitionChangeBuilder builder, int lastClassicLeaderEpoch) {
+        Optional<ApiMessageAndVersion> built = builder.setClassicPrefixInRemoteStorage(lastClassicLeaderEpoch).build();
         assertTrue(built.isPresent());
         PartitionChangeRecord record = (PartitionChangeRecord) built.get().message();
         short version = built.get().version();
@@ -504,7 +510,30 @@ public class PartitionChangeBuilderTest {
         assertTrue(merged.classicPrefixInRemoteStorage);
         assertEquals(partition.leaderEpoch + 1, merged.leaderEpoch);
         assertEquals(merged.leaderEpoch, merged.disklessLeaderEpoch);
+        assertEquals(InitDisklessLogFields.decodeLastClassicLeaderEpoch(record.unknownTaggedFields()),
+            merged.lastClassicLeaderEpoch);
         return merged;
+    }
+
+    @ParameterizedTest
+    @MethodSource("partitionChangeRecordVersions")
+    public void testClassicPrefixFlagRecordsLastClassicLeaderEpoch(short version) {
+        PartitionChangeRecord record = buildClassicPrefixFlagRecord(createFooBuilder(version));
+
+        assertEquals(1, countTag(record, InitDisklessLogFields.LAST_CLASSIC_LEADER_EPOCH_TAG));
+        assertEquals(LAST_CLASSIC_LEADER_EPOCH, assertClassicPrefixFlagCommit(FOO, record).lastClassicLeaderEpoch);
+    }
+
+    // An empty classic prefix has no record at seal - 1.
+    @ParameterizedTest
+    @MethodSource("partitionChangeRecordVersions")
+    public void testClassicPrefixFlagWithoutLastClassicLeaderEpoch(short version) {
+        PartitionChangeRecord record = buildClassicPrefixFlagRecord(
+            createFooBuilder(version), PartitionRegistration.NO_LAST_CLASSIC_LEADER_EPOCH);
+
+        assertEquals(0, countTag(record, InitDisklessLogFields.LAST_CLASSIC_LEADER_EPOCH_TAG));
+        assertEquals(PartitionRegistration.NO_LAST_CLASSIC_LEADER_EPOCH,
+            assertClassicPrefixFlagCommit(FOO, record).lastClassicLeaderEpoch);
     }
 
     @ParameterizedTest
