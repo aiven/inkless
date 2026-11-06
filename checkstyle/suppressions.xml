@@ -123,7 +123,7 @@
               files="LoggingResource.java" />
 
     <suppress checks="ClassDataAbstractionCoupling"
-              files="(RestServer|AbstractHerder|DistributedHerder|Worker(Test)?).java"/>
+              files="(RestServer|AbstractHerder(Test)?|DistributedHerder|Worker(Test)?).java"/>
 
     <suppress checks="BooleanExpressionComplexity"
               files="JsonConverter.java"/>
@@ -204,7 +204,7 @@
 
     <!-- Streams tests -->
     <suppress checks="ClassFanOutComplexity"
-              files="(RecordCollectorTest|StreamsPartitionAssignorTest|StreamThreadTest|StreamTaskTest|TaskManagerTest|TopologyTestDriverTest|KafkaStreamsTest|EosIntegrationTest|RestoreIntegrationTest).java"/>
+              files="(RecordCollectorTest|StreamsPartitionAssignorTest|StreamThreadTest|StreamTaskTest|TaskManagerTest|TopologyTestDriverTest|KafkaStreamsTest|EosIntegrationTest|RestoreIntegrationTest|StreamsGroupHeartbeatRequestManagerTest).java"/>
 
     <suppress checks="MethodLength"
               files="(EosIntegrationTest|KStreamKStreamJoinTest|KStreamKStreamLeftJoinTest|KStreamKStreamOuterJoinTest|KStreamSlidingWindowAggregateTest|KTableKTableForeignKeyJoinIntegrationTest|RocksDBWindowStoreTest|TopologyTestDriverTest).java"/>
@@ -219,7 +219,7 @@
               files="(KStreamKStreamJoinTest|KTableKTableForeignKeyJoinIntegrationTest|RocksDBGenericOptionsToDbOptionsColumnFamilyOptionsAdapterTest|RelationalSmokeTest|MockProcessorContextStateStoreTest|IQv2StoreIntegrationTest|StreamsConfigTest).java"/>
 
     <suppress checks="JavaNCSS"
-              files="(KStreamKStreamJoinTest|StreamTaskTest|StreamThreadTest|TaskManagerTest|TopologyTestDriverTest).java"/>
+              files="(KStreamKStreamJoinTest|StoreChangelogReaderTest|StreamTaskTest|StreamThreadTest|TaskManagerTest|TopologyTestDriverTest).java"/>
 
     <suppress checks="NPathComplexity"
               files="(KStreamKStreamJoinTest|KTableKTableForeignKeyJoinIntegrationTest|RelationalSmokeTest|MockProcessorContextStateStoreTest|TopologyTestDriverTest|IQv2StoreIntegrationTest).java"/>
@@ -317,9 +317,11 @@
               files="(LocalLog|LogLoader|LogValidator|RemoteLogManager|RemoteIndexCache|UnifiedLog).java"/>
     <suppress checks="ParameterNumber"
               files="(LogLoader|UnifiedLog).java"/>
+    <suppress checks="ParameterNumber"
+              files="[/\\]Cleaner\.java"/>
     <suppress checks="(ClassDataAbstractionCoupling|ClassFanOutComplexity)"
               files="(UnifiedLog|RemoteLogManager|RemoteLogManagerTest|UnifiedLogTest).java"/>
-    <suppress checks="MethodLength" files="RemoteLogManagerConfig.java"/>
+    <suppress checks="MethodLength" files="(RemoteLogManagerConfig|UnifiedLog).java"/>
     <suppress checks="JavaNCSS" files="(RemoteLogManagerTest|UnifiedLogTest).java"/>
 
     <!-- benchmarks -->

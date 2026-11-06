@@ -59,6 +59,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.CompletableFuture;
@@ -78,6 +79,7 @@ public class TaskManager {
     private static final String BUG_ERROR_MESSAGE = "This indicates a bug. " +
         "Please report at https://issues.apache.org/jira/projects/KAFKA/issues or to the dev-mailing list (https://kafka.apache.org/contact).";
     private static final String INTERRUPTED_ERROR_MESSAGE = "Thread got interrupted. " + BUG_ERROR_MESSAGE;
+    private static final long REMOVAL_LOG_INTERVAL_MINUTES = 1L;
 
     // initialize the task list
     // activeTasks needs to be concurrent as it can be accessed
@@ -455,6 +457,12 @@ public class TaskManager {
 
     private void createNewTasks(final Map<TaskId, Set<TopicPartition>> activeTasksToCreate,
                                 final Map<TaskId, Set<TopicPartition>> standbyTasksToCreate) {
+        // A task that failed to initialize is left owned (registered and flagged failed) for the corruption/
+        // failed-task path to reconcile, and the rectify pass above skips failed tasks -- so without this guard
+        // the assignment would build a second representation here and trip the single-owner invariant in Tasks.
+        activeTasksToCreate.keySet().removeIf(tasks::containsInitialized);
+        standbyTasksToCreate.keySet().removeIf(tasks::containsInitialized);
+
         final Collection<StreamTask> newActiveTasks = activeTaskCreator.createTasks(mainConsumer, activeTasksToCreate);
         final Collection<StandbyTask> newStandbyTasks = standbyTaskCreator.createTasks(standbyTasksToCreate);
 
@@ -703,14 +711,22 @@ public class TaskManager {
 
     private StateUpdater.RemovedTaskResult waitForFuture(final TaskId taskId,
                                                          final CompletableFuture<StateUpdater.RemovedTaskResult> future) {
-        final StateUpdater.RemovedTaskResult removedTaskResult;
         try {
-            removedTaskResult = future.get(5, TimeUnit.MINUTES);
-            if (removedTaskResult == null) {
-                throw new IllegalStateException("Task " + taskId + " was not found in the state updater. "
-                    + BUG_ERROR_MESSAGE);
+            long minutesWaited = 0L;
+            while (true) {
+                try {
+                    final StateUpdater.RemovedTaskResult removedTaskResult =
+                        future.get(REMOVAL_LOG_INTERVAL_MINUTES, TimeUnit.MINUTES);
+                    if (removedTaskResult == null) {
+                        throw new IllegalStateException("Task " + taskId + " was not found in the state updater. "
+                            + BUG_ERROR_MESSAGE);
+                    }
+                    return removedTaskResult;
+                } catch (final java.util.concurrent.TimeoutException retryTimeout) {
+                    minutesWaited += REMOVAL_LOG_INTERVAL_MINUTES;
+                    log.warn("Waiting for the removal of task {} from the state updater for {} minute(s).", taskId, minutesWaited);
+                }
             }
-            return removedTaskResult;
         } catch (final ExecutionException executionException) {
             log.warn("An exception happened when removing task {} from the state updater. The task was added to the " +
                     "failed task in the state updater: ",
@@ -720,10 +736,6 @@ public class TaskManager {
             Thread.currentThread().interrupt();
             log.error(INTERRUPTED_ERROR_MESSAGE, shouldNotHappen);
             throw new IllegalStateException(INTERRUPTED_ERROR_MESSAGE, shouldNotHappen);
-        } catch (final java.util.concurrent.TimeoutException timeoutException) {
-            log.warn("The state updater wasn't able to remove task {} in time. The state updater thread may be dead. "
-                    + BUG_ERROR_MESSAGE, taskId, timeoutException);
-            return null;
         }
     }
 
@@ -845,6 +857,7 @@ public class TaskManager {
 
     public boolean checkStateUpdater(final long now,
                                      final java.util.function.Consumer<Set<TopicPartition>> offsetResetter) {
+        maybeThrowFatalExceptionFromStateUpdater();
         addTasksToStateUpdater();
         if (stateUpdater.hasExceptionsAndFailedTasks()) {
             handleExceptionsFromStateUpdater();
@@ -969,6 +982,13 @@ public class TaskManager {
             updateOrCreateBackoffRecord(task.id(), nowMs);
             log.info("Encountered timeout exception. Reattempting initialization in the next iteration. Error message was: {}",
                      timeoutException.getMessage());
+        }
+    }
+
+    private void maybeThrowFatalExceptionFromStateUpdater() {
+        final Optional<RuntimeException> fatalException = stateUpdater.fatalException();
+        if (fatalException.isPresent()) {
+            throw new StreamsException("The state updater died and cannot update tasks anymore.", fatalException.get());
         }
     }
 
@@ -1249,11 +1269,20 @@ public class TaskManager {
 
         final Map<TaskId, Long> taskOffsetSums = stateDirectory.taskOffsetSums(lockedTaskDirectoriesOfNonOwnedTasksAndClosedAndCreatedTasks);
 
-        // overlay latest offsets from assigned tasks
+        // Overlay latest offsets from assigned tasks.
+        // `stateDirectory.taskOffsetSums` above only cover what is recoverable from disk (potentially stale),
+        // including offsets from persistent stores which tasks are owned by sibling thread, as well as dormant tasks;
+        // We update this (potentially state) information with latest changelog offset inforamtion for all other
+        // tasks assigned to this thread; this step also adds offset-sum information for in-memory state stores
         for (final Task task : tasks.values()) {
             // exclude stateless and non-logged tasks
             if (task.isActive() && task.state() == State.RUNNING && !task.changelogPartitions().isEmpty()) {
                 taskOffsetSums.put(task.id(), Task.LATEST_OFFSET);
+            } else if (task.state() != State.CREATED && task.state() != State.CLOSED) {
+                final Map<TopicPartition, Long> changelogOffsets = task.changelogOffsets();
+                if (!changelogOffsets.isEmpty()) {
+                    taskOffsetSums.put(task.id(), StateDirectory.sumOfChangelogOffsets(task.id(), changelogOffsets));
+                }
             }
         }
 

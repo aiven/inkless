@@ -2227,7 +2227,8 @@ class KafkaApis(val requestChannel: RequestChannel,
 
   def handleAlterConfigsRequest(request: RequestChannel.Request): Unit = {
     val original = request.body[AlterConfigsRequest]
-    val preprocessingResponses = configManager.preprocess(original.data())
+    val preprocessingResponses = configManager.preprocess(original.data(),
+      (rType, rName) => authHelper.authorize(request.context, ALTER_CONFIGS, rType, rName))
     val remaining = ConfigAdminManager.copyWithoutPreprocessed(original.data(), preprocessingResponses)
     def sendResponse(secondPart: Option[ApiMessage]): Unit = {
       secondPart match {
@@ -4254,11 +4255,14 @@ class KafkaApis(val requestChannel: RequestChannel,
       // record the bytes out metrics only when the response is being sent.
       response.data.responses.forEach { topicResponse =>
         topicResponse.partitions.forEach { data =>
-          // If the topic name was not known, we will have no bytes out.
-          if (topicResponse.topicId != null) {
-            val tp = new TopicIdPartition(topicResponse.topicId, new TopicPartition(topicIdNames.get(topicResponse.topicId), data.partitionIndex))
-            val isDiskless = inklessSharedState.exists(_.metadata().isDisklessTopic(tp.topic))
-            brokerTopicStats.updateBytesOut(tp.topic, false, false, ShareFetchResponse.recordsSize(data), isDiskless)
+          // If the topic name was not known, we will have no bytes out. This can happen if the topic
+          // was deleted and the fetch request was received, or if the topic id in the request was invalid.
+          // In both cases, the error code for the partition will be set accordingly, and we won't have
+          // a topic name to record metrics with.
+          val topicName = topicIdNames.get(topicResponse.topicId)
+          if (topicName != null) {
+            val isDiskless = inklessSharedState.exists(_.metadata().isDisklessTopic(topicName))
+            brokerTopicStats.updateBytesOut(topicName, false, false, ShareFetchResponse.recordsSize(data), isDiskless)
           }
         }
       }
