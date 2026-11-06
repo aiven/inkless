@@ -1021,6 +1021,23 @@ class ReplicaManagerInklessTest {
   }
 
   @Test
+  def testHasRebuiltTierStateOnlyWithRecordsAndLeaderEpoch(): Unit = {
+    val tp = new TopicPartition("searchable", 0)
+    val replicaManager = createReplicaManager(List(tp.topic()))
+    try {
+      assertFalse(replicaManager.hasRebuiltTierState(tp), "no local log")
+
+      val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(Uuid.randomUuid()))
+      assertFalse(replicaManager.hasRebuiltTierState(tp), "empty log has no leader epoch")
+
+      log.appendAsFollower(MemoryRecords.withRecords(Compression.NONE, 0, new SimpleRecord("a".getBytes)), 0)
+      assertTrue(replicaManager.hasRebuiltTierState(tp), "records with a leader epoch")
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
   def testCrossTierEarliestOffsetFallsBackToControlPlaneOnMissAndPopulatesCache(): Unit = {
     // On a cache miss (cold cache -- e.g. this broker is the RLM leader but never served the delete, or
     // the entry TTL-expired) the accessor queries the control-plane cross-tier earliest and writes it
