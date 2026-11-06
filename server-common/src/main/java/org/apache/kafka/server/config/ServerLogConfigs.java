@@ -175,6 +175,7 @@ public class ServerLogConfigs {
         "directory has failed for longer than this time, the broker will fail and shut down.";
 
     public static final int MAX_MESSAGE_BYTES_DEFAULT = 1024 * 1024 + Records.LOG_OVERHEAD;
+    public static final int MAX_DECOMPRESSED_MESSAGE_BYTES_DEFAULT = Records.SOFT_MAX_ARRAY_LENGTH;
     public static final String COMPRESSION_TYPE_DEFAULT = BrokerCompressionType.PRODUCER.name;
 
     public static final String DISKLESS_ENABLE_CONFIG = ServerTopicConfigSynonyms.serverSynonym(TopicConfig.DISKLESS_ENABLE_CONFIG);

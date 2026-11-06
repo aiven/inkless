@@ -131,6 +131,7 @@ public class ProcessorStateManagerTest {
     private File checkpointFile;
     private OffsetCheckpoint checkpoint;
     private StateDirectory stateDirectory;
+    private final MockTime time = new MockTime();
 
     @Mock
     private StateStoreMetadata storeMetadata;
@@ -147,7 +148,7 @@ public class ProcessorStateManagerTest {
                 put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, "dummy:1234");
                 put(StreamsConfig.STATE_DIR_CONFIG, baseDir.getPath());
             }
-        }), new MockTime(), true, true);
+        }), time, true, true);
         checkpointFile = new File(stateDirectory.getOrCreateDirectoryForTask(taskId), CHECKPOINT_FILE_NAME);
         checkpoint = new OffsetCheckpoint(checkpointFile);
     }
@@ -205,6 +206,7 @@ public class ProcessorStateManagerTest {
             false,
             logContext,
             stateDirectory,
+            time,
             mkMap(
                 mkEntry(persistentStoreName, persistentStoreTopicName),
                 mkEntry(persistentStoreTwoName, persistentStoreTwoTopicName),
@@ -225,6 +227,7 @@ public class ProcessorStateManagerTest {
             false,
             logContext,
             stateDirectory,
+            time,
             mkMap(
                 mkEntry(persistentStoreName, persistentStoreTopicName),
                 mkEntry(persistentStoreTwoName, persistentStoreTopicName)
@@ -323,6 +326,50 @@ public class ProcessorStateManagerTest {
     }
 
     @Test
+    public void shouldRefreshTaskDirectoryModificationTimeOnClose() {
+        final ProcessorStateManager stateMgr = getStateManager(Task.TaskType.ACTIVE);
+        final StateStore store = mock(StateStore.class);
+        when(store.name()).thenReturn(persistentStoreName);
+
+        stateMgr.registerStateStores(singletonList(store), context);
+        stateMgr.registerStore(store, noopStateRestoreCallback, null);
+
+        final File taskDir = stateDirectory.getOrCreateDirectoryForTask(taskId);
+        final long staleTime = time.milliseconds() - 60_000L;
+        assertTrue(taskDir.setLastModified(staleTime));
+        assertThat(taskDir.lastModified(), is(staleTime));
+
+        stateMgr.close();
+
+        assertThat(taskDir.lastModified(), is(time.milliseconds()));
+    }
+
+    @Test
+    public void shouldNotRefreshTaskDirectoryModificationTimeWhenClosingStartupTask() {
+        final ProcessorStateManager stateMgr = ProcessorStateManager.createStartupTaskStateManager(
+            taskId,
+            false,
+            logContext,
+            stateDirectory,
+            time,
+            mkMap(mkEntry(persistentStoreName, persistentStoreTopicName)),
+            emptySet());
+        final StateStore store = mock(StateStore.class);
+        when(store.name()).thenReturn(persistentStoreName);
+
+        stateMgr.registerStateStores(singletonList(store), context);
+        stateMgr.registerStore(store, noopStateRestoreCallback, null);
+
+        final File taskDir = stateDirectory.getOrCreateDirectoryForTask(taskId);
+        final long staleTime = time.milliseconds() - 60_000L;
+        assertTrue(taskDir.setLastModified(staleTime));
+
+        stateMgr.close();
+
+        assertThat(taskDir.lastModified(), is(staleTime));
+    }
+
+    @Test
     public void shouldRecycleAndReinitializeStore() {
         final ProcessorStateManager stateMgr = getStateManager(Task.TaskType.ACTIVE);
         final StateStore store = mock(StateStore.class);
@@ -400,6 +447,7 @@ public class ProcessorStateManagerTest {
             false,
             logContext,
             stateDirectory,
+            time,
             emptyMap(),
             emptySet()
         );
@@ -493,6 +541,69 @@ public class ProcessorStateManagerTest {
         } finally {
             stateMgr.close();
         }
+    }
+
+    @Test
+    public void shouldNotTrackInMemoryStoreOffsetsInStateDirectory() {
+        final ProcessorStateManager stateMgr = getStateManager(Task.TaskType.ACTIVE);
+        contextRegistersStateStore(stateMgr);
+
+        try {
+            stateMgr.registerStateStores(Arrays.asList(persistentStore, nonPersistentStore), context);
+            stateMgr.initializeStoreOffsets(true);
+            stateMgr.updateChangelogOffsets(mkMap(
+                mkEntry(persistentStorePartition, 100L),
+                mkEntry(nonPersistentStorePartition, 200L)));
+
+            // the shared sums outlive this task, so they must only count state that outlives it too (KAFKA-20893);
+            // the in-memory store's 201 is reported from the live task by TaskManager instead
+            assertThat(stateDirectory.taskOffsetSums(Collections.singleton(taskId)), is(mkMap(mkEntry(taskId, 101L))));
+            assertThat(stateMgr.changelogOffsets(), is(mkMap(
+                mkEntry(persistentStorePartition, 101L),
+                mkEntry(nonPersistentStorePartition, 201L))));
+        } finally {
+            stateMgr.close();
+        }
+
+        assertThat(stateDirectory.taskOffsetSums(Collections.singleton(taskId)), is(mkMap(mkEntry(taskId, 101L))));
+    }
+
+    @Test
+    public void shouldNotTrackOffsetsInStateDirectoryWhenNoStoreIsPersistent() {
+        final ProcessorStateManager stateMgr = getStateManager(Task.TaskType.ACTIVE);
+        contextRegistersStateStore(stateMgr);
+
+        try {
+            stateMgr.registerStateStores(Collections.singletonList(nonPersistentStore), context);
+            stateMgr.initializeStoreOffsets(true);
+            stateMgr.updateChangelogOffsets(Collections.singletonMap(nonPersistentStorePartition, 200L));
+
+            assertThat(stateDirectory.taskOffsetSums(Collections.singleton(taskId)), is(Collections.emptyMap()));
+        } finally {
+            stateMgr.close();
+        }
+
+        assertThat(stateDirectory.taskOffsetSums(Collections.singleton(taskId)), is(Collections.emptyMap()));
+    }
+
+    @Test
+    public void shouldTrackPersistentStoreOffsetsInStateDirectory() {
+        final ProcessorStateManager stateMgr = getStateManager(Task.TaskType.ACTIVE);
+        contextRegistersStateStore(stateMgr);
+
+        try {
+            stateMgr.registerStateStores(Arrays.asList(persistentStore, persistentStoreTwo), context);
+            stateMgr.initializeStoreOffsets(true);
+            stateMgr.updateChangelogOffsets(mkMap(
+                mkEntry(persistentStorePartition, 100L),
+                mkEntry(persistentStoreTwoPartition, 200L)));
+
+            assertThat(stateDirectory.taskOffsetSums(Collections.singleton(taskId)), is(mkMap(mkEntry(taskId, 302L))));
+        } finally {
+            stateMgr.close();
+        }
+
+        assertThat(stateDirectory.taskOffsetSums(Collections.singleton(taskId)), is(mkMap(mkEntry(taskId, 302L))));
     }
 
     @Test
@@ -685,6 +796,7 @@ public class ProcessorStateManagerTest {
             false,
             logContext,
             stateDirectory,
+            time,
             emptyMap(),
             emptySet());
 
@@ -1268,6 +1380,7 @@ public class ProcessorStateManagerTest {
             eosEnabled,
             logContext,
             stateDirectory,
+            time,
             mkMap(
                 mkEntry(persistentStoreName, persistentStoreTopicName),
                 mkEntry(persistentStoreTwoName, persistentStoreTwoTopicName),
