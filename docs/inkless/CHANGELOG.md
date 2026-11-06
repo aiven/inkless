@@ -41,6 +41,67 @@ Regenerate a draft with the `inkless-changelog` skill (or run it directly):
 
 ---
 
+## 0.51 (Kafka 4.1.2, 4.2.2, 4.3.1)
+
+### Features
+- (inkless:switch) gate broker ISR shrink on the switch phase (#841)
+- (inkless:switch) gate consolidation on the switch phase (#840)
+- (inkless:consolidation) bound the WAL prune per request [KC-444] (#843)
+- (inkless:switch) detect classic-prefix upload and request the tiered flag [KC-588] (#835)
+- (inkless:controller) gate ISR, reassignment, and leader election on switch phase (#833)
+- (inkless:sync) label upstream sync PRs with `upstream` (#829)
+
+### Fixes
+- (inkless:controller) skip the config record when the connection string of the control plane doesn't change (#852)
+- (inkless:controller) block unclean leader election in switch phase 1 [KC-636] (#849)
+- (inkless:consolidation) defer prefix reads on a rebuilding replica [KC-673] (#847)
+- (inkless:controller) validate remote storage on consolidated diskless creates (#845)
+- (inkless:metadata) route consolidating partitions with one replica to the replica [KC-651] (#844)
+- (inkless:controller) parse `diskless.enable` case-insensitively on topic creation (#846)
+- (inkless:controller) return a retriable error when the control plane is unavailable [KC-649] (#839)
+- (inkless:control-plane) read unavailableReason once in recordGatedCall [KC-624] (#836)
+- (inkless:control-plane) close the retired delegate before building its replacement [KC-630] (#838)
+- (inkless:controller) skip control plane calls for classic-only topic requests [KC-621] (#832)
+- (inkless:ai) update vale config (#823)
+
+### Tests
+- (inkless:switch) run the stale high watermark promotion test in phase 2 [KC-721] (#854)
+- (inkless:control-plane) cover the availability gate across outages, restarts, and migration locks [KC-619] (#850)
+- (inkless) wait for the published first attempt in reconciler tests [KC-631] (#837)
+- (inkless:switch) check EARLIEST and remote expiration before the first prune [KC-581] (#831)
+
+### Docs
+- (inkless:ai) ask for imports over fully qualified class names (#842)
+- (inkless) document and test the migration of untiered diskless topics (#834)
+- (inkless:release) add 0.50 changelog and cherry-pick sessions (#830)
+
+### Config & metric changes
+- config added: `inkless.consolidation.cleanup.max.batches.per.request` (default 2000). It caps the batches that one consolidation cleanup request deletes per partition. A value of 0 removes the cap. With the default interval, the cap sustains about 33 batches per second per partition, and a backlog of 1,000,000 batches drains in about 8 hours (#843).
+- config changed: the default of `inkless.consolidation.cleanup.interval.ms` drops from 300000 (5 minutes) to 60000 (1 minute), which matches `retention.enforcement.interval.ms` (#843).
+- metric mbean added: `io.aiven.inkless.delete:type=ConsolidatedDisklessLogPruner`, attributes `ConsolidationPruneTotalBatchesDeleted`, `ConsolidationPruneTotalBytesDeleted`, and `ConsolidationPruneTotalTime`. The totals update only after a run completes. `ConsolidationPruneErrorRate` counts runs that fail with an exception (#843).
+- metric added: `kafka.server:type=ReplicaManager,name=ConsolidationDeferredPrefixFetchRate`. It counts consumer fetches for which the broker returns `OFFSET_NOT_AVAILABLE` because its replica is rebuilding the tier state and can't read the prefix yet (#847).
+- metric added: the per-partition gauge `ConsolidationTierRebuildRequests` counts each `OFFSET_MOVED_TO_TIERED_STORAGE` answer that starts a tier-state rebuild on the replica's broker. A retried rebuild counts again (#847).
+- metric added: `kafka.controller:type=KafkaController,name=DisklessSwitchedPartitionsPendingUploadCount`. It counts switched partitions in phase 1, whose classic prefix isn't in remote storage yet (#835).
+- `metrics.rst` now lists the `PruneDisklessLogs` attributes of `io.aiven.inkless.control_plane.postgres:type=PostgresControlPlane` (`PruneDisklessLogsQueryRate`, `PruneDisklessLogsQueryTime`, and `PruneDisklessLogsLastSuccessfulQueryAgeMs`). The broker already registered them, so only the documentation is new (#843).
+
+### Postgres schema changes
+- `V31__Bound_prune_batches.sql`: `CREATE TYPE prune_batches_below_highest_tiered_offset_response_v2` and `CREATE FUNCTION prune_batches_below_highest_tiered_offset_v2`. The migration adds a type and a function, takes no table lock, and doesn't need a `CONCURRENTLY` step. The v1 function stays, so brokers on 0.50 keep pruning during a rolling upgrade (#843).
+
+### Upgrade notes
+- The switch now has two phases. Phase 1 starts when the seal commits. In phase 1, the classic prefix exists only on the local logs of the ISR members, so the broker and controller keep the classic rules for that prefix:
+  - Brokers shrink the ISR (#841).
+  - Brokers don't consolidate the partition (#840).
+  - The controller stages reassignments and requires an online log directory to elect a leader (#833).
+  - The controller rejects unclean leader elections, including a cluster-level `unclean.leader.election.enable=true` (#849).
+
+  Phase 2 starts when the leader confirms the prefix is in remote storage and the controller commits `classicPrefixInRemoteStorage` (#835). For more information, see "Switch phases" in [CLASSIC_TO_DISKLESS_SWITCH.md](CLASSIC_TO_DISKLESS_SWITCH.md).
+- The controller rejects any change to the seal after it commits `classicPrefixInRemoteStorage`. `kafka-topic-switch.sh seal` reports that reason, including with `--dry-run` (#833).
+- CreateTopics, DeleteTopics, and CreatePartitions return the retriable `KAFKA_STORAGE_ERROR` for the affected diskless topics when the control plane is unavailable. Earlier releases returned `UNKNOWN_SERVER_ERROR` (#839).
+- With consolidation on, the controller validates new diskless topics as tiered topics. A create whose retention is below the broker `log.local.retention.ms` now fails at create time. Before, the create succeeded and every later AlterConfigs failed with `INVALID_CONFIG` (#845).
+- `inkless-4.1` and `inkless-4.2` keep the four new `forceDeleteLocalSegmentsBelow` tests in the Scala `kafka.log.UnifiedLogTest`, because their Java `UnifiedLogTest` is a stub (#840). On `inkless-4.1`, the SpotBugs exclude filter skips `SKIPPED_CLASS_TOO_BIG` for `kafka.server.ReplicaManager`, which grows past the analysis limit with #847. `inkless-4.1` also drops a stale `testcontainers` 1.20.3 entry that made its Testcontainers integration tests fail on the `ubuntu-26.04` runners. None of these build changes affects broker behavior.
+
+---
+
 ## 0.50 (Kafka 4.1.2, 4.2.2, 4.3.1)
 
 ### Features
