@@ -61,6 +61,7 @@ import org.apache.kafka.storage.internals.log.LogFileUtils;
 import org.apache.kafka.storage.internals.log.LogSegment;
 import org.apache.kafka.storage.internals.log.OffsetIndex;
 import org.apache.kafka.storage.internals.log.ProducerStateManager;
+import org.apache.kafka.storage.internals.log.ProducerStateManagerConfig;
 import org.apache.kafka.storage.internals.log.RemoteStorageFetchInfo;
 import org.apache.kafka.storage.internals.log.TimeIndex;
 import org.apache.kafka.storage.internals.log.TransactionIndex;
@@ -3685,6 +3686,135 @@ public class RemoteLogManagerTest {
         // The below-floor segment is reclaimed on each cycle (a mock artifact: in reality it is marked
         // deleted after the first pass); the point is that it IS reclaimed and the survivor is not.
         verify(remoteStorageManager, atLeastOnce()).deleteLogSegmentData(metadataList.get(0));
+    }
+
+    @ParameterizedTest(name = "testEpochCacheCleanupKeepsConsolidatingSegmentsFromCrossTierStart consolidating={0}")
+    @ValueSource(booleans = {true, false})
+    public void testEpochCacheCleanupKeepsConsolidatingSegmentsFromCrossTierStart(boolean consolidating)
+            throws RemoteStorageException, ExecutionException, InterruptedException, IOException {
+        // Inkless: a consolidating leader with a recreated or lost local log caches only its own epoch (5)
+        // until the rebuild restores the older epochs from remote storage. The cleanup of segments from epochs
+        // before the earliest cached epoch keeps the segment from the cross-tier start (100). A classic topic
+        // keeps the upstream behavior and deletes both segments.
+        Map<String, Long> logProps = new HashMap<>();
+        logProps.put("retention.bytes", -1L);
+        logProps.put("retention.ms", -1L);
+        when(mockLog.config()).thenReturn(new LogConfig(logProps));
+
+        checkpoint.write(List.of(new EpochEntry(5, 0)));
+        LeaderEpochFileCache cache = new LeaderEpochFileCache(tp, checkpoint, scheduler);
+        when(mockLog.leaderEpochCache()).thenReturn(cache);
+        when(mockLog.topicPartition()).thenReturn(leaderTopicIdPartition.topicPartition());
+        when(mockLog.logEndOffset()).thenReturn(0L);
+        when(mockLog.logStartOffset()).thenReturn(0L);
+
+        // Segment i covers [100 * i, 100 * i + 99] in epoch i.
+        List<RemoteLogSegmentMetadata> metadataList = listRemoteLogSegmentMetadata(leaderTopicIdPartition, 2, 100, 1024,
+                List.of(epochEntry0, epochEntry1), RemoteLogSegmentState.COPY_SEGMENT_FINISHED);
+        when(remoteLogMetadataManager.listRemoteLogSegments(leaderTopicIdPartition))
+                .thenAnswer(ans -> metadataList.iterator());
+        when(remoteLogMetadataManager.listRemoteLogSegments(eq(leaderTopicIdPartition), anyInt()))
+                .thenAnswer(ans -> {
+                    int epoch = ans.getArgument(1);
+                    return epoch < metadataList.size()
+                            ? List.of(metadataList.get(epoch)).iterator()
+                            : Collections.emptyIterator();
+                });
+        when(remoteLogMetadataManager.updateRemoteLogSegmentMetadata(any(RemoteLogSegmentMetadataUpdate.class)))
+                .thenReturn(CompletableFuture.runAsync(() -> { }));
+        doNothing().when(remoteStorageManager).deleteLogSegmentData(any(RemoteLogSegmentMetadata.class));
+
+        try (RemoteLogManager rlm = new RemoteLogManager(config, brokerId, logDir, clusterId, time,
+                tp -> Optional.of(mockLog),
+                (topicPartition, offset) -> currentLogStartOffset.set(offset),
+                brokerTopicStats, metrics, endPoint,
+                topicPartition -> consolidating ? OptionalLong.of(100L) : OptionalLong.empty(),
+                topicPartition -> consolidating) {
+            @Override
+            public RemoteStorageManager createRemoteStorageManager() {
+                return remoteStorageManager;
+            }
+            @Override
+            public RemoteLogMetadataManager createRemoteLogMetadataManager() {
+                return remoteLogMetadataManager;
+            }
+        }) {
+            doReturn(true).when(remoteLogMetadataManager).isReady(any(TopicIdPartition.class));
+            rlm.new RLMExpirationTask(leaderTopicIdPartition).cleanupExpiredRemoteLogSegments();
+        }
+
+        verify(remoteStorageManager).deleteLogSegmentData(metadataList.get(0));
+        verify(remoteStorageManager, consolidating ? never() : times(1)).deleteLogSegmentData(metadataList.get(1));
+    }
+
+    @Test
+    public void testRecreatedLeaderKeepsRemotePrefixUntilRebuild() throws Exception {
+        // Inkless: the broker recreates a phase-2 leader of a switched topic (seal 100, cross-tier log start 40)
+        // whose epoch at `seal - 1` differs from the recorded one. The new log is empty and caches only the new
+        // epoch (7). Expiration runs before and after `TierStateMachine` rebuilds the log from the segment holding
+        // `seal - 1`. Only the segment below the cross-tier log start is unreferenced.
+        File logDirectory = new File(TestUtils.tempDirectory(), leaderTopicIdPartition.topicPartition().toString());
+        Map<String, Long> logProps = new HashMap<>();
+        logProps.put("retention.bytes", -1L);
+        logProps.put("retention.ms", -1L);
+        UnifiedLog log = UnifiedLog.create(logDirectory, new LogConfig(logProps), 0L, 0L, scheduler,
+                new BrokerTopicStats(), time, 5 * 60 * 1000, new ProducerStateManagerConfig(86_400_000, false),
+                600_000, new LogDirFailureChannel(1), true, Optional.of(leaderTopicIdPartition.topicId()));
+        try {
+            log.assignEpochStartOffset(7, log.logEndOffset());
+            assertEquals(List.of(new EpochEntry(7, 0L)), log.leaderEpochCache().epochEntries());
+
+            RemoteLogSegmentMetadata belowLogStart = finishedRemoteSegment(0L, 39L, 0);
+            RemoteLogSegmentMetadata classicFromLogStart = finishedRemoteSegment(40L, 79L, 2);
+            RemoteLogSegmentMetadata lastClassic = finishedRemoteSegment(80L, 99L, 3);
+            RemoteLogSegmentMetadata consolidated = finishedRemoteSegment(100L, 119L, 5);
+            List<RemoteLogSegmentMetadata> remoteSegments = new ArrayList<>(
+                    List.of(belowLogStart, classicFromLogStart, lastClassic, consolidated));
+            when(remoteLogMetadataManager.listRemoteLogSegments(leaderTopicIdPartition))
+                    .thenAnswer(ans -> List.copyOf(remoteSegments).iterator());
+            when(remoteLogMetadataManager.listRemoteLogSegments(eq(leaderTopicIdPartition), anyInt()))
+                    .thenAnswer(ans -> remoteSegments.stream()
+                            .filter(segment -> segment.segmentLeaderEpochs().containsKey(ans.<Integer>getArgument(1)))
+                            .toList()
+                            .iterator());
+            when(remoteLogMetadataManager.updateRemoteLogSegmentMetadata(any(RemoteLogSegmentMetadataUpdate.class)))
+                    .thenReturn(CompletableFuture.runAsync(() -> { }));
+            doAnswer(ans -> remoteSegments.remove(ans.<RemoteLogSegmentMetadata>getArgument(0)))
+                    .when(remoteStorageManager).deleteLogSegmentData(any(RemoteLogSegmentMetadata.class));
+
+            try (RemoteLogManager rlm = new RemoteLogManager(config, brokerId, logDir, clusterId, time,
+                    tp -> Optional.of(log),
+                    (topicPartition, offset) -> currentLogStartOffset.set(offset),
+                    brokerTopicStats, metrics, endPoint,
+                    topicPartition -> OptionalLong.of(40L),
+                    topicPartition -> true) {
+                @Override
+                public RemoteStorageManager createRemoteStorageManager() {
+                    return remoteStorageManager;
+                }
+                @Override
+                public RemoteLogMetadataManager createRemoteLogMetadataManager() {
+                    return remoteLogMetadataManager;
+                }
+            }) {
+                doReturn(true).when(remoteLogMetadataManager).isReady(any(TopicIdPartition.class));
+                rlm.new RLMExpirationTask(leaderTopicIdPartition).cleanupExpiredRemoteLogSegments();
+                assertEquals(List.of(classicFromLogStart, lastClassic, consolidated), remoteSegments);
+
+                log.truncateFullyAndStartAt(lastClassic.endOffset() + 1, Optional.of(40L));
+                log.leaderEpochCache().assign(List.of(new EpochEntry(0, 0L), new EpochEntry(2, 40L), new EpochEntry(3, 80L)));
+                rlm.new RLMExpirationTask(leaderTopicIdPartition).cleanupExpiredRemoteLogSegments();
+                assertEquals(List.of(classicFromLogStart, lastClassic, consolidated), remoteSegments);
+            }
+        } finally {
+            log.close();
+        }
+    }
+
+    private RemoteLogSegmentMetadata finishedRemoteSegment(long startOffset, long endOffset, int leaderEpoch) {
+        return new RemoteLogSegmentMetadata(new RemoteLogSegmentId(leaderTopicIdPartition, Uuid.randomUuid()),
+                startOffset, endOffset, time.milliseconds(), brokerId, time.milliseconds(), 1024, Optional.empty(),
+                RemoteLogSegmentState.COPY_SEGMENT_FINISHED, Map.of(leaderEpoch, startOffset));
     }
 
     @ParameterizedTest(name = "testRemoteDeleteLagsOnRetentionBreachedSegments retentionSize={0} retentionMs={1}")

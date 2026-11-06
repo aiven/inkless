@@ -1621,6 +1621,9 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
                 Iterator<Integer> epochsToClean = remoteLeaderEpochs.stream()
                         .filter(remoteEpoch -> remoteEpoch < earliestEpochEntry.epoch())
                         .iterator();
+                // Inkless: a consolidating leader's cache can lack older epochs while it rebuilds from remote storage,
+                // so only its segments that end below the cross-tier log start are unreferenced.
+                boolean keepSegmentsFromLogStart = isConsolidatingDisklessPartition.test(topicIdPartition.topicPartition());
 
                 List<RemoteLogSegmentMetadata> listOfSegmentsToBeCleaned = new ArrayList<>();
 
@@ -1630,6 +1633,9 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
                     while (segmentsToBeCleaned.hasNext()) {
                         if (!isCancelled()) {
                             RemoteLogSegmentMetadata nextSegmentMetadata = segmentsToBeCleaned.next();
+                            if (keepSegmentsFromLogStart && nextSegmentMetadata.endOffset() >= logStartOffset) {
+                                continue;
+                            }
                             sizeOfDeletableSegmentsBytes += nextSegmentMetadata.segmentSizeInBytes();
                             listOfSegmentsToBeCleaned.add(nextSegmentMetadata);
                         }
