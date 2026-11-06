@@ -1823,6 +1823,21 @@ public class ReplicationControlManager {
                     continue;
                 }
 
+                // Replicas truncate their logs fully if the epoch doesn't match their leader epoch cache, so a value
+                // that no replica can hold makes every replica rebuild on every leader change.
+                int lastClassicLeaderEpoch = partitionData.lastClassicLeaderEpoch();
+                if (lastClassicLeaderEpoch < PartitionRegistration.NO_LAST_CLASSIC_LEADER_EPOCH ||
+                        lastClassicLeaderEpoch > partition.leaderEpoch) {
+                    log.info("Rejecting SetClassicPrefixInRemoteStorage request from node {} for {}-{} because " +
+                            "the last classic leader epoch {} is outside [{}, {}].",
+                        request.brokerId(), topic.name, partitionId, lastClassicLeaderEpoch,
+                        PartitionRegistration.NO_LAST_CLASSIC_LEADER_EPOCH, partition.leaderEpoch);
+                    partitionResponses.add(new SetClassicPrefixInRemoteStorageResponseData.PartitionResponse()
+                        .setPartitionId(partitionId)
+                        .setErrorCode(INVALID_REQUEST.code()));
+                    continue;
+                }
+
                 List<Integer> targetIsr = Arrays.stream(partition.replicas)
                     .filter(clusterControl::isActive)
                     .boxed()
@@ -1839,7 +1854,7 @@ public class ReplicationControlManager {
                     featureControl.isElrFeatureEnabled()
                 )
                     .setTargetIsr(targetIsr)
-                    .setClassicPrefixInRemoteStorage()
+                    .setClassicPrefixInRemoteStorage(lastClassicLeaderEpoch)
                     .setDefaultDirProvider(clusterDescriber)
                     .build();
                 if (partitionChange.isEmpty()) {

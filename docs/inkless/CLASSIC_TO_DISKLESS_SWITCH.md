@@ -34,6 +34,7 @@ The switch state lives in the KRaft metadata log, but `classicToDisklessStartOff
 * **Custom serde in `InitDisklessLogFields`.** The value is encoded by hand into the tagged field's raw byte payload: a single big-endian `int64` (8 bytes) written via `ByteBuffer.putLong`, and read back via `ByteBuffer.getLong`. There is no generated message class for it.
 * **Sentinel is normally not serialized.** When `classicToDisklessStartOffset == -1`, automatic paths (`toRecord()` snapshots and ordinary change records) omit the tag entirely to save space; on read, an absent tag decodes back to `-1` (`NO_CLASSIC_TO_DISKLESS_START_OFFSET`). The one exception is the operator seal/abort path, which encodes an explicit `-1` to actively reset a sealed partition back to classic (see [Operator override](#operator-override-of-the-seal-offset)).
 * **Replay and merge.** On load, `PartitionRegistration` decodes the tag from `PartitionRecord.unknownTaggedFields()`; `merge(PartitionChangeRecord)` applies updates from change records and carries the existing value forward when a change record **omits** the tag; `toRecord()` re-encodes it. Crucially, "tag omitted" and "tag explicitly set to `-1`" are distinguished at decode time (`decodeClassicToDisklessStartOffsetIfPresent` returns an empty `OptionalLong` only when the tag is absent): an omitted tag keeps the existing value, while a present tag — including an explicit `-1` — is applied verbatim. This is how the value survives metadata-log replay and propagates to brokers via metadata deltas, and how an operator can abort a switch.
+* **Phase 2 fields.** The record that starts phase 2 sets `classicPrefixInRemoteStorage` (tag `103`, one byte) and `lastClassicLeaderEpoch` (tag `104`, a big-endian `int32`). The second field is the leader epoch of the record at `classicToDisklessStartOffset - 1`. The record omits tag `104` if the value is `-1`, and an absent tag decodes to `-1`. `merge` keeps both fields when a change record omits them.
 
 ## Protocol Steps
 
@@ -70,8 +71,8 @@ sequenceDiagram
 
     InitManager->>Leader: Wait until the classic prefix is in remote storage
     Leader-->>InitManager: logStartOffset >= seal or<br/>highestOffsetInRemoteStorage >= seal - 1
-    InitManager->>Controller: SetClassicPrefixInRemoteStorage(seal, leaderEpoch)
-    Controller->>MetadataLog: PartitionChangeRecord<br/>classicPrefixInRemoteStorage = true
+    InitManager->>Controller: SetClassicPrefixInRemoteStorage(seal, leaderEpoch,<br/>lastClassicLeaderEpoch)
+    Controller->>MetadataLog: PartitionChangeRecord<br/>classicPrefixInRemoteStorage = true<br/>lastClassicLeaderEpoch
 ```
 
 ### Step 1: mark the switch as pending
@@ -142,7 +143,13 @@ In phase 1, the leader tracks the partition in the `WaitingForUpload` state unti
 * `logStartOffset >= classicToDisklessStartOffset`: the prefix is empty, or retention or `DeleteRecords` already removed it.
 * `highestOffsetInRemoteStorage >= classicToDisklessStartOffset - 1`: the remote log manager copied the whole prefix.
 
-When the check passes, the partition moves to `SendingFlagToController`. The broker batches ready partitions and sends `SetClassicPrefixInRemoteStorage` to the controller with the seal offset and the current leader epoch. The controller sets `classicPrefixInRemoteStorage`, which starts phase 2, and `InitDisklessLogManager` removes the partition from tracking.
+When the check passes, the partition moves to `SendingFlagToController`. The broker batches ready partitions and sends `SetClassicPrefixInRemoteStorage` to the controller with these values:
+
+* The seal offset.
+* The current leader epoch.
+* The leader epoch of the record at `seal - 1`, from the leader epoch cache. The value is `-1` if the log doesn't contain a record below the seal.
+
+The controller sets `classicPrefixInRemoteStorage`, which starts phase 2, and stores the last value as `lastClassicLeaderEpoch`. `InitDisklessLogManager` removes the partition from tracking. For more information about how brokers use the epoch, see [Divergent classic tails in phase 2](#divergent-classic-tails-in-phase-2). If the epoch is below `-1` or higher than the current leader epoch, the controller rejects the request with `INVALID_REQUEST`. No replica's leader epoch cache can hold such an epoch, and every replica would recreate its log on every leader change.
 
 The broker handles the controller response per partition:
 
@@ -196,6 +203,7 @@ Brokers also follow different rules in each phase. The consolidation rows apply 
 | --- | --- | --- |
 | Consolidation | Off. The partition runs like a switched partition that doesn't consolidate. | On, from the seal. |
 | Follower at the seal | Leaves the classic fetcher once it's in the ISR, like a follower that doesn't consolidate. | Leaves the classic fetcher and consolidates from the seal. |
+| Replica with a divergent classic prefix | Truncates on the classic fetcher. Only an ISR member can lead. | Deletes and recreates its log before it leads or fetches, and rebuilds it from remote storage. See [Divergent classic tails in phase 2](#divergent-classic-tails-in-phase-2). |
 | Local classic prefix | Kept, and serves reads below the seal. | Deleted. Reads below the seal come from remote storage. |
 | Metadata routing | Clients go to alive ISR members only. | Clients go to any replica, by the managed replica rules. |
 
@@ -233,6 +241,41 @@ A follower below the seal stays on the classic fetcher in phase 2. If the leader
 
 Forced deletion skips a segment that starts below the seal and ends past it, like the one in the last case. Consumers read the prefix part of that segment from remote storage. If the replica leads the partition, a follower below the seal can't fetch that part until local retention deletes the segment. A log directory move on the replica waits for the same deletion. If remote storage is off for the topic, or `remote.log.copy.disable` is `true`, the broker keeps the local prefix and logs a warning. Consumer reads succeed only for offsets that this broker already sees in remote storage.
 
+### Divergent classic tails in phase 2
+
+Any replica can join the ISR or lead in phase 2, including one whose local log contains records below the seal that the partition doesn't hold. Such a replica led an older leader epoch and wrote records that the next leader didn't have. An unclean leader election before the switch can also discard records below the replica's high watermark, so the high watermark doesn't identify the replica. Forced deletion keeps the leader epoch cache, and the remote log manager uses that cache to pick remote segments. With a divergent cache, a tiered read fails with `OFFSET_OUT_OF_RANGE` and the consumer resets its offset. On an idle topic, the highest offset in remote storage also stays below the seal, so forced deletion never completes.
+
+The leader that requests the phase 2 flag records the leader epoch of its record at `seal - 1` as `lastClassicLeaderEpoch`. Each leader epoch has one leader, and a follower truncates to the leader's log before it appends. If a replica's leader epoch cache has `lastClassicLeaderEpoch` at `seal - 1`, its records below the seal match the records in remote storage.
+
+If consolidation is on, a replica checks its local log when it first applies the partition and on every new leader epoch. The broker first stops every fetcher of the partition, including the fetcher of a log directory move, so no fetcher changes the logs during the check. They start again after the leadership change. The replica keeps its log only if all of these are true:
+
+* Its last record below the seal, if it has one, is in `lastClassicLeaderEpoch`.
+* Consolidation wrote all its records past the seal, in the diskless leader epoch. A replica that missed the seal commit can still hold a classic tail past the seal.
+* Its highest offset in remote storage is below its log end offset. That offset only grows, so a replica that uploaded records and then truncated them keeps it. The WAL pruner would then delete diskless batches that consolidation hasn't uploaded yet. The remote log tasks compute that offset without the log lock, and they install it only if the log didn't truncate in the meantime. So a task that read records that a truncation removed, such as the phase 1 truncation to the seal, can't raise the offset after the check.
+* If a log directory move runs, its future log ends in the leader epoch that the current log has at the same offset. The broker replaces the current log with the future log once both logs end at the same offset, and it doesn't compare their leader epoch caches.
+
+Otherwise, the broker stops the replica as it stops a deleted partition. It deletes the current and future logs and cancels the remote log tasks of the partition. It keeps the remote log metadata subscription, because the partition stays on the broker. The leadership change in the same metadata delta creates an empty log. The replica then rebuilds its log, leader epoch cache, and producer state from remote storage, like a replica that lost its local log. The new log has no remote progress until the remote log manager computes it from the rebuilt log, so the WAL pruner doesn't delete diskless batches before then. A remote log task that still runs updates only the deleted log. The broker never truncates a log that it keeps, so a kept log only grows.
+
+A storage error can stop the deletion of one of the logs. A future log that the broker didn't delete would restart the log directory move on the new log. So if the broker can't delete both logs or cancel the remote log tasks, it marks the replica offline, as it does after a storage error in a leadership change. The broker cancels the remote log tasks even if a deletion fails, so no copy task keeps the remote progress of the old log.
+
+In phase 2, every rebuild from remote storage starts the local log at the seal. Upstream tiered storage looks up the remote segment that holds the record before the local log start of the source. A classic leader or the current log of a log directory move can still hold local records below the seal, and a segment from a discarded epoch can hold that record too. The tier-state machine looks up the segment that holds `seal - 1` in `lastClassicLeaderEpoch` instead, whatever the local log start of the source is. Each leader epoch has one leader, so the records of that segment below the seal are the committed prefix, even if the segment also covers discarded records past the seal:
+
+* The tier-state machine keeps the epochs of that segment that start below the seal.
+* If the segment ends past the seal, the tier-state machine doesn't restore its producer snapshot. The producer state starts empty at the seal. Sealing aborts undecided transactions, and no transaction is open there.
+* A leader then reads the records from the seal on through consolidation. A follower on the classic fetcher ends at the seal and hands off to consolidation. For more information, see [Forced deletion of the local classic prefix](#forced-deletion-of-the-local-classic-prefix).
+
+The record that starts phase 2 bumps the leader epoch. Live replicas then become the leader or followers of a new leader epoch, and run the check. A replica that is offline then, or that a reassignment adds later, runs it when it first applies the partition. Changes that keep the leader epoch, such as ISR changes, don't restart the fetchers, and the replica skips the check for them.
+
+For a replica whose log ends below the seal, the check compares the epoch of its last record. The broker recreates such a replica if its last record is in an older epoch, even when its records match, which costs only the rebuild. Replicas skip the check if `lastClassicLeaderEpoch` is `-1`, and their rebuilds use the upstream lookup. These partitions keep the behavior from before the check. The value is `-1` in these cases:
+
+* The prefix was empty when the leader requested the flag, or retention had already removed it.
+* A leader or a controller without this field set the flag before or during a rolling upgrade.
+* A controller without this field wrote a metadata snapshot. A node that doesn't know tag `104` drops it from the snapshots that it writes.
+
+The controller sets the flag only once and doesn't record the epoch for these partitions later.
+
+After an unclean leader election before the switch, a remote segment that crosses the seal still serves tiered reads below the seal. Consumers that read through it receive the discarded records past the seal in place of the diskless records at the same offsets. Upstream tiered storage has the same gap after an unclean leader election.
+
 ## Operator override of the seal offset
 
 The normal flow above is leader-driven: the broker proposes the seal offset and the controller validates it. For recovery and manual intervention, the `kafka-topic-switch.sh seal` operator command can override the seal state of a single partition directly, without being the partition leader. It is backed by the `AlterDisklessSwitch` controller RPC (admin → controller, authorized as `ALTER` on the cluster), which writes a `PartitionChangeRecord` carrying the requested `classicToDisklessStartOffset`. It is a recovery tool for a topic that is being switched, not a way to start a switch, so the controller rejects it unless the topic already has `diskless.enable=true`.
@@ -245,7 +288,7 @@ The negative (abort / re-arm) offsets are only accepted while the switch is stil
 
 The controller rejects every seal offset, including a downward correction, once the partition is in phase 2 (`classicPrefixInRemoteStorage` is `true`). At that point remote storage holds the classic prefix up to the committed seal, so a change would leave the two out of agreement. The request fails with `INVALID_REQUEST`.
 
-Because a negative offset means the partition is not switched, `merge` also drops the dependent switch metadata (producer states + the diskless leader epoch) whenever an explicit negative `classicToDisklessStartOffset` is applied. This prevents stale state from a previous switch attempt surviving an abort or re-arm; the next `InitDisklessLog` flow re-captures both.
+A negative offset means that the partition is classic. When `merge` applies an explicit negative `classicToDisklessStartOffset`, it also drops the producer states and the diskless leader epoch, and resets `lastClassicLeaderEpoch` to `-1`. No state from an earlier switch attempt remains after an operator cancels or re-arms the switch. The next `InitDisklessLog` flow captures the producer states and the diskless leader epoch again, and the next phase 2 flag records `lastClassicLeaderEpoch`.
 
 The command validates before committing: for a concrete (`>= 0`) seal it requires the seal offset to fall within the classic log range `[logStartOffset, logEndOffset]` (read via `listOffsets`), so the seal cannot point past the end of the log or below its start — in either case the classic log would be missing offsets it is supposed to own. Note the end offset is the leader's log end offset, not the replication high watermark, so this does not by itself prove every in-sync replica has replicated up to the seal. The `--dry-run` flag performs this validation and reports the action without writing anything.
 

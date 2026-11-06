@@ -278,6 +278,8 @@ The controller captures a frozen diskless leader epoch (`disklessLeaderEpoch`) a
 - `ConsolidationFetcherThread.maybeStampDisklessLeaderEpoch` stamps the diskless leader epoch onto each materialized batch in place (the partition leader epoch is outside the batch CRC, so no checksum recompute is needed). Born-diskless partitions with no diskless leader epoch are left at epoch 0.
 - `DisklessLeaderEndPoint.fetchEpochEndOffsets` answers `OffsetsForLeaderEpoch` for followers:
   - A queried epoch below the diskless leader epoch returns the seal, so a stale classic tail past the seal truncates back to it. Collapsing every classic epoch to the seal is correct because the classic prefix `[0, seal)` is committed and identical across replicas.
+  - A replica with a divergent prefix deletes and recreates its log before it consolidates. For more information, see [Divergent classic tails in phase 2](CLASSIC_TO_DISKLESS_SWITCH.md#divergent-classic-tails-in-phase-2).
+  - In phase 2, the tier-state machine doesn't use this answer to rebuild the prefix. It looks up the remote segment that holds `seal - 1` in `lastClassicLeaderEpoch` and starts the local log at the seal.
   - A queried epoch equal to or greater than the diskless leader epoch (or a born-diskless partition without one) returns the current diskless LEO.
 
 `DisklessLeaderEndPoint.resolveLeaderEpoch` applies the same region logic to list-offsets results, because `FetchOffsetHandler` stamps a placeholder epoch of 0 that cannot be trusted.
@@ -328,6 +330,8 @@ When consolidation is enabled, the enforcer reads `isConsolidatingDisklessTopic`
 5. On success, `maybeAdvanceConsolidationPruneFloor` advances the partition's consolidation prune floor.
 
 The reconciler sets the prune floor to at least `max(seal, logStartOffset)` when it arms consolidation (`ensureConsolidationPruneFloorAtLeast`), so a switched partition's classic prefix is never pruned from the WAL before it is safely in remote storage.
+
+`highestOffsetInRemoteStorage` only grows. A truncation keeps it. A replica that led an older epoch can upload a classic tail past the seal before an unclean leader election replaces it. If that replica kept its log, the pruner on it would delete the diskless batches from the seal on before consolidation uploads them. In phase 2, the broker recreates a replica whose classic tail runs past the seal or whose highest offset in remote storage isn't below its log end offset. A remote log task that read the log before a truncation doesn't install the offset that it computed, so a log that the broker keeps never gets that offset. For more information, see [Divergent classic tails in phase 2](CLASSIC_TO_DISKLESS_SWITCH.md#divergent-classic-tails-in-phase-2).
 
 #### A replica that rebuilds again and again
 

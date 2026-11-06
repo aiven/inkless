@@ -92,9 +92,12 @@ import java.util.Properties;
 import java.util.Random;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -558,6 +561,94 @@ public class UnifiedLogTest {
         assertThrows(IllegalStateException.class, () -> log.forceDeleteLocalSegmentsBelow(1L));
         assertEquals(0L, log.localLogStartOffset());
         assertEquals(1L, log.logEndOffset());
+    }
+
+    @Test
+    public void testUpdateHighestOffsetInRemoteStorageIgnoresOffsetComputedBeforeTruncation() throws IOException {
+        // A remote log task reads the truncation count while the log ends at 15, and the classic-to-diskless seal
+        // at 10 then truncates the log. The offset 14 that the task computed comes from records that the log no
+        // longer has.
+        log = createLog(logDir, new LogTestUtils.LogConfigBuilder().remoteLogStorageEnable(true).build(), true);
+        for (int i = 0; i < 15; i++) {
+            log.appendAsLeader(singletonRecords("test".getBytes(), "test".getBytes(), 10L), 0);
+        }
+        long truncationCount = log.truncationCount();
+        assertFalse(log.truncateTo(15L));
+        assertEquals(truncationCount, log.truncationCount());
+
+        assertTrue(log.truncateTo(10L));
+        log.updateHighestOffsetInRemoteStorage(14L, truncationCount);
+        assertEquals(-1L, log.highestOffsetInRemoteStorage());
+        log.updateHighestOffsetInRemoteStorage(9L, log.truncationCount());
+        assertEquals(9L, log.highestOffsetInRemoteStorage());
+
+        truncationCount = log.truncationCount();
+        log.truncateFullyAndStartAt(20L, Optional.empty());
+        log.updateHighestOffsetInRemoteStorage(19L, truncationCount);
+        assertEquals(9L, log.highestOffsetInRemoteStorage());
+    }
+
+    @Test
+    public void testTruncationCountWaitsForRunningTruncation() throws Exception {
+        // The truncation to 10 pauses after it counts itself and deletes the segment [12, 15), before it truncates
+        // the leader epoch cache. A remote log task that read the new count then would pair it with epoch 1, which
+        // the truncation removes, and the log would accept the offset that the task computed from it.
+        CountDownLatch truncationPaused = new CountDownLatch(1);
+        CountDownLatch resumeTruncation = new CountDownLatch(1);
+        Scheduler scheduler = new Scheduler() {
+            @Override
+            public void startup() {
+                mockTime.scheduler.startup();
+            }
+
+            @Override
+            public void shutdown() throws InterruptedException {
+                mockTime.scheduler.shutdown();
+            }
+
+            @Override
+            public ScheduledFuture<?> schedule(String name, Runnable task, long delayMs, long periodMs) {
+                if (name.equals("delete-file") && truncationPaused.getCount() > 0) {
+                    truncationPaused.countDown();
+                    try {
+                        resumeTruncation.await();
+                    } catch (InterruptedException e) {
+                        throw new RuntimeException(e);
+                    }
+                }
+                return mockTime.scheduler.schedule(name, task, delayMs, periodMs);
+            }
+
+            @Override
+            public void resizeThreadPool(int newSize) {
+                mockTime.scheduler.resizeThreadPool(newSize);
+            }
+        };
+        Supplier<MemoryRecords> records = () -> singletonRecords("test".getBytes(), "test".getBytes(), 10L);
+        LogConfig config = new LogTestUtils.LogConfigBuilder()
+                .segmentBytes(records.get().sizeInBytes() * 3)
+                .remoteLogStorageEnable(true)
+                .build();
+        log = createLog(logDir, config, 0L, 0L, brokerTopicStats, scheduler, mockTime, producerStateManagerConfig,
+                true, Optional.empty(), true);
+        for (int i = 0; i < 15; i++) {
+            log.appendAsLeader(records.get(), i < 10 ? 0 : 1);
+        }
+        long truncationCount = log.truncationCount();
+
+        CompletableFuture<Boolean> truncation = CompletableFuture.supplyAsync(() -> log.truncateTo(10L));
+        CompletableFuture<Long> countRead;
+        try {
+            assertTrue(truncationPaused.await(30, TimeUnit.SECONDS));
+            countRead = CompletableFuture.supplyAsync(log::truncationCount);
+            assertThrows(TimeoutException.class, () -> countRead.get(200, TimeUnit.MILLISECONDS));
+            assertEquals(Optional.of(new EpochEntry(1, 10L)), log.leaderEpochCache().latestEntry());
+        } finally {
+            resumeTruncation.countDown();
+        }
+        assertTrue(truncation.get(30, TimeUnit.SECONDS));
+        assertEquals(truncationCount + 1, countRead.get(30, TimeUnit.SECONDS));
+        assertEquals(Optional.of(new EpochEntry(0, 0L)), log.leaderEpochCache().latestEntry());
     }
 
     @Test

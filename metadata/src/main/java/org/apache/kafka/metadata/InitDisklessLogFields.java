@@ -39,6 +39,7 @@ public final class InitDisklessLogFields {
     public static final int PRODUCER_STATES_TAG = 101;
     public static final int DISKLESS_LEADER_EPOCH_TAG = 102;
     public static final int CLASSIC_PREFIX_IN_REMOTE_STORAGE_TAG = 103;
+    public static final int LAST_CLASSIC_LEADER_EPOCH_TAG = 104;
 
     private InitDisklessLogFields() {}
 
@@ -158,5 +159,25 @@ public final class InitDisklessLogFields {
 
     public static boolean decodeClassicPrefixInRemoteStorage(List<RawTaggedField> taggedFields) {
         return decodeClassicPrefixInRemoteStorageIfPresent(taggedFields).orElse(false);
+    }
+
+    // --- lastClassicLeaderEpoch (tag 104): a single int32 ---
+    // The leader epoch of the record at seal - 1, from the leader that sets classicPrefixInRemoteStorage.
+    // Only an ISR member leads in phase 1, so it's the epoch of the committed classic history, and it selects
+    // the remote segment that holds seal - 1.
+
+    public static RawTaggedField encodeLastClassicLeaderEpoch(int lastClassicLeaderEpoch) {
+        byte[] data = new byte[4];
+        ByteBuffer.wrap(data).putInt(lastClassicLeaderEpoch);
+        return new RawTaggedField(LAST_CLASSIC_LEADER_EPOCH_TAG, data);
+    }
+
+    public static int decodeLastClassicLeaderEpoch(List<RawTaggedField> taggedFields) {
+        for (RawTaggedField field : taggedFields) {
+            if (field.tag() == LAST_CLASSIC_LEADER_EPOCH_TAG) {
+                return ByteBuffer.wrap(field.data()).getInt();
+            }
+        }
+        return PartitionRegistration.NO_LAST_CLASSIC_LEADER_EPOCH;
     }
 }
