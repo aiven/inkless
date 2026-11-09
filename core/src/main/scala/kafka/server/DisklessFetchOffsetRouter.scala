@@ -131,8 +131,12 @@ class DisklessFetchOffsetRouter(
     } else if (isSwitchedWithClassicAccess || isConsolidatingPartition) {
       // Case 2: hybrid, route by timestamp.
       partition.timestamp() match {
-        case ListOffsetsRequest.EARLIEST_LOCAL_TIMESTAMP | ListOffsetsRequest.LATEST_TIERED_TIMESTAMP =>
+        case ListOffsetsRequest.EARLIEST_LOCAL_TIMESTAMP |
+             ListOffsetsRequest.LATEST_TIERED_TIMESTAMP |
+             ListOffsetsRequest.EARLIEST_PENDING_UPLOAD_TIMESTAMP =>
           // These timestamps reference the local UnifiedLog / tiered storage; never route to diskless.
+          // A follower with `follower.fetch.last.tiered.offset.enable` asks for the earliest pending
+          // upload offset, which only the local log knows.
           classicLookup()
 
         case ListOffsetsRequest.EARLIEST_TIMESTAMP =>
