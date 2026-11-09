@@ -91,6 +91,10 @@ gh pr create --base inkless-4.0 --label upstream --title "chore(inkless): sync i
 Label sync PRs `upstream`. The `Inkless PR labels` workflow adds it for
 `inkless-*-sync-*` branches and for PRs whose merge commit has an `apache/kafka` parent.
 
+### Step 9: merge the PR
+
+After CI is green and a reviewer approves the PR, choose **Create a merge commit**. Don't squash or rebase. Follow [Land the sync](RELEASE-SYNC-GUIDE.md#land-the-sync). Then tag the new head.
+
 ## Conflict Resolution Playbook
 
 ### Version Files
