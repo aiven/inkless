@@ -815,6 +815,22 @@ public class RequestResponseTest {
     }
 
     @Test
+    public void testAlterDisklessSwitchRequestV0FailsWithRecoveryFields() {
+        List<AlterDisklessSwitchRequestData> recoveries = List.of(
+            new AlterDisklessSwitchRequestData().setLeaderId(2),
+            new AlterDisklessSwitchRequestData().setClassicPrefixInRemoteStorage(true),
+            new AlterDisklessSwitchRequestData().setLastClassicLeaderEpoch(5));
+        for (AlterDisklessSwitchRequestData data : recoveries) {
+            AlterDisklessSwitchRequest.Builder builder = new AlterDisklessSwitchRequest.Builder(
+                data.setTopicName("foo").setPartitionIndex(0).setSealOffset(100L));
+            assertThrows(UnsupportedVersionException.class, () -> builder.build((short) 0));
+            builder.build((short) 1);
+        }
+        new AlterDisklessSwitchRequest.Builder(new AlterDisklessSwitchRequestData()
+            .setTopicName("foo").setPartitionIndex(0).setSealOffset(100L)).build((short) 0);
+    }
+
+    @Test
     public void testListGroupRequestV3FailsWithStates() {
         ListGroupsRequestData data = new ListGroupsRequestData()
                 .setStatesFilter(singletonList(GroupState.STABLE.name()));
@@ -1325,6 +1341,9 @@ public class RequestResponseTest {
                 .setTopicName("foo")
                 .setPartitionIndex(0)
                 .setSealOffset(100L);
+        if (version >= 1) {
+            data.setClassicPrefixInRemoteStorage(true).setLastClassicLeaderEpoch(5);
+        }
         return new AlterDisklessSwitchRequest.Builder(data).build(version);
     }
 

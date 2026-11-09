@@ -18,7 +18,9 @@
   "type": "request",
   "listeners": ["broker", "controller"],
   "name": "AlterDisklessSwitchRequest",
-  "validVersions": "0",
+  // Version 1 adds LeaderId, ClassicPrefixInRemoteStorage, and LastClassicLeaderEpoch. Writing them at version 0
+  // fails, so a controller that only supports version 0 never runs a seal override in place of a recovery.
+  "validVersions": "0-1",
   "flexibleVersions": "0+",
   "fields": [
     { "name": "TopicName", "type": "string", "versions": "0+", "entityType": "topicName",
@@ -29,14 +31,11 @@
       "about": "The classic-to-diskless start offset to commit: >= 0 forces (re-)sealing at that offset, -1 aborts the switch and reverts the partition to classic, and -2 re-arms the switch as pending." },
     { "name": "ClearProducerStates", "type": "bool", "versions": "0+", "default": "false",
       "about": "When forcing a seal (SealOffset >= 0), whether to clear the committed producer states. Ignored for negative seal offsets, which always clear them." },
-    { "name": "LeaderId", "type": "int32", "versions": "0+", "taggedVersions": "0+", "tag": 0,
-      "default": "-1", "entityType": "brokerId",
+    { "name": "LeaderId", "type": "int32", "versions": "1+", "default": "-1", "entityType": "brokerId",
       "about": "In phase 1 of the switch, the replica to elect as the only ISR member, even if it's outside the ISR, or -1 to keep the leader. SealOffset must be the committed seal." },
-    { "name": "ClassicPrefixInRemoteStorage", "type": "bool", "versions": "0+", "taggedVersions": "0+", "tag": 1,
-      "default": "false",
+    { "name": "ClassicPrefixInRemoteStorage", "type": "bool", "versions": "1+", "default": "false",
       "about": "In phase 1 of the switch, whether to set classicPrefixInRemoteStorage and start phase 2 at SealOffset, which can be below the committed seal. The partition loses the records from SealOffset to the committed seal." },
-    { "name": "LastClassicLeaderEpoch", "type": "int32", "versions": "0+", "taggedVersions": "0+", "tag": 2,
-      "default": "-1",
+    { "name": "LastClassicLeaderEpoch", "type": "int32", "versions": "1+", "default": "-1",
       "about": "With ClassicPrefixInRemoteStorage, the leader epoch of the record at SealOffset - 1 in remote storage, or -1 if SealOffset is 0." }
   ]
 }

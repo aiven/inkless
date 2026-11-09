@@ -17,6 +17,7 @@
 
 package org.apache.kafka.common.requests;
 
+import org.apache.kafka.common.errors.UnsupportedVersionException;
 import org.apache.kafka.common.message.AlterDisklessSwitchRequestData;
 import org.apache.kafka.common.message.AlterDisklessSwitchResponseData;
 import org.apache.kafka.common.protocol.ApiKeys;
@@ -34,6 +35,11 @@ public class AlterDisklessSwitchRequest extends AbstractRequest {
 
         @Override
         public AlterDisklessSwitchRequest build(short version) {
+            if (version < 1 && (data.leaderId() != -1 || data.classicPrefixInRemoteStorage() ||
+                    data.lastClassicLeaderEpoch() != -1)) {
+                throw new UnsupportedVersionException("Recovering a phase 1 partition needs AlterDisklessSwitch " +
+                    "version 1, but the node supports only version " + version + ".");
+            }
             return new AlterDisklessSwitchRequest(data, version);
         }
 

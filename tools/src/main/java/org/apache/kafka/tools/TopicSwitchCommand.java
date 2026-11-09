@@ -213,7 +213,7 @@ public abstract class TopicSwitchCommand {
                 .type(Integer.class)
                 .required(true)
                 .help("The broker ID of the replica to elect. The command doesn't check its log: elect only a "
-                        + "replica whose high watermark is at or past the seal.");
+                        + "replica that has the committed records up to the seal.");
         startPhaseTwoParser.addArgument("--offset", "-o")
                 .action(store())
                 .type(Long.class)
@@ -401,6 +401,9 @@ public abstract class TopicSwitchCommand {
 
     static void electCommand(PrintStream stream, Admin adminClient, String topic, int partition, int replica,
                              boolean dryRun) throws Exception {
+        if (replica < 0) {
+            throw new RuntimeException("Invalid replica " + replica + "; must be a broker ID >= 0.");
+        }
         long seal = readPhaseOneSeal(adminClient, topic, partition);
         if (dryRun) {
             stream.printf("[dry-run] Would elect broker %d as the leader of %s-%d at seal %d.%n",

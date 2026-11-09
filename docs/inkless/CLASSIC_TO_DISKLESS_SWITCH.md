@@ -251,6 +251,7 @@ If consolidation is on, a replica checks its local log when it first applies the
 
 * Its last record below the seal, if it has one, is in `lastClassicLeaderEpoch`.
 * Consolidation wrote all its records past the seal, in the diskless leader epoch. A replica that missed the seal commit can still hold a classic tail past the seal.
+* If its log end offset is at or past the seal, it has no undecided transaction that starts below the seal. Sealing aborts them, but an operator who lowers the seal can cut a transaction off from its marker. Diskless storage can't complete that transaction, so the last stable offset of the replica would remain below the seal.
 * Its highest offset in remote storage is below its log end offset. That offset only grows, so a replica that uploaded records and then truncated them keeps it. The WAL pruner would then delete diskless batches that consolidation hasn't uploaded yet. The remote log tasks compute that offset without the log lock, and they install it only if the log didn't truncate in the meantime. So a task that read records that a truncation removed, such as the phase 1 truncation to the seal, can't raise the offset after the check.
 * If a log directory move runs, its future log ends in the leader epoch that the current log has at the same offset. The broker replaces the current log with the future log once both logs end at the same offset, and it doesn't compare their leader epoch caches. A future log that ends at or below the log start offset of the current log also passes. Retention or `DeleteRecords` can move that log start while a partly copied move waits behind other moves. The current log then holds none of the records of the future log, and the move fetcher drops them on its next fetch.
 
@@ -262,6 +263,7 @@ In phase 2, every rebuild from remote storage starts the local log at the seal. 
 
 * The tier-state machine keeps the epochs of that segment that start below the seal.
 * If the segment ends past the seal, the tier-state machine doesn't restore its producer snapshot. The producer state starts empty at the seal. Sealing aborts undecided transactions, and no transaction is open there.
+* If the snapshot that it restores has an undecided transaction, the producer state also starts empty at the seal. Only a seal that an operator lowered can leave a transaction without its marker.
 * A leader then reads the records from the seal on through consolidation. A follower on the classic fetcher ends at the seal and hands off to consolidation. For more information, see [Forced deletion of the local classic prefix](#forced-deletion-of-the-local-classic-prefix).
 
 The record that starts phase 2 bumps the leader epoch. Live replicas then become the leader or followers of a new leader epoch, and run the check. A replica that is offline then, or that a reassignment adds later, runs it when it first applies the partition. Changes that keep the leader epoch, such as ISR changes, don't restart the fetchers, and the replica skips the check for them.
@@ -298,7 +300,7 @@ The command also reads the partition when you omit `--offset` or pass an offset 
 
 In phase 1, the part of the classic prefix that the remote log manager hasn't copied yet exists only on local disks. If a leader's log ends below the seal, the broker takes the partition offline. The controller elects only ISR members. Only a leader with the whole prefix requests `classicPrefixInRemoteStorage`. So if every ISR member loses its local log, the partition remains offline until an operator recovers it. A topic with a replication factor of 1 hits this case when its only replica loses its disk.
 
-Two `kafka-topic-switch.sh` subcommands recover the partition. Both need `--bootstrap-server`, accept `--dry-run`, and send an `AlterDisklessSwitch` request. The controller accepts them only in phase 1 with a committed seal:
+Two `kafka-topic-switch.sh` subcommands recover the partition. Both need `--bootstrap-server`, accept `--dry-run`, and send version 1 of the `AlterDisklessSwitch` request. If the broker or the controller supports only version 0, the command fails before it sends the request. The controller accepts them only in phase 1 with a committed seal:
 
 * `elect --replica <id>`: the controller elects that replica even if it's outside the ISR, and sets the ISR to that replica alone. The replica must be active, and its log directory must be online. The partition keeps every record.
 * `start-phase-2 --offset <seal> --last-classic-leader-epoch <epoch>`: the controller sets `classicPrefixInRemoteStorage` as it does for the leader's request, and lowers the seal to `--offset`. The partition loses the records from the new seal to the committed seal.
@@ -312,6 +314,12 @@ Elect a replica whose high watermark is at or past the committed seal. A replica
 ```bash
 grep '^orders 0 ' /var/lib/kafka/data/replication-offset-checkpoint
 bin/kafka-topic-switch.sh elect --bootstrap-server localhost:9092 --topic orders --partition 0 --replica 2
+```
+
+If the partition had an unclean leader election, the high watermark isn't enough. A replica that was offline since before that election still contains the records that the election discarded, even below its high watermark. The controller logs each unclean election with `using an unclean election` and the previous partition state, and the election starts the next leader epoch. Elect the replica only if its `leader-epoch-checkpoint` file lists that epoch or a later one. A replica with a record in such an epoch truncated its log to match a leader that followed the election. Otherwise, start phase 2.
+
+```bash
+cat /var/lib/kafka/data/orders-0/leader-epoch-checkpoint
 ```
 
 The new leader watches the upload and requests `classicPrefixInRemoteStorage`, as in [Step 6](#step-6-request-the-classicprefixinremotestorage-flag). If its log ends below the seal, it takes the partition offline again, and you can elect another replica.
@@ -339,6 +347,8 @@ bin/kafka-topic-switch.sh start-phase-2 --bootstrap-server localhost:9092 --topi
 ```
 
 The controller rejects an offset past the committed seal and an epoch outside `[-1, leader epoch]`. Its record sets the lower seal, `classicPrefixInRemoteStorage`, and `lastClassicLeaderEpoch`. The same record adds every active replica to the ISR and elects a leader if the current one isn't active. Diskless storage still starts at the committed seal. A consumer that reads from an offset in the lost range gets the records from the committed seal on.
+
+The lost range can hold the marker of a transaction that starts below the new seal. That transaction then has no outcome. Replicas rebuild without it, so `read_committed` consumers receive its records below the new seal.
 
 If the offset is below the committed seal, run `repair` afterward so that the control plane agrees on the seal. For more information, see [Reconciling the control plane](#reconciling-the-control-plane). Consolidation keeps the WAL start at the end of remote storage. For more information, see [DISKLESS_CONSOLIDATION.md](DISKLESS_CONSOLIDATION.md).
 

@@ -59,6 +59,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalLong;
 
 import static org.apache.kafka.storage.internals.log.LogStartOffsetIncrementReason.LeaderOffsetIncremented;
 
@@ -315,6 +316,16 @@ public class TierStateMachine {
         // producer state that the truncation leaves is correct at the seal.
         if (remoteLogSegmentMetadata.endOffset() + 1 == seal) {
             buildProducerSnapshotFile(unifiedLog, seal, remoteLogSegmentMetadata, rlm);
+            // An operator who lowers the seal can cut a transaction off from its marker. Diskless storage can't
+            // complete the transaction, which would hold the last stable offset below the seal.
+            OptionalLong firstUndecidedOffset = unifiedLog.producerStateManager().firstUndecidedOffset();
+            if (firstUndecidedOffset.isPresent()) {
+                log.warn("Remote segment {} for {} ends in a transaction from offset {} without a marker below the " +
+                        "classic-to-diskless seal {}; starting the producer state empty at the seal",
+                        remoteLogSegmentMetadata.remoteLogSegmentId(), topicPartition, firstUndecidedOffset.getAsLong(), seal);
+                unifiedLog.producerStateManager().truncateFullyAndStartAt(seal);
+                unifiedLog.loadProducerState(seal);
+            }
         } else {
             log.warn("Remote segment {} for {} ends at {}, past the classic-to-diskless seal {}; rebuilding up to the seal",
                     remoteLogSegmentMetadata.remoteLogSegmentId(), topicPartition, remoteLogSegmentMetadata.endOffset(), seal);

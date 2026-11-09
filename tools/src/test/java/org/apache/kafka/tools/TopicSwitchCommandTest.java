@@ -60,6 +60,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -487,6 +488,15 @@ public class TopicSwitchCommandTest {
 
         verify(adminClient, never()).alterDisklessSwitch(any(), anyInt(), anyLong(), any());
         assertTrue(output.contains("[dry-run] Would elect broker 2"), output);
+    }
+
+    @Test
+    public void testElectRejectsNegativeReplica() {
+        for (boolean dryRun : List.of(true, false)) {
+            RuntimeException ex = assertThrows(RuntimeException.class, () -> runElectCommand(-1, dryRun));
+            assertTrue(ex.getMessage().contains("Invalid replica -1"), ex.getMessage());
+        }
+        verifyNoInteractions(adminClient);
     }
 
     @Test
