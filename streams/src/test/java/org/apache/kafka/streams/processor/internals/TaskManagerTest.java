@@ -78,6 +78,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
@@ -287,6 +288,65 @@ public class TaskManagerTest {
 
         verify(schedulingTaskManager).lockTasks(Set.of(taskId00, taskId01));
         verify(schedulingTaskManager).unlockTasks(Set.of(taskId00, taskId01));
+    }
+
+    @Test
+    public void shouldFailStreamThreadIfStateUpdaterDied() {
+        final RuntimeException fatalException = new RuntimeException("KABOOM!");
+        when(stateUpdater.fatalException()).thenReturn(Optional.of(fatalException));
+
+        final StreamsException thrown = assertThrows(
+            StreamsException.class,
+            () -> taskManager.checkStateUpdater(time.milliseconds(), noOpResetter)
+        );
+
+        assertEquals("The state updater died and cannot update tasks anymore.", thrown.getMessage());
+        assertEquals(fatalException, thrown.getCause());
+    }
+
+    @Test
+    public void shouldNotRecreateActiveTasksThatAreAlreadyOwned() {
+        // Real-registry regression test reproducing the crash end-to-end on the active path (reached with
+        // num.standby.replicas=0). A task whose init throws is left owned-and-failed; handleAssignment's rectify
+        // pass skips failed tasks, so a second assignment used to build a second representation in createNewTasks
+        // that, once it also failed init, tripped the single-owner invariant in Tasks and killed the StreamThread.
+        final StreamTask task00 = statefulTask(taskId00, taskId00ChangelogPartitions)
+            .withInputPartitions(taskId00Partitions)
+            .inState(State.CREATED).build();
+        when(activeTaskCreator.createTasks(consumer, taskId00Assignment)).thenReturn(singletonList(task00));
+        doThrow(new RuntimeException("KABOOM!")).when(task00).initializeIfNeeded();
+
+        // first assignment: 0_0 is created, its init fails, and it is left owned-but-failed in the registry
+        taskManager.handleAssignment(taskId00Assignment, emptyMap());
+        assertThrows(StreamsException.class, () -> taskManager.checkStateUpdater(time.milliseconds(), noOpResetter));
+
+        // second assignment of the same owned-but-failed task must not build a second representation
+        taskManager.handleAssignment(taskId00Assignment, emptyMap());
+        taskManager.checkStateUpdater(time.milliseconds(), noOpResetter); // must not throw "already own: 0_0"
+
+        verify(activeTaskCreator, times(1)).createTasks(consumer, taskId00Assignment);
+    }
+
+    @Test
+    public void shouldNotRecreateStandbyTasksThatAreAlreadyOwned() {
+        // The same guard must protect the standby side -- the original standby/active recycle crash, reached with
+        // num.standby.replicas>=1. An owned-but-failed standby that is re-assigned must not be rebuilt, or the
+        // duplicate trips "Attempted to create an standby task that we already own".
+        final StandbyTask task00 = standbyTask(taskId00, taskId00ChangelogPartitions)
+            .withInputPartitions(taskId00Partitions)
+            .inState(State.CREATED).build();
+        when(standbyTaskCreator.createTasks(taskId00Assignment)).thenReturn(singletonList(task00));
+        doThrow(new RuntimeException("KABOOM!")).when(task00).initializeIfNeeded();
+
+        // first assignment: 0_0 standby is created, its init fails, and it is left owned-but-failed
+        taskManager.handleAssignment(emptyMap(), taskId00Assignment);
+        assertThrows(StreamsException.class, () -> taskManager.checkStateUpdater(time.milliseconds(), noOpResetter));
+
+        // second assignment of the same owned-but-failed standby must not build a second representation
+        taskManager.handleAssignment(emptyMap(), taskId00Assignment);
+        taskManager.checkStateUpdater(time.milliseconds(), noOpResetter); // must not throw "already own" (standby)
+
+        verify(standbyTaskCreator, times(1)).createTasks(taskId00Assignment);
     }
 
     @Test
@@ -1948,6 +2008,21 @@ public class TaskManagerTest {
     }
 
     @Test
+    public void shouldComputeOffsetSumFromLiveOffsetsForOwnTasks() {
+        final StandbyTask ownStandbyTask = standbyTask(taskId02, taskId02ChangelogPartitions).inState(State.RUNNING).build();
+        when(ownStandbyTask.changelogOffsets()).thenReturn(mkMap(mkEntry(t1p2changelog, 90L)));
+
+        final TasksRegistry tasks = mock(TasksRegistry.class);
+        final TaskManager taskManager = setUpTaskManager(ProcessingMode.AT_LEAST_ONCE, tasks);
+        when(tasks.allInitializedTasksPerId()).thenReturn(Collections.emptyMap());
+        when(stateUpdater.tasks()).thenReturn(Set.of(ownStandbyTask));
+        when(stateDirectory.taskOffsetSums(Collections.singleton(taskId02)))
+            .thenReturn(mkMap(mkEntry(taskId02, 30L)));
+
+        assertThat(taskManager.taskOffsetSums(), is(mkMap(mkEntry(taskId02, 90L))));
+    }
+
+    @Test
     public void shouldSkipUnknownOffsetsWhenComputingOffsetSum() {
         final StreamTask restoringStatefulTask = statefulTask(taskId01, taskId01ChangelogPartitions)
             .inState(State.RESTORING).build();
@@ -3388,9 +3463,8 @@ public class TaskManagerTest {
         verify(stateUpdater).shutdown(Duration.ofMinutes(1L));
     }
 
-    @SuppressWarnings("unchecked")
     @Test
-    public void shouldCloseTasksIfStateUpdaterTimesOutOnRemove() throws Exception {
+    public void shouldCloseTasksIfStateUpdaterFailsRemoval() {
         final StreamTask task00 = statefulTask(taskId00, taskId00ChangelogPartitions)
             .inState(State.RUNNING)
             .withInputPartitions(taskId00Partitions)
@@ -3401,13 +3475,39 @@ public class TaskManagerTest {
         final TaskManager taskManager = setUpTaskManager(ProcessingMode.AT_LEAST_ONCE, tasks, false);
 
         when(stateUpdater.tasks()).thenReturn(singleton(task00));
-        final CompletableFuture<StateUpdater.RemovedTaskResult> future = mock(CompletableFuture.class);
+        final CompletableFuture<StateUpdater.RemovedTaskResult> future = new CompletableFuture<>();
         when(stateUpdater.remove(eq(taskId00), eq(SuspendReason.MIGRATED))).thenReturn(future);
-        when(future.get(anyLong(), any())).thenThrow(new java.util.concurrent.TimeoutException());
+        future.completeExceptionally(new StreamsException("The state updater thread died."));
 
         taskManager.shutdown(true);
 
         verify(task00).closeDirty();
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    public void shouldKeepWaitingForRemovalIfStateUpdaterDoesNotCompleteItWithinLogInterval() throws Exception {
+        final StreamTask task00 = statefulTask(taskId00, taskId00ChangelogPartitions)
+            .inState(State.RUNNING)
+            .withInputPartitions(taskId00Partitions)
+            .build();
+
+        final TasksRegistry tasks = mock(TasksRegistry.class);
+
+        final TaskManager taskManager = setUpTaskManager(ProcessingMode.AT_LEAST_ONCE, tasks, false);
+
+        when(stateUpdater.tasks()).thenReturn(singleton(task00)).thenReturn(emptySet());
+        final CompletableFuture<StateUpdater.RemovedTaskResult> future = mock(CompletableFuture.class);
+        when(future.get(anyLong(), any()))
+            .thenThrow(new java.util.concurrent.TimeoutException())
+            .thenReturn(new StateUpdater.RemovedTaskResult(task00));
+        when(stateUpdater.remove(eq(taskId00), eq(SuspendReason.MIGRATED))).thenReturn(future);
+
+        taskManager.shutdown(true);
+
+        verify(future, times(2)).get(anyLong(), any());
+        verify(tasks).addTask(task00);
+        verify(task00, never()).closeDirty();
     }
 
     @Test

@@ -54,7 +54,7 @@ import java.util.concurrent.ConcurrentSkipListMap;
 
 import static org.apache.kafka.streams.StreamsConfig.InternalConfig.IQ_CONSISTENCY_OFFSET_VECTOR_ENABLED;
 
-public class InMemorySessionStore implements SessionStore<Bytes, byte[]> {
+public class InMemorySessionStore implements SessionStore<Bytes, byte[]>, WithRetentionPeriod {
 
     private static final Logger LOG = LoggerFactory.getLogger(InMemorySessionStore.class);
 
@@ -89,6 +89,11 @@ public class InMemorySessionStore implements SessionStore<Bytes, byte[]> {
         this.retentionPeriod = retentionPeriod;
         this.metricScope = metricScope;
         this.position = Position.emptyPosition();
+    }
+
+    @Override
+    public long retentionPeriod() {
+        return retentionPeriod;
     }
 
     @Override
@@ -159,8 +164,8 @@ public class InMemorySessionStore implements SessionStore<Bytes, byte[]> {
             if (windowEndTimestamp <= observedStreamTime - retentionPeriod) {
                 // The provided context is not required to implement InternalProcessorContext,
                 // If it doesn't, we can't record this metric (in fact, we wouldn't have even initialized it).
-                if (expiredRecordSensor != null && context != null) {
-                    expiredRecordSensor.record(1.0d, context.currentSystemTimeMs());
+                if (expiredRecordSensor != null) {
+                    expiredRecordSensor.record();
                 }
                 LOG.warn("Skipping record for expired segment.");
             } else {
