@@ -223,7 +223,6 @@ In phase 2, a read of the local prefix never returns local records. This rule ap
 * The broker updates its metadata cache before it applies the delta, so a fetch can see the flag before the deletion runs.
 * The remote log metadata on this broker doesn't cover the prefix yet.
 * A fetch that waited in purgatory since phase 1 completes in phase 2.
-* A follower started consolidating on a release that didn't wait for phase 2. It appended the first diskless records to the segment that ends the prefix.
 
 The broker checks the records that each read returns, not the log offsets before the read. So the rule also holds while the deletion runs and after a log directory move swaps the log. A read that hits the local prefix also queues the deletion again.
 
@@ -231,7 +230,7 @@ A log directory move copies the prefix into the future log, and the deletion on 
 
 A follower below the seal stays on the classic fetcher in phase 2. If the leader already deleted that part of its local log, it returns `OFFSET_MOVED_TO_TIERED_STORAGE`, and the follower rebuilds its log from remote storage. When the follower's local LEO equals the seal, it deletes any part of the prefix it fetched and hands off to consolidation.
 
-Forced deletion skips a segment that starts below the seal and ends past it, like the one in the last case. Consumers read the prefix part of that segment from remote storage. If the replica leads the partition, a follower below the seal can't fetch that part until local retention deletes the segment. A log directory move on the replica waits for the same deletion. If remote storage is off for the topic, or `remote.log.copy.disable` is `true`, the broker keeps the local prefix and logs a warning. Consumer reads succeed only for offsets that this broker already sees in remote storage.
+If remote storage is off for the topic, or `remote.log.copy.disable` is `true`, the broker keeps the local prefix and logs a warning. Consumer reads succeed only for offsets that this broker already sees in remote storage.
 
 ## Operator override of the seal offset
 
