@@ -138,6 +138,36 @@ git fetch apache --tags
    and for PRs whose merge commit has an `apache/kafka` parent, as long as the workflow file
    exists on the release branch.
 
+10. **Land the sync**. After CI is green and a reviewer approves the PR, follow [Land the sync](#land-the-sync).
+
+## Land the sync
+
+Land a sync PR with **Create a merge commit**. Don't use **Squash and merge** or **Rebase and merge**.
+
+### Why only the merge commit
+
+The next sync finds its starting point with `git merge-base` between the base branch and the upstream tag. That search needs the upstream commits to keep their SHAs.
+
+- **Squash and merge** replaces the upstream commits with one new commit. The next sync can't see which upstream commits are already merged.
+- **Rebase and merge** gives each upstream commit a new SHA. The merge base moves back, and the same commits conflict again.
+- **Create a merge commit** adds one commit and leaves every existing commit unchanged.
+
+### The extra merge commit
+
+The branch already holds a `Merge upstream <tag>` commit. The button adds a second commit, `Merge pull request #<n> from ...`, on top of it. This extra commit is harmless:
+
+- The `Merge upstream <tag>` commit stays on the second-parent side. Its upstream parents keep their SHAs, so `git merge-base` and `sync-status.sh` give the same result as with one merge.
+- The extra commit doesn't change any file. It only records the PR number.
+- Don't avoid it with a direct push. A direct push doesn't link the PR and needs a manual check that the base branch didn't move.
+
+The team merged PRs #657 (4.2.1) and #771 (main sync) with the button and pushed 4.3.1 and 4.2.2 directly. Both ways keep the merge base. New syncs use the button, so the process is the same every time.
+
+### Steps
+
+1. Check that the PR shows the text `This branch has no conflicts with the base branch`. If the base branch moved, merge it into the sync branch and wait for CI.
+2. Choose **Create a merge commit** in the merge dropdown.
+3. Fetch the base branch. Tag the new head with `inkless-<upstream version>-<inkless release>`. The tag for upstream 4.3.2 and Inkless 0.51 is `inkless-4.3.2-0.51`. Push the tag. Check `docs/inkless/RELEASES.md` for what the tag builds.
+
 ## Handling Conflicts
 
 Common conflict areas when syncing release branches:

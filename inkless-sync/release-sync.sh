@@ -463,6 +463,8 @@ do_sync() {
     echo "  1. Review the changes: git log --oneline -20"
     echo "  2. Run tests to verify: ./gradlew check"
     echo "  3. Push when ready: git push origin $working_branch"
+    echo "  4. Open a PR with --label upstream for review and CI."
+    echo "  5. After approval, choose 'Create a merge commit'. Do not squash or rebase (see RELEASE-SYNC-GUIDE.md, 'Land the sync')."
 }
 
 # Update version files after sync
