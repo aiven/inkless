@@ -793,7 +793,9 @@ public class InMemoryControlPlane extends AbstractControlPlane {
         long keepOffset = Math.min(highWatermark, highestRemote + 1);
         for (final BatchInfoInternal batch : coordinates.values()) {
             if (batch.batchInfo().metadata().lastOffset() > highestRemote) {
-                keepOffset = batch.batchInfo().metadata().baseOffset();
+                // A switched partition that lost part of its classic prefix has no batches between
+                // the end of remote storage and the first diskless batch.
+                keepOffset = Math.min(batch.batchInfo().metadata().baseOffset(), highestRemote + 1);
                 break;
             }
         }

@@ -100,6 +100,23 @@ public abstract class TopicSwitchCommand {
                         Optional.ofNullable(namespace.getInt("partition")));
                 }
                 break;
+            case "elect":
+                try (Admin adminClient = Admin.create(properties)) {
+                    electCommand(System.out, adminClient, topic,
+                        namespace.getInt("partition"),
+                        namespace.getInt("replica"),
+                        namespace.getBoolean("dry_run"));
+                }
+                break;
+            case "start-phase-2":
+                try (Admin adminClient = Admin.create(properties)) {
+                    startPhaseTwoCommand(System.out, adminClient, topic,
+                        namespace.getInt("partition"),
+                        namespace.getLong("offset"),
+                        namespace.getInt("last_classic_leader_epoch"),
+                        namespace.getBoolean("dry_run"));
+                }
+                break;
             default:
                 throw new RuntimeException("Unknown command " + command);
         }
@@ -118,6 +135,12 @@ public abstract class TopicSwitchCommand {
                 .help("Override the topic seal offset. Use --dry-run to perform validation only.");
         Subparser repairParser = commandParsers.addParser("repair")
                 .help("Repair the control-plane diskless log entry.");
+        Subparser electParser = commandParsers.addParser("elect")
+                .help("Elect a replica as the leader of a phase 1 partition, even if it's outside the ISR. "
+                        + "Use it when no ISR member holds the whole classic prefix.");
+        Subparser startPhaseTwoParser = commandParsers.addParser("start-phase-2")
+                .help("Start phase 2 of a phase 1 partition at a seal that remote storage covers. The partition "
+                        + "loses the records from that seal to the committed seal.");
 
         for (Subparser subparser : List.of(stateParser, sealParser)) {
             MutuallyExclusiveGroup connectionOptions = subparser.addMutuallyExclusiveGroup().required(true);
@@ -128,12 +151,14 @@ public abstract class TopicSwitchCommand {
                     .action(store())
                     .help("A list of host/port pairs to use for establishing the connection to the KRaft controllers.");
         }
-        repairParser.addArgument("--bootstrap-server", "-b")
-                .action(store())
-                .required(true)
-                .help("A list of host/port pairs to use for establishing the connection to the Kafka cluster.");
+        for (Subparser subparser : List.of(repairParser, electParser, startPhaseTwoParser)) {
+            subparser.addArgument("--bootstrap-server", "-b")
+                    .action(store())
+                    .required(true)
+                    .help("A list of host/port pairs to use for establishing the connection to the Kafka cluster.");
+        }
 
-        for (Subparser subparser : List.of(stateParser, sealParser, repairParser)) {
+        for (Subparser subparser : List.of(stateParser, sealParser, repairParser, electParser, startPhaseTwoParser)) {
             subparser.addArgument("--command-config", "-c")
                     .action(store())
                     .help("Config properties file for the Admin client.");
@@ -172,6 +197,34 @@ public abstract class TopicSwitchCommand {
                 .action(store())
                 .type(Integer.class)
                 .help("The partition index to repair. If omitted, all switched partitions of the topic are repaired.");
+
+        for (Subparser subparser : List.of(electParser, startPhaseTwoParser)) {
+            subparser.addArgument("--partition", "-p")
+                    .action(store())
+                    .type(Integer.class)
+                    .required(true)
+                    .help("The partition index.");
+            subparser.addArgument("--dry-run", "-d")
+                    .action(storeTrue())
+                    .help("Whether to only perform validation. The controller can still reject the request.");
+        }
+        electParser.addArgument("--replica", "-r")
+                .action(store())
+                .type(Integer.class)
+                .required(true)
+                .help("The broker ID of the replica to elect. The command doesn't check its log: elect only a "
+                        + "replica whose high watermark is at or past the seal.");
+        startPhaseTwoParser.addArgument("--offset", "-o")
+                .action(store())
+                .type(Long.class)
+                .required(true)
+                .help("The new seal: the offset after the last record of the classic prefix in remote storage, "
+                        + "at most the committed seal.");
+        startPhaseTwoParser.addArgument("--last-classic-leader-epoch", "-e")
+                .action(store())
+                .type(Integer.class)
+                .required(true)
+                .help("The leader epoch of the record at offset - 1 in remote storage, or -1 if offset is 0.");
 
         return parser;
     }
@@ -344,6 +397,56 @@ public abstract class TopicSwitchCommand {
             repaired++;
         }
         stream.printf("Repaired %d partition(s) of topic %s.%n", repaired, topic);
+    }
+
+    static void electCommand(PrintStream stream, Admin adminClient, String topic, int partition, int replica,
+                             boolean dryRun) throws Exception {
+        long seal = readPhaseOneSeal(adminClient, topic, partition);
+        if (dryRun) {
+            stream.printf("[dry-run] Would elect broker %d as the leader of %s-%d at seal %d.%n",
+                replica, topic, partition, seal);
+            return;
+        }
+        adminClient.alterDisklessSwitch(topic, partition, seal, new AlterDisklessSwitchOptions().leaderId(replica))
+            .all().get();
+        stream.printf("Elected broker %d as the leader of %s-%d at seal %d.%n", replica, topic, partition, seal);
+    }
+
+    static void startPhaseTwoCommand(PrintStream stream, Admin adminClient, String topic, int partition, long offset,
+                                     int lastClassicLeaderEpoch, boolean dryRun) throws Exception {
+        long seal = readPhaseOneSeal(adminClient, topic, partition);
+        if (offset < 0 || offset > seal) {
+            throw new RuntimeException(String.format(
+                "Cannot start phase 2 for %s-%d at offset %d: it must be between 0 and the committed seal %d.",
+                topic, partition, offset, seal));
+        }
+        String details = String.format("%s-%d at seal %d with lastClassicLeaderEpoch %s%s",
+            topic, partition, offset, formatLastClassicLeaderEpoch(lastClassicLeaderEpoch),
+            offset < seal ? String.format(", losing the records in [%d, %d)", offset, seal) : "");
+        if (dryRun) {
+            stream.printf("[dry-run] Would start phase 2 for %s.%n", details);
+            return;
+        }
+        adminClient.alterDisklessSwitch(topic, partition, offset, new AlterDisklessSwitchOptions()
+            .classicPrefixInRemoteStorage(true)
+            .lastClassicLeaderEpoch(lastClassicLeaderEpoch)).all().get();
+        stream.printf("Started phase 2 for %s.%n", details);
+        if (offset < seal) {
+            stream.printf("Run the repair command for %s-%d to set the control-plane diskless start to %d.%n",
+                topic, partition, offset);
+        }
+    }
+
+    private static long readPhaseOneSeal(Admin adminClient, String topic, int partition) throws Exception {
+        SwitchState state = readSwitchState(adminClient, topic, partition);
+        if (state.classicToDisklessStartOffset() < 0 || state.classicPrefixInRemoteStorage()) {
+            throw new RuntimeException(String.format(
+                "%s-%d isn't in phase 1 of the switch (classicToDisklessStartOffset=%s, "
+                    + "classicPrefixInRemoteStorage=%s).",
+                topic, partition, formatStartOffset(state.classicToDisklessStartOffset()),
+                state.classicPrefixInRemoteStorage()));
+        }
+        return state.classicToDisklessStartOffset();
     }
 
     private static long startOffset(Admin adminClient, String topic, int partition) throws Exception {

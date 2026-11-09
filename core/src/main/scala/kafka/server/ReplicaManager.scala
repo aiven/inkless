@@ -4306,8 +4306,9 @@ class ReplicaManager(val config: KafkaConfig,
                   val reason =
                     if (consolidationEnabledFor(tp.topic) && log.remoteLogEnabled())
                       "the classic-to-diskless switch is in phase 1, and only a leader that holds the whole " +
-                        "classic prefix can request the classicPrefixInRemoteStorage flag. Move leadership to a " +
-                        "replica that holds the prefix"
+                        "classic prefix can request the classicPrefixInRemoteStorage flag. Elect a replica that " +
+                        "holds the prefix with `kafka-topic-switch.sh elect`, or start phase 2 from remote storage " +
+                        "with `kafka-topic-switch.sh start-phase-2`"
                     else
                       "the prefix is not recoverable from remote storage (no consolidation or remote storage on " +
                         "this broker)"

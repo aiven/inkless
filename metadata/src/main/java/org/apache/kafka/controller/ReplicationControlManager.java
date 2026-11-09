@@ -1932,6 +1932,10 @@ public class ReplicationControlManager {
                 request.topicName() + "-" + request.partitionIndex() + ": the classic prefix is already " +
                 "in remote storage.");
         }
+        if (request.leaderId() != NO_LEADER || request.classicPrefixInRemoteStorage() ||
+                request.lastClassicLeaderEpoch() != PartitionRegistration.NO_LAST_CLASSIC_LEADER_EPOCH) {
+            return recoverPhaseOnePartition(request, topicId, topic, partition);
+        }
         if (sealOffset < 0 && partition.classicToDisklessStartOffset >= 0) {
             throw new InvalidRequestException("Cannot abort or re-arm the classic-to-diskless switch for " +
                 request.topicName() + "-" + request.partitionIndex() + ": it has already committed a seal " +
@@ -1967,6 +1971,97 @@ public class ReplicationControlManager {
 
         return ControllerResult.of(List.of(new ApiMessageAndVersion(record, (short) 0)),
             new AlterDisklessSwitchResponseData());
+    }
+
+    /**
+     * Recovers a phase 1 partition that no ISR member can lead because it lost part of the classic prefix. In
+     * phase 1, the controller elects only ISR members, and only a leader that holds the whole prefix starts phase 2.
+     *
+     * <ul>
+     *   <li>{@code LeaderId}: elects that replica as the only ISR member, even if it's outside the ISR. The
+     *       operator checks that it holds the whole prefix. A leader whose log ends below the seal takes the
+     *       partition offline again.</li>
+     *   <li>{@code ClassicPrefixInRemoteStorage}: starts phase 2 as the leader's flag request does, at
+     *       {@code SealOffset}. The records from it to the committed seal are lost. The operator reads
+     *       {@code LastClassicLeaderEpoch} from remote storage, because no replica might hold the record before
+     *       the new seal.</li>
+     * </ul>
+     */
+    private ControllerResult<AlterDisklessSwitchResponseData> recoverPhaseOnePartition(
+        AlterDisklessSwitchRequestData request,
+        Uuid topicId,
+        TopicControlInfo topic,
+        PartitionRegistration partition
+    ) {
+        String partitionName = topic.name + "-" + request.partitionIndex();
+        long committedSeal = partition.classicToDisklessStartOffset;
+        long sealOffset = request.sealOffset();
+        int leaderId = request.leaderId();
+        boolean startPhaseTwo = request.classicPrefixInRemoteStorage();
+        if ((leaderId != NO_LEADER) == startPhaseTwo || request.clearProducerStates()) {
+            throw new InvalidRequestException("Set exactly one of LeaderId and ClassicPrefixInRemoteStorage, " +
+                "without ClearProducerStates.");
+        }
+        if (!startPhaseTwo && request.lastClassicLeaderEpoch() != PartitionRegistration.NO_LAST_CLASSIC_LEADER_EPOCH) {
+            throw new InvalidRequestException("LastClassicLeaderEpoch needs ClassicPrefixInRemoteStorage.");
+        }
+        if (committedSeal < 0) {
+            throw new InvalidRequestException("Cannot recover " + partitionName + ": its seal isn't committed.");
+        }
+        IntPredicate isAcceptableLeader;
+        List<Integer> targetIsr;
+        if (startPhaseTwo) {
+            if (sealOffset < 0 || sealOffset > committedSeal) {
+                throw new InvalidRequestException("Cannot start phase 2 for " + partitionName + " at seal " +
+                    sealOffset + ": it must be between 0 and the committed seal " + committedSeal + ".");
+            }
+            // As for SetClassicPrefixInRemoteStorage: no replica's leader epoch cache can hold an epoch outside
+            // this range, so every replica would rebuild on every leader change.
+            int lastClassicLeaderEpoch = request.lastClassicLeaderEpoch();
+            if (lastClassicLeaderEpoch < PartitionRegistration.NO_LAST_CLASSIC_LEADER_EPOCH ||
+                    lastClassicLeaderEpoch > partition.leaderEpoch) {
+                throw new InvalidRequestException("Cannot start phase 2 for " + partitionName + ": the last " +
+                    "classic leader epoch " + lastClassicLeaderEpoch + " is outside [" +
+                    PartitionRegistration.NO_LAST_CLASSIC_LEADER_EPOCH + ", " + partition.leaderEpoch + "].");
+            }
+            isAcceptableLeader = clusterControl::isActive;
+            targetIsr = Arrays.stream(partition.replicas).filter(clusterControl::isActive).boxed().toList();
+        } else {
+            if (sealOffset != committedSeal) {
+                throw new InvalidRequestException("Cannot elect a leader for " + partitionName + ": the committed " +
+                    "seal is " + committedSeal + ", not " + sealOffset + ".");
+            }
+            isAcceptableLeader = leaderAcceptorFor(topic.name, partition,
+                replica -> replica == leaderId && clusterControl.isActive(replica));
+            if (!Replicas.contains(partition.replicas, leaderId) || leaderId == partition.leader ||
+                    !isAcceptableLeader.test(leaderId)) {
+                throw new InvalidRequestException("Cannot elect broker " + leaderId + " for " + partitionName +
+                    ": it must be an active replica other than the leader, with an online log directory.");
+            }
+            targetIsr = List.of(leaderId);
+        }
+
+        PartitionChangeBuilder builder = new PartitionChangeBuilder(
+            partition,
+            topicId,
+            request.partitionIndex(),
+            isAcceptableLeader,
+            featureControl.metadataVersionOrThrow(),
+            getTopicEffectiveMinIsr(topic.name),
+            featureControl.isElrFeatureEnabled()
+        )
+            .setTargetIsr(targetIsr)
+            .setDefaultDirProvider(clusterDescriber);
+        if (startPhaseTwo) {
+            builder.setClassicPrefixInRemoteStorage(sealOffset, request.lastClassicLeaderEpoch());
+        }
+        ApiMessageAndVersion partitionChange = builder.build().orElseThrow(() ->
+            new UnknownServerException("Recovering " + partitionName + " built no record: " + partition));
+
+        log.warn("AlterDisklessSwitch recovers {}: leaderId={}, classicPrefixInRemoteStorage={}, " +
+                "classicToDisklessStartOffset={} -> {}, lastClassicLeaderEpoch={}",
+            partitionName, leaderId, startPhaseTwo, committedSeal, sealOffset, request.lastClassicLeaderEpoch());
+        return ControllerResult.of(List.of(partitionChange), new AlterDisklessSwitchResponseData());
     }
 
     private static String logPartitionChangeInfo(PartitionRegistration oldRegistration, PartitionRegistration newRegistration) {

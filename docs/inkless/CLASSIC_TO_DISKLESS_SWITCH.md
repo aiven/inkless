@@ -194,7 +194,7 @@ A switched partition runs in one of two phases. The `classicPrefixInRemoteStorag
 | Unclean leader election | Blocked, even if `unclean.leader.election.enable` is `true`. See [Unclean leader election](#unclean-leader-election). | Allowed if `unclean.leader.election.enable` is `true`, as for a born-diskless topic. |
 | ISR expansion when a broker unfences | Skipped. As for a classic partition, only `AlterPartition` expands the ISR. | The controller re-adds the unfenced replica and completes an in-flight reassignment. |
 | Reassignment | The controller stages the move as it does for a classic topic. New replicas are adding and dropped replicas are removing until the adding replicas join the ISR. | The target replicas replace the current replicas in one step. |
-| `AlterDisklessSwitch` | Accepted. See [Operator override](#operator-override-of-the-seal-offset). | Rejected with `INVALID_REQUEST`. |
+| `AlterDisklessSwitch` | Accepted. See [Operator override](#operator-override-of-the-seal-offset) and [Recover a phase 1 partition](#recover-a-phase-1-partition-that-lost-its-classic-prefix). | Rejected with `INVALID_REQUEST`. |
 
 The controller sets the flag when it handles a `SetClassicPrefixInRemoteStorage` request from the current leader. In the same record, the controller sets the ISR, can complete a reassignment, and elects a leader if needed. The leader sends this request after the remote log manager uploads the classic prefix, or after retention or `DeleteRecords` removes it. For more information, see [Step 6](#step-6-request-the-classicprefixinremotestorage-flag).
 
@@ -219,7 +219,7 @@ In phase 1, only the ISR members store a complete copy of the classic prefix. An
 * It rejects a reassignment cancellation that needs an unclean leader election with `INVALID_REPLICA_ASSIGNMENT`.
 * It skips the unclean election in the other paths that can run one: broker fencing, `AlterPartition`, reassignment cancellation, and the periodic check for leaderless partitions.
 
-These guards also apply if the cluster default enables unclean leader election, which the topic config check doesn't cover. A partition that loses every ISR member has no leader until one of them returns.
+These guards also apply if the cluster default enables unclean leader election, which the topic config check doesn't cover. A partition that loses every ISR member has no leader until one of them returns or an operator recovers it. For more information, see [Recover a phase 1 partition that lost its classic prefix](#recover-a-phase-1-partition-that-lost-its-classic-prefix).
 
 ### Forced deletion of the local classic prefix
 
@@ -294,9 +294,57 @@ The command validates before committing: for a concrete (`>= 0`) seal it require
 
 The command also reads the partition when you omit `--offset` or pass an offset `>= 0`. If `classicPrefixInRemoteStorage` is `true` in that read, the command fails before it sends a request, including with `--dry-run`. If the partition already has a committed seal, an explicit offset that exceeds it fails the same way. The `-1` and `-2` offsets don't read the partition, which keeps them usable with `--bootstrap-controller`. For those offsets, the controller does all the checking and `--dry-run` doesn't validate them.
 
+## Recover a phase 1 partition that lost its classic prefix
+
+In phase 1, the part of the classic prefix that the remote log manager hasn't copied yet exists only on local disks. If a leader's log ends below the seal, the broker takes the partition offline. The controller elects only ISR members. Only a leader with the whole prefix requests `classicPrefixInRemoteStorage`. So if every ISR member loses its local log, the partition remains offline until an operator recovers it. A topic with a replication factor of 1 hits this case when its only replica loses its disk.
+
+Two `kafka-topic-switch.sh` subcommands recover the partition. Both need `--bootstrap-server`, accept `--dry-run`, and send an `AlterDisklessSwitch` request. The controller accepts them only in phase 1 with a committed seal:
+
+* `elect --replica <id>`: the controller elects that replica even if it's outside the ISR, and sets the ISR to that replica alone. The replica must be active, and its log directory must be online. The partition keeps every record.
+* `start-phase-2 --offset <seal> --last-classic-leader-epoch <epoch>`: the controller sets `classicPrefixInRemoteStorage` as it does for the leader's request, and lowers the seal to `--offset`. The partition loses the records from the new seal to the committed seal.
+
+The controller can't see the replicas' logs or remote storage, and the commands don't check them. A broker that took the partition offline ignores the recovery until you restart it.
+
+### Elect a replica that has the classic prefix
+
+Elect a replica whose high watermark is at or past the committed seal. A replica outside the ISR can hold records past its high watermark that the partition never committed. A broker records its high watermarks in the `replication-offset-checkpoint` file of each log directory, one `<topic> <partition> <offset>` line per partition:
+
+```bash
+grep '^orders 0 ' /var/lib/kafka/data/replication-offset-checkpoint
+bin/kafka-topic-switch.sh elect --bootstrap-server localhost:9092 --topic orders --partition 0 --replica 2
+```
+
+The new leader watches the upload and requests `classicPrefixInRemoteStorage`, as in [Step 6](#step-6-request-the-classicprefixinremotestorage-flag). If its log ends below the seal, it takes the partition offline again, and you can elect another replica.
+
+### Start phase 2 without the lost records
+
+If no replica has the whole prefix, start phase 2 at the end of the prefix in remote storage. A leader with an incomplete prefix then rebuilds it from remote storage. This requires remote storage and `diskless.remote.storage.consolidation.enable` on the topic. Phase 2 can't be undone.
+
+Read the remote segments of the partition from `__remote_log_metadata`:
+
+```bash
+bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic __remote_log_metadata --from-beginning \
+  --timeout-ms 10000 --formatter 'org.apache.kafka.server.log.remote.metadata.storage.serialization.RemoteLogMetadataSerde$RemoteLogMetadataFormatter' \
+  | grep ':orders-0,'
+```
+
+A `RemoteLogSegmentMetadata` line describes a segment when its copy starts. A later `RemoteLogSegmentMetadataUpdate` line with the same segment ID reports `COPY_SEGMENT_FINISHED`. Use the copied segments that no `DELETE_SEGMENT_STARTED` update follows:
+
+* `--offset`: the `endOffset` of the last segment, plus 1. The segments must cover every offset from the log start up to it. The offset can't exceed the committed seal.
+* `--last-classic-leader-epoch`: the highest epoch in the `segmentLeaderEpochs` of that segment, or `-1` if the offset is 0. Replicas use this epoch to check their local logs and to find the remote segment that ends the prefix. For more information, see [Divergent classic tails in phase 2](#divergent-classic-tails-in-phase-2).
+
+```bash
+bin/kafka-topic-switch.sh start-phase-2 --bootstrap-server localhost:9092 --topic orders --partition 0 \
+  --offset 600 --last-classic-leader-epoch 5
+```
+
+The controller rejects an offset past the committed seal and an epoch outside `[-1, leader epoch]`. Its record sets the lower seal, `classicPrefixInRemoteStorage`, and `lastClassicLeaderEpoch`. The same record adds every active replica to the ISR and elects a leader if the current one isn't active. Diskless storage still starts at the committed seal. A consumer that reads from an offset in the lost range gets the records from the committed seal on.
+
+If the offset is below the committed seal, run `repair` afterward so that the control plane agrees on the seal. For more information, see [Reconciling the control plane](#reconciling-the-control-plane). Consolidation keeps the WAL start at the end of remote storage. For more information, see [DISKLESS_CONSOLIDATION.md](DISKLESS_CONSOLIDATION.md).
+
 ## Reconciling the control plane
 
-The seal offset lives in two places: the KRaft metadata (`classicToDisklessStartOffset`) and the diskless control plane (the `diskless_start_offset` column on the control-plane log entry). The normal switch flow keeps them in sync — the broker initializes the control-plane entry from the committed metadata (Step 5). An operator `seal` override, however, only writes KRaft; the control plane is left untouched, so the two can diverge.
+The KRaft metadata stores the seal offset as `classicToDisklessStartOffset`. The control plane of diskless storage keeps a copy in the `diskless_start_offset` column of its log entry. The normal switch flow keeps them in sync, because the broker initializes the control-plane entry from the committed metadata in Step 5. An operator `seal` override or `start-phase-2` writes only KRaft and leaves the control plane unchanged, so the two can diverge.
 
 The `kafka-topic-switch.sh repair` command reconciles them. It reads the committed seal from KRaft (via `DescribeTopicPartitions`) and, for each switched partition (`classicToDisklessStartOffset >= 0`), sends a `RepairDisklessLog` request to the partition leader (which owns the control-plane connection). The leader updates `diskless_start_offset` on the existing control-plane entry. Repair only reconciles an entry that already exists — it never creates one; initialization always comes from the regular switch flow. Repairing a partition whose control-plane entry is missing fails with `UNKNOWN_TOPIC_OR_PARTITION` (a stuck switch must be unblocked through the switch flow, not force-initialized here). Partitions that are not switched are skipped.
 
