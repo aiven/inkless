@@ -135,6 +135,10 @@ make test
 
 Expected: All builds and tests pass.
 
+## After the merge
+
+If the branch has no new Inkless commits, release the sync under the current Inkless version. Follow [Release the sync under the current Inkless version](RELEASE-SYNC-GUIDE.md#release-the-sync-under-the-current-inkless-version). Don't push the tag or run the release workflow without the user's approval.
+
 ## Common Issues
 
 ### Tag not found

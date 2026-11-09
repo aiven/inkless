@@ -105,6 +105,12 @@ make test
 [COMMIT_HASH] Merge upstream [TAG] into [WORKING_BRANCH]
 ```
 
+### Release
+
+- [ ] Tag `inkless-[TAG]-[INKLESS_VERSION]` pushed
+- [ ] `Inkless Publish` run succeeded
+- [ ] `Inkless Release` run with `resume=true` succeeded
+
 ### Files Modified
 | Type | Count |
 |------|-------|
