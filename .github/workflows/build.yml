@@ -40,6 +40,11 @@ jobs:
       sha: ${{ steps.configure-outputs.outputs.sha }}
     steps:
       - name: Env
+        # Inkless: diverges from upstream. The push event of an upstream sync merge commit lists
+        # every upstream commit, so toJson(github) exceeds the 128 KB limit of one environment
+        # string ("Argument list too long"). The dump is for debugging only, so the job continues.
+        # Keep this change when resolving sync conflicts.
+        continue-on-error: true
         run: printenv
         env:
           GITHUB_CONTEXT: ${{ toJson(github) }}
@@ -114,6 +119,8 @@ jobs:
     name: Compile and Check (Merge Ref)
     steps:
       - name: Env
+        # Inkless: see the Env step of the configure job.
+        continue-on-error: true
         run: printenv
         env:
           GITHUB_CONTEXT: ${{ toJson(github) }}
@@ -383,6 +390,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Env
+        # Inkless: see the Env step of the configure job.
+        continue-on-error: true
         run: printenv
         env:
           GITHUB_CONTEXT: ${{ toJson(github) }}
