@@ -176,6 +176,7 @@ Followers also seal during the switch. They use the classic fetcher to replicate
 When a broker applies a newly committed seal offset, it reconciles the local classic log:
 
 * if local LEO is above the seal, it truncates to the seal because offsets at and above the seal belong to diskless storage
+* if local LEO is at or past the seal and the high watermark is below it, it advances the high watermark to the seal. The leader requests the seal only after its high watermark reaches its frozen LEO, so the committed seal proves that the partition committed every offset below it. A follower doesn't wait for a fetch response with that high watermark: the fetcher drops the response if the seal's leader epoch arrives first, and the leader's fetch session omits a sealed partition from later responses because nothing in it changes
 * if a leader's local LEO is below the seal, it marks the partition offline because the classic prefix is incomplete
 
 If leadership changes while the switch is pending, the new leader seals and re-drives the `InitDisklessLog` controller request. If leadership changes after the controller commits the final offset, the new leader skips the controller step and initializes the control plane directly from metadata. If the flag is still unset, the new leader also rolls its active segment when that segment holds part of the classic prefix, so the remote log manager can copy it. The new leader then watches the upload itself, as in [Step 6](#step-6-request-the-classicprefixinremotestorage-flag).

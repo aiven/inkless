@@ -4506,6 +4506,29 @@ class ReplicaManager(val config: KafkaConfig,
   }
 
   /**
+   * Advances the high watermark of a switched follower to the committed seal once its log reaches the seal.
+   *
+   * The leader requests the seal only after its high watermark reaches its frozen log end offset, so a
+   * committed seal proves that every offset below it is committed. The follower normally learns the high
+   * watermark from a fetch response, but the response that carries it can arrive after the follower applies
+   * the seal's leader epoch, and the fetcher drops it. The leader's fetch session then leaves the sealed
+   * partition out of every later response, because nothing in it changes. Without this step the follower
+   * keeps its stale high watermark until the next leader change and refuses `OffsetsForLeaderEpoch` and
+   * `ListOffsets` for the classic prefix.
+   */
+  private def maybeAdvanceSwitchedFollowerHighWatermarkToSeal(tp: TopicPartition,
+                                                              partition: Partition,
+                                                              seal: Long): Unit = {
+    if (seal < 0) return
+    val log = partition.localLogOrException
+    if (log.logEndOffset >= seal && log.highWatermark < seal) {
+      log.maybeUpdateHighWatermark(seal)
+      stateChangeLogger.info(s"Stale high watermark detected: advanced high watermark to seal offset $seal for " +
+        s"switched follower partition $tp")
+    }
+  }
+
+  /**
    * Reconcile a switched follower's local tail against the committed seal.
    *
    * Non-consolidating switched replicas must not retain local records at or above the seal.
@@ -4903,6 +4926,7 @@ class ReplicaManager(val config: KafkaConfig,
               val isNewLeaderEpoch = partition.makeFollower(info.partition, isNew, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
               partition.seal()
               changedPartitions.add(partition)
+              maybeAdvanceSwitchedFollowerHighWatermarkToSeal(tp, partition, seal)
               val isOutOfIsr = !info.partition.isr.contains(config.brokerId)
               // In phase 1 of the classic-to-diskless switch, the leader shrinks ISR for lag, and a new
               // leader starts with no fetch state for this follower. One fetch at the seal records it, so
