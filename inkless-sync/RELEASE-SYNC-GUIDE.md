@@ -355,6 +355,12 @@ Use this procedure when the upstream sync is the only change on the release bran
 
 Keep the Inkless version for an upstream-only change. See [VERSIONING-STRATEGY.md](../docs/inkless/VERSIONING-STRATEGY.md) for the version rules.
 
+If a new Inkless release follows soon, skip these steps. The next release tags the synced branch head.
+
+Sync the upstream Kafka patch release first. Then sync the Inkless commits. Open one pull request for each sync.
+
+The first case was `inkless-4.2.2-0.49`. The team tagged it after release 0.49, and the release page doesn't list it. The 4.3.2 sync is the first one added to the published release.
+
 ### Steps
 
 1. Merge the sync PR into the release branch. Check that `gradle.properties` shows the new Kafka version.
