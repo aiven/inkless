@@ -3691,6 +3691,17 @@ class ReplicaManager(val config: KafkaConfig,
   private[kafka] def replicationStopOffset(topicPartition: TopicPartition): Option[Long] =
     _inklessMetadataView.classicPrefixWaitingForUploadSeal(topicPartition)
 
+  private[kafka] def consolidationLeaderEpoch(topicPartition: TopicPartition): Option[Int] =
+    if (!consolidationEnabledFor(topicPartition.topic) ||
+        _inklessMetadataView.isClassicPrefixOnlyOnLocalDisks(topicPartition.topic, topicPartition.partition)) {
+      None
+    } else {
+      _inklessMetadataView.getDisklessLeaderEpoch(topicPartition) match {
+        case PartitionRegistration.NO_DISKLESS_LEADER_EPOCH => Some(LeaderAndIsr.INITIAL_LEADER_EPOCH)
+        case disklessLeaderEpoch => Some(disklessLeaderEpoch)
+      }
+    }
+
   private def leaderPartitionsIterator: Iterator[Partition] =
     onlinePartitionsIterator.filter(_.leaderLogIfLocal.isDefined)
 
