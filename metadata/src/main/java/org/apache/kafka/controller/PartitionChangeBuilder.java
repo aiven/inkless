@@ -108,6 +108,7 @@ public class PartitionChangeBuilder {
     // record, the flag commit also sets the ISR and can complete a reassignment and elect a leader.
     // The flag and those changes must be in one record, so the leader epoch moves once and tag 102 matches it.
     private boolean classicPrefixInRemoteStorage = false;
+    private int lastClassicLeaderEpoch = PartitionRegistration.NO_LAST_CLASSIC_LEADER_EPOCH;
 
     public PartitionChangeBuilder(
         PartitionRegistration partition,
@@ -198,8 +199,9 @@ public class PartitionChangeBuilder {
         return this;
     }
 
-    public PartitionChangeBuilder setClassicPrefixInRemoteStorage() {
+    public PartitionChangeBuilder setClassicPrefixInRemoteStorage(int lastClassicLeaderEpoch) {
         this.classicPrefixInRemoteStorage = true;
+        this.lastClassicLeaderEpoch = lastClassicLeaderEpoch;
         return this;
     }
 
@@ -486,9 +488,12 @@ public class PartitionChangeBuilder {
             }
             // The diskless leader epoch is the leader epoch that this record produces.
             // The leader field is set at this point, and merge() increments the leader epoch once per record.
-            // Raw tags must be in increasing tag order for serialization: tag 102 before tag 103.
+            // Raw tags must be in increasing tag order for serialization: tag 102, then 103, then 104.
             record.unknownTaggedFields().add(InitDisklessLogFields.encodeDisklessLeaderEpoch(partition.leaderEpoch + 1));
             record.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicPrefixInRemoteStorage());
+            if (lastClassicLeaderEpoch != PartitionRegistration.NO_LAST_CLASSIC_LEADER_EPOCH) {
+                record.unknownTaggedFields().add(InitDisklessLogFields.encodeLastClassicLeaderEpoch(lastClassicLeaderEpoch));
+            }
         }
     }
 

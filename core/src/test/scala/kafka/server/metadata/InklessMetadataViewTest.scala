@@ -20,8 +20,9 @@ package kafka.server.metadata
 
 import org.apache.kafka.common.config.TopicConfig
 import org.apache.kafka.common.{DirectoryId, TopicIdPartition, TopicPartition, Uuid}
-import org.apache.kafka.image.{MetadataImage, TopicImage, TopicsImage}
-import org.apache.kafka.metadata.{KRaftMetadataCache, LeaderRecoveryState, PartitionRegistration}
+import org.apache.kafka.common.metadata.{PartitionChangeRecord, PartitionRecord, TopicRecord}
+import org.apache.kafka.image.{MetadataImage, TopicImage, TopicsDelta, TopicsImage}
+import org.apache.kafka.metadata.{InitDisklessLogFields, KRaftMetadataCache, LeaderRecoveryState, PartitionRegistration}
 import org.junit.jupiter.api.{BeforeEach, Nested, Test}
 import org.junit.jupiter.api.Assertions._
 import org.mockito.ArgumentMatchers.anyString
@@ -335,6 +336,37 @@ class InklessMetadataViewTest {
     assertEquals(List(false, true, true, false),
       List(bornDiskless, pending, phaseOne, phaseTwo).map(tp =>
         metadataView.isClassicPrefixOnlyOnLocalDisks(tp.topic, tp.partition)))
+  }
+
+  @Test
+  def testGetLastClassicLeaderEpochReadsTheRecordedTagFromTheImage(): Unit = {
+    val topicId = Uuid.randomUuid()
+    val delta = new TopicsDelta(TopicsImage.EMPTY)
+    delta.replay(new TopicRecord().setName("switched").setTopicId(topicId))
+    Seq(0, 1).foreach { partitionId =>
+      delta.replay(new PartitionRecord().setTopicId(topicId).setPartitionId(partitionId)
+        .setReplicas(util.List.of(1, 2)).setIsr(util.List.of(1, 2)).setLeader(1).setLeaderEpoch(5))
+    }
+    val flag = new PartitionChangeRecord().setTopicId(topicId).setPartitionId(0).setLeader(1)
+    flag.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicToDisklessStartOffset(42L))
+    flag.unknownTaggedFields().add(InitDisklessLogFields.encodeDisklessLeaderEpoch(5))
+    flag.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicPrefixInRemoteStorage())
+    flag.unknownTaggedFields().add(InitDisklessLogFields.encodeLastClassicLeaderEpoch(3))
+    delta.replay(flag)
+    delta.replay(new PartitionChangeRecord().setTopicId(topicId).setPartitionId(0).setIsr(util.List.of(1)))
+    val image = mock(classOf[MetadataImage])
+    when(metadataCache.currentImage()).thenReturn(image)
+    when(image.topics()).thenReturn(delta.apply())
+
+    val recorded = new TopicPartition("switched", 0)
+    assertEquals(3, metadataView.getLastClassicLeaderEpoch(recorded))
+    assertEquals(5, metadataView.getDisklessLeaderEpoch(recorded))
+    assertEquals(PartitionRegistration.NO_LAST_CLASSIC_LEADER_EPOCH,
+      metadataView.getLastClassicLeaderEpoch(new TopicPartition("switched", 1)))
+    assertEquals(PartitionRegistration.NO_LAST_CLASSIC_LEADER_EPOCH,
+      metadataView.getLastClassicLeaderEpoch(new TopicPartition("switched", 2)))
+    assertEquals(PartitionRegistration.NO_LAST_CLASSIC_LEADER_EPOCH,
+      metadataView.getLastClassicLeaderEpoch(new TopicPartition("missing", 0)))
   }
 
   @Test

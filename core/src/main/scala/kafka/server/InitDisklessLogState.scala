@@ -23,11 +23,13 @@ import kafka.utils.Logging
 import org.apache.kafka.common.{TopicPartition, Uuid}
 import org.apache.kafka.common.message.{InitDisklessLogRequestData, InitDisklessLogResponseData, SetClassicPrefixInRemoteStorageRequestData, SetClassicPrefixInRemoteStorageResponseData}
 import org.apache.kafka.common.protocol.Errors
+import org.apache.kafka.metadata.PartitionRegistration
 import org.apache.kafka.server.partition.PartitionListener
 import org.apache.kafka.storage.internals.log.UnifiedLog
 
 import java.util
 import scala.jdk.CollectionConverters._
+import scala.jdk.OptionConverters._
 
 sealed trait InitDisklessLogState extends Logging {
   def partition: Partition
@@ -308,7 +310,8 @@ object SendingFlagToController {
         .add(new SetClassicPrefixInRemoteStorageRequestData.PartitionData()
           .setPartitionId(state.tp.partition)
           .setClassicToDisklessStartOffset(state.seal)
-          .setLeaderEpoch(state.partition.getLeaderEpoch))
+          .setLeaderEpoch(state.partition.getLeaderEpoch)
+          .setLastClassicLeaderEpoch(lastClassicLeaderEpoch(state)))
     }
 
     val topicDataList = new util.ArrayList[SetClassicPrefixInRemoteStorageRequestData.TopicData]()
@@ -323,6 +326,16 @@ object SendingFlagToController {
       .setBrokerEpoch(brokerEpoch)
       .setTopics(topicDataList)
   }
+
+  /**
+   * Returns the leader epoch of the record at `seal - 1`, or `NO_LAST_CLASSIC_LEADER_EPOCH` if the log doesn't
+   * contain a classic record below the seal.
+   */
+  private def lastClassicLeaderEpoch(state: SendingFlagToController): Int =
+    state.partition.log
+      .filter(log => log.logStartOffset < state.seal)
+      .flatMap(log => log.leaderEpochCache.epochForOffset(state.seal - 1).toScala)
+      .getOrElse(PartitionRegistration.NO_LAST_CLASSIC_LEADER_EPOCH)
 
   def parseBatchResponse(response: SetClassicPrefixInRemoteStorageResponseData): Iterable[ParsedResponse] = {
     val outcomes = scala.collection.mutable.ArrayBuffer[ParsedResponse]()

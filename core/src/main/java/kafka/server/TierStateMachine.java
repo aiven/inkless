@@ -26,6 +26,7 @@ import org.apache.kafka.common.message.OffsetForLeaderEpochRequestData;
 import org.apache.kafka.common.message.OffsetForLeaderEpochResponseData;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.utils.Utils;
+import org.apache.kafka.metadata.PartitionRegistration;
 import org.apache.kafka.server.LeaderEndPoint;
 import org.apache.kafka.server.PartitionFetchState;
 import org.apache.kafka.server.ReplicaState;
@@ -198,6 +199,15 @@ public class TierStateMachine {
 
         RemoteLogManager rlm = replicaMgr.remoteLogManager().get();
 
+        long seal = replicaMgr.classicToDisklessStartOffset(topicPartition);
+        if (seal > 0 && leaderLocalLogStartOffset <= seal) {
+            int lastClassicLeaderEpoch = replicaMgr.lastClassicLeaderEpoch(topicPartition);
+            if (lastClassicLeaderEpoch != PartitionRegistration.NO_LAST_CLASSIC_LEADER_EPOCH) {
+                return buildClassicPrefixAuxState(topicPartition, currentLeaderEpoch, leaderLocalLogStartOffset,
+                        leaderLogStartOffset, seal, lastClassicLeaderEpoch, rlm, unifiedLog);
+            }
+        }
+
         // Find the respective leader epoch for (leaderLocalLogStartOffset - 1). We need to build the leader epoch cache
         // until that offset
         long previousOffsetToLeaderLocalLogStartOffset = leaderLocalLogStartOffset - 1;
@@ -263,6 +273,56 @@ public class TierStateMachine {
                 partition, unifiedLog.producerStateManager().activeProducers().size(), leaderLogStartOffset, nextOffset);
 
         return nextOffset;
+    }
+
+    /**
+     * Inkless: builds the state below the classic-to-diskless seal in phase 2 of the switch and returns the seal as the
+     * next offset to fetch.
+     * <p>
+     * Remote storage can hold a segment from a leader epoch that an unclean election discarded. Such a segment can
+     * hold the record before the local log start of the leader in the same epoch as the committed history and diverge
+     * after it. Each leader epoch has one leader, so a segment that holds {@code seal - 1} in the last classic leader
+     * epoch holds the committed history below the seal, even if it also holds discarded records past the seal. The
+     * local log starts at the seal because the replica doesn't keep local classic records in phase 2.
+     */
+    private long buildClassicPrefixAuxState(TopicPartition topicPartition,
+                                            int currentLeaderEpoch,
+                                            long leaderLocalLogStartOffset,
+                                            long leaderLogStartOffset,
+                                            long seal,
+                                            int lastClassicLeaderEpoch,
+                                            RemoteLogManager rlm,
+                                            UnifiedLog unifiedLog) throws IOException, RemoteStorageException {
+        if (!rlm.isPartitionReady(topicPartition)) {
+            throw new RemoteStorageNotReadyException("RemoteLogManager is not ready for partition: " + topicPartition);
+        }
+
+        RemoteLogSegmentMetadata remoteLogSegmentMetadata = rlm.fetchRemoteLogSegmentMetadata(topicPartition, lastClassicLeaderEpoch, seal - 1)
+                .orElseThrow(() -> buildRemoteStorageException(topicPartition, lastClassicLeaderEpoch, currentLeaderEpoch,
+                        leaderLocalLogStartOffset, leaderLogStartOffset));
+
+        Partition partition = replicaMgr.getPartitionOrException(topicPartition);
+        partition.truncateFullyAndStartAt(seal, useFutureLog, Optional.of(leaderLogStartOffset));
+        unifiedLog.maybeIncrementLogStartOffset(leaderLogStartOffset, LeaderOffsetIncremented);
+        unifiedLog.maybeIncrementLocalLogStartOffset(seal, LeaderOffsetIncremented);
+
+        List<EpochEntry> epochs = readLeaderEpochCheckpoint(rlm, remoteLogSegmentMetadata).stream()
+                .filter(entry -> entry.startOffset() < seal)
+                .toList();
+        unifiedLog.leaderEpochCache().assign(epochs);
+
+        // The producer snapshot of a segment is at its end. Sealing aborts undecided transactions, so the empty
+        // producer state that the truncation leaves is correct at the seal.
+        if (remoteLogSegmentMetadata.endOffset() + 1 == seal) {
+            buildProducerSnapshotFile(unifiedLog, seal, remoteLogSegmentMetadata, rlm);
+        } else {
+            log.warn("Remote segment {} for {} ends at {}, past the classic-to-diskless seal {}; rebuilding up to the seal",
+                    remoteLogSegmentMetadata.remoteLogSegmentId(), topicPartition, remoteLogSegmentMetadata.endOffset(), seal);
+        }
+
+        log.info("Rebuilt the state of {} below the classic-to-diskless seal {} from remote segment {} with {} leader epochs",
+                topicPartition, seal, remoteLogSegmentMetadata.remoteLogSegmentId(), epochs.size());
+        return seal;
     }
 
     private RemoteStorageException buildRemoteStorageException(TopicPartition topicPartition,

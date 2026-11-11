@@ -25,22 +25,24 @@ import org.apache.kafka.common.protocol.Errors
 import org.apache.kafka.common.requests.{AbstractRequest, InitDisklessLogRequest, InitDisklessLogResponse, RequestHeader, SetClassicPrefixInRemoteStorageRequest, SetClassicPrefixInRemoteStorageResponse}
 import org.apache.kafka.common.protocol.ApiKeys
 import org.apache.kafka.common.record.internal.RecordBatch
+import org.apache.kafka.metadata.PartitionRegistration
 import org.apache.kafka.server.metrics.KafkaYammerMetrics
 import org.apache.kafka.server.partition.PartitionListener
 import org.apache.kafka.server.common.{ControllerRequestCompletionHandler, NodeToControllerChannelManager}
 import org.apache.kafka.server.util.MockScheduler
 import org.apache.kafka.common.utils.MockTime
+import org.apache.kafka.storage.internals.epoch.LeaderEpochFileCache
 import org.apache.kafka.storage.internals.log.{BatchMetadata, ProducerStateEntry, ProducerStateManager, UnifiedLog}
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.{AfterEach, BeforeEach, Test}
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
-import org.mockito.ArgumentMatchers.any
+import org.mockito.ArgumentMatchers.{any, anyLong}
 import org.mockito.Mockito._
 import org.mockito.invocation.InvocationOnMock
 
 import java.util
-import java.util.Optional
+import java.util.{Optional, OptionalInt}
 import java.util.concurrent.ConcurrentLinkedQueue
 import scala.collection.mutable
 import scala.jdk.CollectionConverters._
@@ -149,6 +151,7 @@ class InitDisklessLogManagerTest {
     val partition = mock(classOf[Partition])
     val log = mock(classOf[UnifiedLog])
     val producerStateManager = mock(classOf[ProducerStateManager])
+    val leaderEpochCache = mock(classOf[LeaderEpochFileCache])
 
     when(partition.topicPartition).thenReturn(tp)
     when(partition.isSealed).thenReturn(true)
@@ -167,6 +170,8 @@ class InitDisklessLogManagerTest {
     when(log.highestOffsetInRemoteStorage).thenReturn(-1L)
     when(log.producerStateManager()).thenReturn(producerStateManager)
     when(producerStateManager.activeProducers()).thenReturn(new util.HashMap())
+    when(log.leaderEpochCache).thenReturn(leaderEpochCache)
+    when(leaderEpochCache.epochForOffset(anyLong())).thenReturn(OptionalInt.of(leaderEpoch - 1))
 
     partition
   }
@@ -1495,6 +1500,11 @@ class InitDisklessLogManagerTest {
 
     // Then the first evaluation advances the partition with no poll period and no upload
     assertState[SendingFlagToController](tp0)
+
+    // And the flag request records no classic epoch, because the log holds no record below the seal
+    fireLinger()
+    val sent = pollFlagRequest().setFlagRequestData.topics().get(0).partitions().get(0)
+    assertEquals(PartitionRegistration.NO_LAST_CLASSIC_LEADER_EPOCH, sent.lastClassicLeaderEpoch())
   }
 
   @Test
@@ -1528,12 +1538,15 @@ class InitDisklessLogManagerTest {
     val sameTopic = partitionsByTopic(topicId).sortBy(_.partitionId())
     assertEquals(List(0, 1), sameTopic.map(_.partitionId()))
     assertEquals(List(3, 4), sameTopic.map(_.leaderEpoch()))
+    assertEquals(List(2, 3), sameTopic.map(_.lastClassicLeaderEpoch()))
     assertEquals(List(classicSeal, classicSeal), sameTopic.map(_.classicToDisklessStartOffset()))
 
     val other = partitionsByTopic(otherTopicId).head
     assertEquals(0, other.partitionId())
     assertEquals(5, other.leaderEpoch())
+    assertEquals(4, other.lastClassicLeaderEpoch())
     assertEquals(classicSeal, other.classicToDisklessStartOffset())
+    verify(p0.log.get.leaderEpochCache).epochForOffset(classicSeal - 1)
   }
 
   @Test
