@@ -216,6 +216,8 @@ public abstract class TopicSwitchCommand {
                 partition.unknownTaggedFields());
             boolean classicPrefixInRemoteStorage = InitDisklessLogFields.decodeClassicPrefixInRemoteStorage(
                 partition.unknownTaggedFields());
+            int lastClassicLeaderEpoch = InitDisklessLogFields.decodeLastClassicLeaderEpoch(
+                partition.unknownTaggedFields());
 
             ListOffsetsResult.ListOffsetsResultInfo latestInfo = latest.get(tp);
             ListOffsetsResult.ListOffsetsResultInfo earliestInfo = earliest.get(tp);
@@ -229,6 +231,8 @@ public abstract class TopicSwitchCommand {
                 formatDisklessLeaderEpoch(disklessLeaderEpoch));
             stream.printf("  classicPrefixInRemoteStorage=%s%n",
                 formatClassicPrefixInRemoteStorage(classicPrefixInRemoteStorage, classicToDisklessStartOffset));
+            stream.printf("  lastClassicLeaderEpoch=%s%n",
+                formatLastClassicLeaderEpoch(lastClassicLeaderEpoch));
             stream.printf("  logStartOffset=%d logEndOffset=%d%n",
                 earliestInfo != null ? earliestInfo.offset() : -1,
                 latestInfo != null ? latestInfo.offset() : -1);
@@ -403,6 +407,14 @@ public abstract class TopicSwitchCommand {
 
     private static String formatDisklessLeaderEpoch(int epoch) {
         if (epoch == PartitionRegistration.NO_DISKLESS_LEADER_EPOCH) {
+            return "-1 (none)";
+        } else {
+            return String.valueOf(epoch);
+        }
+    }
+
+    private static String formatLastClassicLeaderEpoch(int epoch) {
+        if (epoch == PartitionRegistration.NO_LAST_CLASSIC_LEADER_EPOCH) {
             return "-1 (none)";
         } else {
             return String.valueOf(epoch);

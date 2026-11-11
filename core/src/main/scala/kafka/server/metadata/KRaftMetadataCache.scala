@@ -212,6 +212,10 @@ class KRaftMetadataCache(
                 responsePartition.unknownTaggedFields().add(
                   InitDisklessLogFields.encodeClassicPrefixInRemoteStorage())
               }
+              if (partition.lastClassicLeaderEpoch != PartitionRegistration.NO_LAST_CLASSIC_LEADER_EPOCH) {
+                responsePartition.unknownTaggedFields().add(
+                  InitDisklessLogFields.encodeLastClassicLeaderEpoch(partition.lastClassicLeaderEpoch))
+              }
               result.append(responsePartition)
             }
             case _ => warn(s"The partition $partitionId does not exist for $topicName")
