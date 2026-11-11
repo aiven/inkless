@@ -25,6 +25,7 @@ import org.apache.kafka.common.compress.Compression;
 import org.apache.kafka.common.config.AbstractConfig;
 import org.apache.kafka.common.errors.OffsetOutOfRangeException;
 import org.apache.kafka.common.errors.ReplicaNotAvailableException;
+import org.apache.kafka.common.message.FetchResponseData;
 import org.apache.kafka.common.metrics.KafkaMetric;
 import org.apache.kafka.common.metrics.Metrics;
 import org.apache.kafka.common.metrics.Monitorable;
@@ -52,6 +53,7 @@ import org.apache.kafka.server.storage.log.FetchIsolation;
 import org.apache.kafka.server.util.MockScheduler;
 import org.apache.kafka.storage.internals.checkpoint.LeaderEpochCheckpointFile;
 import org.apache.kafka.storage.internals.epoch.LeaderEpochFileCache;
+import org.apache.kafka.storage.internals.log.AbortedTxn;
 import org.apache.kafka.storage.internals.log.EpochEntry;
 import org.apache.kafka.storage.internals.log.FetchDataInfo;
 import org.apache.kafka.storage.internals.log.LazyIndex;
@@ -4713,6 +4715,117 @@ public class RemoteLogManagerTest {
             // Verify that the byte buffer has capacity equal to the size of the first batch
             assertEquals(recordBatchSizeInBytes, capture.getValue().capacity());
 
+        }
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+        "2, 100, 99",   // the segment crosses the bound in one epoch
+        "3, 100, 99",   // the segment holds a discarded epoch past the bound
+        "2, 103, 102",  // the segment ends below the bound
+        "3, -1, 102"    // no bound
+    })
+    public void testReadEndsAtUpperBoundOffset(int tailEpoch, long upperBoundOffset, long expectedLastOffset)
+            throws RemoteStorageException, IOException {
+        FetchDataInfo fetchDataInfo = readSegmentWithUpperBound(tailEpoch, upperBoundOffset, FetchIsolation.HIGH_WATERMARK);
+        long lastOffset = -1L;
+        for (RecordBatch batch : fetchDataInfo.records.batches()) {
+            lastOffset = batch.lastOffset();
+        }
+        assertEquals(94L, fetchDataInfo.fetchOffsetMetadata.messageOffset);
+        assertEquals(expectedLastOffset, lastOffset);
+    }
+
+    // The transaction index holds producer 1 at offsets [95, 96] and producer 2 at offsets [100, 101].
+    @ParameterizedTest
+    @CsvSource({
+        "100, 1",  // the bound leaves out the transaction past it
+        "-1, 2"    // no bound
+    })
+    public void testReadCollectsAbortedTransactionsBelowUpperBoundOffset(long upperBoundOffset, int expectedTransactions)
+            throws RemoteStorageException, IOException {
+        FetchDataInfo fetchDataInfo = readSegmentWithUpperBound(3, upperBoundOffset, FetchIsolation.TXN_COMMITTED);
+        List<Long> producerIds = fetchDataInfo.abortedTransactions.get().stream()
+                .map(FetchResponseData.AbortedTransaction::producerId).sorted().toList();
+        assertEquals(expectedTransactions == 1 ? List.of(1L) : List.of(1L, 2L), producerIds);
+    }
+
+    // Reads from offset 94 a segment that holds offsets [94, 102] in three batches. The last batch is in
+    // tailEpoch. A negative upperBoundOffset stands for no bound.
+    private FetchDataInfo readSegmentWithUpperBound(int tailEpoch, long upperBoundOffset, FetchIsolation isolation)
+            throws RemoteStorageException, IOException {
+        RemoteLogSegmentMetadata segmentMetadata = mock(RemoteLogSegmentMetadata.class);
+        when(segmentMetadata.remoteLogSegmentId()).thenReturn(new RemoteLogSegmentId(tpId, Uuid.randomUuid()));
+        when(segmentMetadata.topicIdPartition()).thenReturn(tpId);
+        when(segmentMetadata.startOffset()).thenReturn(94L);
+        when(segmentMetadata.endOffset()).thenReturn(102L);
+        LeaderEpochFileCache cache = mock(LeaderEpochFileCache.class);
+        when(cache.epochForOffset(anyLong())).thenReturn(OptionalInt.of(2));
+        when(mockLog.leaderEpochCache()).thenReturn(cache);
+
+        ByteBuffer segment = ByteBuffer.allocate(1024);
+        segment.put(records(0L, 94L, 2).buffer());
+        segment.put(records(0L, 97L, 2).buffer());
+        segment.put(records(0L, 100L, tailEpoch).buffer());
+        segment.flip();
+        byte[] segmentBytes = new byte[segment.remaining()];
+        segment.get(segmentBytes);
+        when(remoteStorageManager.fetchLogSegment(any(RemoteLogSegmentMetadata.class), anyInt()))
+                .thenAnswer(a -> new ByteArrayInputStream(segmentBytes));
+
+        File indexDir = new File(logDir, "upper-bound-indexes");
+        Files.createDirectory(indexDir.toPath());
+        OffsetIndex offsetIdx = new OffsetIndex(new File(indexDir, "94" + UnifiedLog.INDEX_FILE_SUFFIX), 94L, 8);
+        TimeIndex timeIdx = new TimeIndex(new File(indexDir, "94" + UnifiedLog.TIME_INDEX_FILE_SUFFIX), 94L, 12);
+        TransactionIndex txnIdx = new TransactionIndex(94L, new File(indexDir, "94" + UnifiedLog.TXN_INDEX_FILE_SUFFIX));
+        txnIdx.append(new AbortedTxn(1L, 95L, 96L, 97L));
+        txnIdx.append(new AbortedTxn(2L, 100L, 101L, 103L));
+        txnIdx.flush();
+        when(remoteStorageManager.fetchIndex(any(RemoteLogSegmentMetadata.class), any(IndexType.class)))
+                .thenAnswer(ans -> switch ((IndexType) ans.getArgument(1)) {
+                    case OFFSET -> Files.newInputStream(offsetIdx.file().toPath());
+                    case TIMESTAMP -> Files.newInputStream(timeIdx.file().toPath());
+                    case TRANSACTION -> Files.newInputStream(txnIdx.file().toPath());
+                    default -> null;
+                });
+
+        FetchRequest.PartitionData partitionData = new FetchRequest.PartitionData(
+                Uuid.randomUuid(), 94L, 0, 1024, Optional.empty()
+        );
+        RemoteStorageFetchInfo fetchInfo = new RemoteStorageFetchInfo(
+                1024, true, tpId, partitionData, isolation,
+                upperBoundOffset < 0 ? OptionalLong.empty() : OptionalLong.of(upperBoundOffset)
+        );
+
+        try (RemoteLogManager remoteLogManager = new RemoteLogManager(
+                config,
+                brokerId,
+                logDir,
+                clusterId,
+                time,
+                tp -> Optional.of(mockLog),
+                (topicPartition, offset) -> { },
+                brokerTopicStats,
+                metrics,
+                endPoint) {
+            @Override
+            public RemoteStorageManager createRemoteStorageManager() {
+                return remoteStorageManager;
+            }
+            @Override
+            public RemoteLogMetadataManager createRemoteLogMetadataManager() {
+                return remoteLogMetadataManager;
+            }
+            @Override
+            public Optional<RemoteLogSegmentMetadata> fetchRemoteLogSegmentMetadata(TopicPartition topicPartition, int epochForOffset, long offset) {
+                return Optional.of(segmentMetadata);
+            }
+            @Override
+            int lookupPositionForOffset(RemoteLogSegmentMetadata remoteLogSegmentMetadata, long offset) {
+                return 0;
+            }
+        }) {
+            return remoteLogManager.read(fetchInfo);
         }
     }
 

@@ -2039,6 +2039,8 @@ class ReplicaManagerInklessTest {
         assertEquals(Errors.NONE, result.error)
         assertTrue(result.info.delayedRemoteStorageFetch.isPresent)
         assertEquals(50L, result.info.delayedRemoteStorageFetch.get.fetchInfo.fetchOffset)
+        // The read ends at the seal, because a remote segment can hold discarded records past it.
+        assertEquals(OptionalLong.of(100L), result.info.delayedRemoteStorageFetch.get.upperBoundOffset)
       } else {
         assertEquals(Errors.NOT_LEADER_OR_FOLLOWER, result.error)
         assertFalse(result.info.delayedRemoteStorageFetch.isPresent)

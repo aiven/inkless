@@ -273,7 +273,7 @@ For a replica whose log ends below the seal, the check compares the epoch of its
 
 The controller sets the flag only once and doesn't record the epoch for these partitions later.
 
-After an unclean leader election before the switch, a remote segment that crosses the seal still serves tiered reads below the seal. Consumers that read through it receive the discarded records past the seal in place of the diskless records at the same offsets. Upstream tiered storage has the same gap after an unclean leader election.
+After an unclean leader election before the switch, a remote segment can cross the seal and hold discarded records past it. A tiered read that starts below the seal ends at the seal: the broker returns only the whole batches that end below it, and the consumer reads the diskless records from the seal on.
 
 ## Operator override of the seal offset
 

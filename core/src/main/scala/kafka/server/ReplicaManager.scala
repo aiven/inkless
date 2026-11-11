@@ -3485,7 +3485,13 @@ class ReplicaManager(val config: KafkaConfig,
           val remoteStorageFetchInfoOpt = if (adjustedMaxBytes > 0) {
             // For consume fetch requests, create a dummy FetchDataInfo with the remote storage fetch information.
             // For the topic-partitions that need remote data, we will use this information to read the data in another thread.
-            Optional.of(new RemoteStorageFetchInfo(adjustedMaxBytes, minOneMessage, tp, fetchInfo, params.isolation))
+            // After an unclean leader election before the switch, a remote segment can hold discarded
+            // records past the seal. Those offsets belong to the diskless log, so the read ends at the seal.
+            val upperBoundOffset =
+              if (isClassicPrefixOffsetInRemoteStorage(tp, offset))
+                OptionalLong.of(_inklessMetadataView.getClassicToDisklessStartOffset(tp.topicPartition))
+              else OptionalLong.empty()
+            Optional.of(new RemoteStorageFetchInfo(adjustedMaxBytes, minOneMessage, tp, fetchInfo, params.isolation, upperBoundOffset))
           } else {
             Optional.empty[RemoteStorageFetchInfo]()
           }
