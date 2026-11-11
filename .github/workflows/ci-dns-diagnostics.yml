@@ -1,0 +1,31 @@
+name: CI DNS diagnostics (temporary)
+
+on:
+  push:
+    branches: [claude/inkless-ci-failure-f82e17]
+
+jobs:
+  diagnose:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    steps:
+      - name: Diagnose
+        run: |
+          head -3 /etc/os-release
+          echo "--- resolv.conf"; cat /etc/resolv.conf
+          echo "--- resolvectl"; resolvectl status 2>&1 | head -20 || true
+          echo "--- apt mirrors"; cat /etc/apt/apt-mirrors.txt 2>&1 || true
+          ls /etc/apt/sources.list.d/ 2>&1 || true
+          for h in archive.ubuntu.com security.ubuntu.com azure.archive.ubuntu.com github.com pypi.org; do
+            echo "== $h"
+            getent hosts "$h" || echo "DNS FAIL"
+            curl -sS -m 10 -o /dev/null -w "http=%{http_code}\n" "http://$h/" || true
+          done
+      - name: apt update
+        run: sudo apt-get update 2>&1 | tail -15
+      - name: pip install docutils
+        run: pip install docutils && which rst2html rst2html.py || true
