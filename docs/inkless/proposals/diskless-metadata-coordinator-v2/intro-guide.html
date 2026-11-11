@@ -278,7 +278,10 @@ tr:last-child td { border-bottom: 0; }
 .log .cell.unapplied { opacity: 0.45; }
 .log .cell.lost { background: var(--bad) !important; text-decoration: line-through; }
 .log .cell.pruned { background: transparent; color: var(--faint); border: 1px dashed var(--line); }
-.log .cell.unflushed { outline: 2px dashed var(--warn); outline-offset: -2px; }
+.log .cell.unflushed { background: var(--accent-soft) !important; color: color-mix(in srgb, var(--cp0) 55%, var(--ink)); border: 2px dashed var(--cp0); line-height: calc(1.9rem - 4px); }
+.log .cell.unflushed.reuse { background: var(--warn-soft) !important; color: color-mix(in srgb, var(--warn) 55%, var(--ink)); border-color: var(--warn); }
+.legend { display: flex; flex-wrap: wrap; gap: 0.4rem 1.2rem; margin: 0.6rem 0; font-size: 0.82rem; }
+.legend > span { display: inline-flex; align-items: center; gap: 0.4rem; }
 
 .bar-row { display: grid; grid-template-columns: 7.5rem 1fr; gap: 0.6rem; align-items: center; margin: 0.35rem 0; font-size: 0.85rem; }
 .bar-track { position: relative; height: 1.5rem; background: var(--soft); border-radius: 6px; overflow: hidden; }
@@ -628,7 +631,7 @@ footer { border-top: 1px solid var(--line); padding: 2rem 1.5rem; color: var(--m
   <div class="demo" id="demo-flush">
     <div class="demo-head"><h5>Try it: power loss on every replica</h5><span class="tag">Interactive</span></div>
     <div class="demo-body">
-      <p class="hint">Commit a few files, then cut power to all three replicas. Cells with a dashed orange outline are in memory only. Switch between the two flush policies and compare.</p>
+      <p class="hint">Commit a few files, then cut power to all three replicas. Switch between the two flush policies and compare: with <code>flush.messages=1</code>, every commit turns solid blue at once; with the classic default, commits stay pale until the OS writes them out.</p>
       <div class="controls">
         <button class="toggle on" id="fl-one">flush.messages=1</button>
         <button class="toggle" id="fl-default">Classic default (the OS flushes later)</button>
@@ -637,6 +640,12 @@ footer { border-top: 1px solid var(--line); padding: 2rem 1.5rem; color: var(--m
         <button id="fl-osflush">OS writes memory to disk</button>
         <button class="danger" id="fl-power">Power loss on all replicas</button>
         <button id="fl-reset">Reset</button>
+      </div>
+      <div class="legend log">
+        <span><span class="cell" style="background:var(--cp0);padding:0 0.35rem">#1</span>On disk: survives a power loss</span>
+        <span><span class="cell unflushed" style="padding:0 0.35rem">#2</span>In memory only: gone after a power loss</span>
+        <span><span class="cell lost" style="padding:0 0.35rem">#3</span>Acknowledged, then lost</span>
+        <span><span class="cell" style="background:var(--warn);padding:0 0.35rem">#4</span>Reuses a lost commit's offsets</span>
       </div>
       <div id="fl-replicas"></div>
       <div class="readout" id="fl-readout"></div>
@@ -2002,14 +2011,16 @@ function demoFlush() {
     host.innerHTML = '';
     for (let r = 0; r < 3; r++) {
       const cells = st.log.map((e, k) => h('span', {
-        class: 'cell' + (k >= st.flushed ? ' unflushed' : ''),
+        class: 'cell' + (k >= st.flushed ? ' unflushed' : '') + (e.reuse ? ' reuse' : ''),
         style: { background: e.reuse ? 'var(--warn)' : 'var(--cp0)', padding: '0 0.35rem' },
-        title: `commit ${e.n}: orders-0 offsets ${range(e)}`,
+        title: `commit ${e.n}: orders-0 offsets ${range(e)}, ${k >= st.flushed ? 'in memory only' : 'on disk'}`,
       }, `#${e.n} · ${range(e)}`));
       const lost = st.lost.map(e => h('span', { class: 'cell lost', style: { padding: '0 0.35rem' }, title: 'lost in the power loss' }, `#${e.n} · ${range(e)}`));
-      host.append(h('div', { class: 'bar-row', style: { gridTemplateColumns: '6.5rem 1fr' } },
+      const mem = st.log.length - st.flushed;
+      host.append(h('div', { class: 'bar-row', style: { gridTemplateColumns: '6.5rem 1fr auto' } },
         h('span', { class: 'small', style: { fontWeight: 650 } }, names[r]),
-        h('div', { class: 'log' }, cells.length || lost.length ? [...cells, ...lost] : h('span', { class: 'small muted' }, 'Log empty'))));
+        h('div', { class: 'log' }, cells.length || lost.length ? [...cells, ...lost] : h('span', { class: 'small muted' }, 'Log empty')),
+        h('span', { class: 'small ' + (mem ? 'bad-text' : 'muted') }, `${st.flushed} on disk, ${mem} in memory only`)));
     }
     $('#fl-osflush').disabled = st.one;
   };
@@ -2335,22 +2346,22 @@ function demoV1() {
       text: 'The broker sends one part each to cp0, cp2, and cp3. Each part carries its first-send time, 12:00:00 on the broker\'s clock. Each leader checks the age on <i>its own</i> clock: the part must be younger than the maximum commit age, 5 minutes.',
       run: s => { for (const i of [0, 2, 3]) { s.cps[i].records.push('file committed'); s.cps[i].holds = 'batches in ' + KEY; } } },
     { title: 'Retention at cp0 releases the object', clock: true,
-      text: 'Retention removes cp0\'s batches. cp0 holds nothing in the object, so it reports a release to the owner. It also keeps a tombstone for the key until 12:10, so a delayed retry can\'t add the batches back.',
-      run: s => { s.cps[0].records.push('retention applied'); s.cps[0].holds = 'nothing'; s.cps[0].notes = ['tombstone for ' + KEY + ' until 12:10']; s.cps[2].records.push('release recorded: cp0'); s.cps[2].notes = ['owns ' + KEY + ': waiting for cp2, cp3']; } },
+      text: 'At 12:01, retention removes cp0\'s batches. cp0 holds nothing in the object, so it reports a release to the owner, and appends an owner-accepted record once the owner accepts it. The part\'s first-send time is younger than the maximum commit age, so cp0 keeps a tombstone for the key, so a delayed retry can\'t add the batches back. The tombstone lasts twice the maximum commit age from its creation, until 12:11.',
+      run: s => { s.cps[0].records.push('retention applied', 'owner accepted'); s.cps[0].holds = 'nothing'; s.cps[0].notes = ['tombstone for ' + KEY + ' until 12:11']; s.cps[2].records.push('participant state recorded: cp0 released'); s.cps[2].notes = ['owns ' + KEY + ': waiting for cp2, cp3']; } },
     { title: 'cp2 releases its own batches', clock: false,
       text: '<code>DeleteRecords</code> removes cp2\'s batches. The owner records its own release.',
       run: s => { s.cps[2].records.push('records deleted'); s.cps[2].holds = 'nothing'; s.cps[2].notes = ['owns ' + KEY + ': waiting for cp3']; } },
     { title: 'Five minutes pass: fence the silent participant', clock: true,
-      text: 'cp3 never reported, so it\'s silent: it might hold batches, or its part might never have arrived. Once the maximum commit age has passed on the owner\'s clock, the owner fences cp3. cp3 answers that it holds batches, so the owner keeps waiting.',
-      run: s => { s.cps[2].records.push('file fenced: cp3'); s.cps[3].records.push('fence answered: referenced'); } },
+      text: 'cp3 never reported, so it\'s silent: it might hold batches, or its part might never have arrived. Once the maximum commit age has passed on the owner\'s clock, the owner fences cp3. cp3 holds a commit for the key, so it appends a file-fenced record with the answer referenced, which leaves its commit in place. The owner records cp3 as referenced and waits for its release report without fencing it again.',
+      run: s => { s.cps[3].records.push('file fenced: referenced, owner cp2'); s.cps[2].records.push('participant state recorded: cp3 referenced'); } },
     { title: 'cp3 releases, and the owner marks the object', clock: true,
-      text: 'Retention removes cp3\'s batches and cp3 reports a release. Every participant is released and the intent is older than the maximum commit age, so the owner marks the object for deletion.',
-      run: s => { s.cps[3].records.push('retention applied'); s.cps[3].holds = 'nothing'; s.cps[3].notes = ['tombstone for ' + KEY + ' until 12:16']; s.cps[2].records.push('release recorded: cp3', 'file delete marked'); s.cps[2].notes = ['deletion queue: ' + KEY]; } },
+      text: 'Retention removes cp3\'s batches, cp3 reports a release, and it appends an owner-accepted record. By now the part\'s first-send time is older than the maximum commit age, so no retry can pass the age check, and cp3 deletes its row for the object instead of keeping a tombstone. Every participant is released and the intent is older than the maximum commit age, so the owner marks the object for deletion.',
+      run: s => { s.cps[3].records.push('retention applied', 'owner accepted'); s.cps[3].holds = 'nothing'; s.cps[3].notes = ['row deleted, no tombstone']; s.cps[2].records.push('participant state recorded: cp3 released', 'file delete marked'); s.cps[2].notes = ['deletion queue: ' + KEY]; } },
     { title: 'FileCleaner deletes the object', clock: false,
       text: 'After the grace period, <code>FileCleaner</code> deletes the object from storage, and the owner records that the file is deleted.',
       run: s => { s.storage = 'deleted'; s.cps[2].records.push('file deleted'); s.cps[2].notes = []; } },
-    { title: 'Ten minutes after the commit: the keys expire', clock: true,
-      text: 'Tombstones and fences expire after twice the maximum commit age, through a keys-expired record, so SQLite doesn\'t grow forever. From now on, cp0 remembers nothing about the key. A late part from 12:00 is stopped only by the age check, and that check compares two different clocks. Chapter 15 shows where that goes wrong.',
+    { title: '12:11: cp0\'s tombstone expires', clock: true,
+      text: 'Tombstones and fences expire once they are older than twice the maximum commit age, through a keys-expired record, so SQLite doesn\'t grow forever. cp0\'s tombstone dates from 12:01, so it goes at 12:11. From now on, cp0 remembers nothing about the key. A late part from 12:00 is stopped only by the age check, and that check compares two different clocks. Chapter 15 shows where that goes wrong.',
       run: s => { s.cps[0].records.push('keys expired'); s.cps[0].notes = []; } },
   ];
   stepper({
