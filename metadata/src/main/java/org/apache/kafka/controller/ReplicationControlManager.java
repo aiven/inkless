@@ -1823,8 +1823,9 @@ public class ReplicationControlManager {
                     continue;
                 }
 
-                // Replicas truncate their logs fully if the epoch doesn't match their leader epoch cache, so a value
-                // that no replica can hold makes every replica rebuild on every leader change.
+                // Only -1 (no classic record below the seal) and epochs up to the current leader epoch are valid.
+                // No record carries a higher epoch. With any other value, every replica fails the epoch check at
+                // seal - 1 and deletes its log. The rebuild then finds no remote segment in that epoch and retries.
                 int lastClassicLeaderEpoch = partitionData.lastClassicLeaderEpoch();
                 if (lastClassicLeaderEpoch < PartitionRegistration.NO_LAST_CLASSIC_LEADER_EPOCH ||
                         lastClassicLeaderEpoch > partition.leaderEpoch) {

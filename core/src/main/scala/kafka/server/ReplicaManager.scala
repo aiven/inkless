@@ -4166,7 +4166,8 @@ class ReplicaManager(val config: KafkaConfig,
    *    `classicPrefixInRemoteStorage`. Each epoch has one leader, so its history below the seal is the committed one.
    *  - Its records past the seal, if any, are consolidated diskless records.
    *  - Its highest offset in remote storage is below its log end offset.
-   *  - Its future log, if any, ends in the epoch that the current log has at the same offset.
+   *  - Its future log, if any, ends in the epoch that the current log has at the same offset, or ends at or below
+   *    the start of the current log.
    *
    * A log that the broker keeps only grows, so the broker checks a replica when it first applies the partition and
    * on every new leader epoch. The fetchers of these replicas restart after the transition, so the broker stops
@@ -4234,9 +4235,12 @@ class ReplicaManager(val config: KafkaConfig,
     }
   }
 
+  // Retention or DeleteRecords can move the start of the current log to the end of a future log that waits behind
+  // other moves, or past it. The current log then has no epoch for the last record of the future log, and none of
+  // the records of the future log are in the current log. The move fetcher drops them on its next fetch.
   private def endsInSameEpoch(futureLog: UnifiedLog, log: UnifiedLog): Boolean = {
     val end = futureLog.logEndOffset
-    futureLog.logStartOffset >= end || (end <= log.logEndOffset &&
+    futureLog.logStartOffset >= end || end <= log.logStartOffset || (end <= log.logEndOffset &&
       futureLog.leaderEpochCache.epochForOffset(end - 1) == log.leaderEpochCache.epochForOffset(end - 1))
   }
 

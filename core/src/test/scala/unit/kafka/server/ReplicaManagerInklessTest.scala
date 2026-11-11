@@ -70,7 +70,7 @@ import org.apache.kafka.server.metrics.KafkaYammerMetrics
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats
 import org.apache.kafka.storage.internals.checkpoint.LazyOffsetCheckpoints
 import org.apache.kafka.storage.internals.epoch.LeaderEpochFileCache
-import org.apache.kafka.storage.internals.log.{AppendOrigin, AsyncOffsetReadFutureHolder, EpochEntry, FetchDataInfo, LogConfig, LogDirFailureChannel, LogOffsetMetadata, LogOffsetSnapshot, LogReadInfo, LogReadResult, OffsetResultHolder, ProducerStateManager, RemoteLogReadResult, RemoteStorageFetchInfo, UnifiedLog}
+import org.apache.kafka.storage.internals.log.{AppendOrigin, AsyncOffsetReadFutureHolder, EpochEntry, FetchDataInfo, LogConfig, LogDirFailureChannel, LogOffsetMetadata, LogOffsetSnapshot, LogReadInfo, LogReadResult, LogStartOffsetIncrementReason, OffsetResultHolder, ProducerStateManager, RemoteLogReadResult, RemoteStorageFetchInfo, UnifiedLog}
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.{AfterEach, BeforeEach, Test}
 import org.junit.jupiter.params.ParameterizedTest
@@ -8367,13 +8367,15 @@ class ReplicaManagerInklessTest {
   // This replica led epoch 1 and wrote [7, 10), and a log directory move copied its log into a future log. If the
   // classic prefix ends in epoch 0, an unclean election discarded that tail. The replica keeps both logs only if the
   // current log ends below the seal in the recorded epoch, and the future log ends in the epoch that the current log
-  // has at the same offset. A partial copy that ends in epoch 0 matches. Otherwise, the replica deletes both logs,
+  // has at the same offset. A partial copy that ends in epoch 0 matches. So does a partial copy that ends at or below
+  // the start of the current log, for which the current log has no epoch. Otherwise, the replica deletes both logs,
   // cancels its remote log tasks without stopping the remote log metadata subscription, and leads from an empty log.
-  @ParameterizedTest(name = "testSwitchedLeaderInPhaseTwoRecreatesReplicaWithoutCommittedHistory with lastClassicLeaderEpoch: {0}, futureLogEndOffset: {1}, futureTailEpoch: {2}")
-  @CsvSource(Array("0, 10, 1", "1, 10, 1", "1, 7, 1", "1, 10, 0"))
+  @ParameterizedTest(name = "testSwitchedLeaderInPhaseTwoRecreatesReplicaWithoutCommittedHistory with lastClassicLeaderEpoch: {0}, futureLogEndOffset: {1}, futureTailEpoch: {2}, logStartOffset: {3}")
+  @CsvSource(Array("0, 10, 1, 0", "1, 10, 1, 0", "1, 7, 1, 0", "1, 10, 0, 0", "1, 7, 1, 7", "1, 7, 1, 8"))
   def testSwitchedLeaderInPhaseTwoRecreatesReplicaWithoutCommittedHistory(lastClassicLeaderEpoch: Int,
                                                                           futureLogEndOffset: Long,
-                                                                          futureTailEpoch: Int): Unit = {
+                                                                          futureTailEpoch: Int,
+                                                                          logStartOffset: Long): Unit = {
     val topicName = "switched-consolidating-topic"
     val topicId = Uuid.randomUuid()
     val tp = new TopicPartition(topicName, 0)
@@ -8423,6 +8425,11 @@ class ReplicaManagerInklessTest {
             replicaManager.highWatermarkCheckpoints(replicaLog.parentDir).write(util.Map.of(tp, java.lang.Long.valueOf(logEndOffset)))
         }
         log.updateHighestOffsetInRemoteStorage(sealOffset - 1)
+        if (logStartOffset > 0) {
+          log.updateHighWatermark(sealOffset)
+          log.maybeIncrementLogStartOffset(logStartOffset, LogStartOffsetIncrementReason.ClientRecordDeletion)
+          assertEquals(OptionalInt.empty(), log.leaderEpochCache.epochForOffset(futureLogEndOffset - 1))
+        }
         when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(sealOffset)
         when(replicaManager.inklessMetadataView().isClassicPrefixInRemoteStorage(tp)).thenReturn(true)
         when(replicaManager.inklessMetadataView().getLastClassicLeaderEpoch(tp)).thenReturn(lastClassicLeaderEpoch)

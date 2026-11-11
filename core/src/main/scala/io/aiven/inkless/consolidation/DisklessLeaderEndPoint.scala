@@ -193,8 +193,8 @@ class DisklessLeaderEndPoint(
                   lazy val evidence = remoteConsolidatedPrefixEvidence(tp.topicPartition, disklessStartOffset)
                   if (crossTier.isPresent && crossTier.getAsLong >= disklessStartOffset) {
                     // Retention or DeleteRecords removed everything below the diskless start. The
-                    // out-of-range reset starts the log at the cross-tier earliest, so the fetcher
-                    // neither rebuilds a deleted prefix nor waits for remote coverage that never comes.
+                    // out-of-range reset starts the log at the cross-tier earliest. The fetcher doesn't
+                    // rebuild a deleted prefix or wait for remote coverage that never comes.
                     replicaManager.markConsolidationRemotePrefixUnknown(tp.topicPartition, unknown = false, generation)
                     logger.debug("Offset {} for {} is below the cross-tier earliest {}, which is at or past the diskless start {}; " +
                       "returning OFFSET_OUT_OF_RANGE so the fetcher resets to the cross-tier earliest.",
