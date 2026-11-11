@@ -7417,6 +7417,62 @@ class ReplicaManagerInklessTest {
   }
 
   @Test
+  def testApplyDeltaAdvancesHwmToSealWhenSealIsCommittedInSeparateDeltaWithSameLeaderEpoch(): Unit = {
+    // The seal commit can arrive as its own metadata delta that keeps the leader epoch. The follower
+    // already runs its fetcher from the pending phase, so the restore must not depend on a new
+    // leader epoch or on scheduling a catch-up fetch.
+    val topicName = "switched-topic"
+    val topicId = Uuid.randomUuid()
+    val tp = new TopicPartition(topicName, 0)
+    val brokerId = 1
+    val leaderId = 2
+    val sealOffset = 10L
+
+    val mockFetcherManager = mock(classOf[ReplicaFetcherManager])
+    when(mockFetcherManager.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+
+    val replicaManager = spy(createReplicaManager(
+      List(topicName),
+      mockReplicaFetcherManager = Some(mockFetcherManager)
+    ))
+    try {
+      val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+      populateLocalLogAtLeoAndCheckpointedHwm(replicaManager, tp, log, leo = sealOffset, hw = 5L)
+
+      // The switch is pending: the leader froze its log, and the controller hasn't committed the seal.
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp))
+        .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
+      val pendingDelta = disklessFollowerDelta(topicName, topicId, brokerId, leaderId,
+        classicToDisklessStartOffset = PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
+      val pendingImage = imageFromTopics(pendingDelta.apply())
+      replicaManager.applyDelta(pendingDelta, pendingImage)
+      assertEquals(5L, replicaManager.localLogOrException(tp).highWatermark,
+        "A pending switch has no committed seal to restore the high watermark from")
+
+      clearInvocations(mockFetcherManager)
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(sealOffset)
+
+      // The controller commits the seal without a leader change, so the leader epoch stays 0.
+      val sealDelta = new TopicsDelta(pendingImage.topics())
+      val sealRecord = new PartitionChangeRecord()
+        .setTopicId(topicId)
+        .setPartitionId(tp.partition)
+      sealRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicToDisklessStartOffset(sealOffset))
+      sealDelta.replay(sealRecord)
+      val localChanges = sealDelta.localChanges(brokerId)
+      assertTrue(localChanges.followers.containsKey(tp), "The seal delta must reach the follower path")
+      assertEquals(0, localChanges.followers.get(tp).partition.leaderEpoch)
+      replicaManager.applyDelta(sealDelta, imageFromTopics(sealDelta.apply()))
+
+      assertEquals(sealOffset, replicaManager.localLogOrException(tp).highWatermark,
+        "A follower at the seal must advance its stale high watermark when the seal arrives in its own delta")
+      verify(mockFetcherManager, never()).addFetcherForPartitions(any())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
   def testApplyDeltaKeepsHwmForDisklessFollowerBelowSeal(): Unit = {
     val topicName = "switched-topic"
     val topicId = Uuid.randomUuid()
