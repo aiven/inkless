@@ -24,7 +24,7 @@ import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.errors.RecordBatchTooLargeException
 import org.apache.kafka.common.record.internal.{MemoryRecords, Records}
 import org.apache.kafka.common.requests.FetchResponse
-import org.apache.kafka.metadata.PartitionRegistration
+import org.apache.kafka.metadata.{LeaderAndIsr, PartitionRegistration}
 import org.apache.kafka.server.LeaderEndPoint
 import org.apache.kafka.storage.internals.log.LogAppendInfo
 
@@ -60,6 +60,7 @@ class ConsolidationFetcherThread(name: String,
     partitionLeaderEpoch: Int,
     partitionData: FetchData
   ): Option[LogAppendInfo] = {
+    maybeRepairBornDisklessEpochCache(topicPartition)
     maybeStampDisklessLeaderEpoch(topicPartition, partitionData)
     val result =
       try {
@@ -104,6 +105,13 @@ class ConsolidationFetcherThread(name: String,
     }
 
     result
+  }
+
+  private def maybeRepairBornDisklessEpochCache(topicPartition: TopicPartition): Unit = {
+    if (replicaMgr.classicToDisklessStartOffset(topicPartition) != PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+      return
+    val log = replicaMgr.getPartitionOrException(topicPartition).localLogOrException
+    log.assignEpochStartOffset(LeaderAndIsr.INITIAL_LEADER_EPOCH, log.logStartOffset)
   }
 
   /**
