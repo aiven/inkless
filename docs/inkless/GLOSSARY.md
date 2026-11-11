@@ -61,6 +61,9 @@ The metadata management layer in Inkless, responsible for coordinating batch com
 
 ## D
 
+**Diskless Leader Epoch**
+The leader epoch that covers the diskless region of a [switched](#switched-topic) partition. Every consolidated record on that partition has this epoch. A [born-diskless](#born-diskless-topic) partition has none, and its consolidated records stay at epoch 0. Older text sometimes called this the "frozen epoch" or the "switch epoch."
+
 **Diskless Topics**
 Topics configured with `diskless.enable=true` that store data in object storage instead of on local broker disks. The core feature of Inkless. See also [Born-Diskless Topic](#born-diskless-topic).
 
@@ -143,6 +146,9 @@ A PostgreSQL read replica used to scale batch coordinate lookups. Configured via
 ---
 
 ## S
+
+**Seal**
+The offset where a [switched](#switched-topic) partition's classic prefix ends and its diskless region begins. A [born-diskless](#born-diskless-topic) partition has none. Older text sometimes called this the "switch point" or the "cutover offset."
 
 **Storage Backend**
 The object storage implementation (S3, GCS, or Azure Blob). Configured via `inkless.storage.backend.class`.

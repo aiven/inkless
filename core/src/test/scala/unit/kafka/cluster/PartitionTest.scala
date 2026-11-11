@@ -4323,4 +4323,115 @@ class PartitionTest extends AbstractPartitionTest {
     assertTrue(log.logEndOffset > leoBeforeSeal,
       "LEO should have increased due to the ABORT marker appended during seal")
   }
+
+  @Test
+  def testMakeLeaderKeepsDisklessLeaderEpochAfterLeaderChange(): Unit = {
+    val lastClassicEpoch = 2
+    val disklessLeaderEpoch = 4
+    val seal = 2L
+    val log = logManager.getOrCreateLog(topicPartition, topicId = Optional.empty)
+    log.appendAsLeader(MemoryRecords.withRecords(0L, Compression.NONE, lastClassicEpoch,
+      new SimpleRecord("k1".getBytes, "v1".getBytes),
+      new SimpleRecord("k2".getBytes, "v2".getBytes)
+    ), lastClassicEpoch)
+
+    setupPartitionWithMocks(leaderEpoch = disklessLeaderEpoch, isLeader = true)
+    partition.consolidationLeaderEpoch = () => Some(disklessLeaderEpoch)
+    appendConsolidatedRecords(baseOffset = seal, disklessLeaderEpoch)
+
+    val replicas = Array(brokerId, remoteReplicaId)
+    makeLeader(None, disklessLeaderEpoch + 1, replicas, replicas, partition.getPartitionEpoch + 1, isNew = false)
+    appendConsolidatedRecords(baseOffset = seal + 2, disklessLeaderEpoch)
+
+    val leaderEpochCache = partition.localLogOrException.leaderEpochCache
+    assertEquals(util.List.of(new EpochEntry(lastClassicEpoch, 0L), new EpochEntry(disklessLeaderEpoch, seal)),
+      leaderEpochCache.epochEntries)
+    assertEquals(util.OptionalInt.of(disklessLeaderEpoch), leaderEpochCache.epochForOffset(seal + 1))
+    assertEquals(util.OptionalInt.of(disklessLeaderEpoch), leaderEpochCache.epochForOffset(seal + 2))
+    assertEquals(util.List.of(new EpochEntry(disklessLeaderEpoch, seal + 2)),
+      leaderEpochCache.epochEntriesInRange(seal + 2, seal + 4))
+  }
+
+  @Test
+  def testMakeLeaderAtSealAssignsEpochWhenDisklessEpochIsMissing(): Unit = {
+    val lastClassicEpoch = 2
+    val disklessLeaderEpoch = 4
+    val seal = 2L
+    val log = logManager.getOrCreateLog(topicPartition, topicId = Optional.empty)
+    log.appendAsLeader(MemoryRecords.withRecords(0L, Compression.NONE, lastClassicEpoch,
+      new SimpleRecord("k1".getBytes, "v1".getBytes),
+      new SimpleRecord("k2".getBytes, "v2".getBytes)
+    ), lastClassicEpoch)
+    setupPartitionWithMocks(leaderEpoch = disklessLeaderEpoch, isLeader = false)
+    partition.consolidationLeaderEpoch = () => Some(disklessLeaderEpoch)
+
+    val replicas = Array(brokerId, remoteReplicaId)
+    makeLeader(None, disklessLeaderEpoch + 1, replicas, replicas, partition.getPartitionEpoch + 1, isNew = false)
+
+    val leaderEpochCache = partition.localLogOrException.leaderEpochCache
+    assertEquals(util.List.of(new EpochEntry(lastClassicEpoch, 0L), new EpochEntry(disklessLeaderEpoch + 1, seal)),
+      leaderEpochCache.epochEntries)
+    assertEquals(seal, leaderEpochCache.endOffsetFor(lastClassicEpoch + 1, seal).getValue)
+
+    appendConsolidatedRecords(baseOffset = seal, disklessLeaderEpoch)
+    assertEquals(util.List.of(new EpochEntry(lastClassicEpoch, 0L), new EpochEntry(disklessLeaderEpoch, seal)),
+      leaderEpochCache.epochEntries)
+  }
+
+  @Test
+  def testMakeLeaderKeepsBornDisklessEpochAfterLeaderChange(): Unit = {
+    val consolidationEpoch = 0
+    setupPartitionWithMocks(leaderEpoch = consolidationEpoch, isLeader = true)
+    partition.consolidationLeaderEpoch = () => Some(consolidationEpoch)
+    appendConsolidatedRecords(baseOffset = 0L, consolidationEpoch)
+
+    val replicas = Array(brokerId, remoteReplicaId)
+    makeLeader(None, consolidationEpoch + 1, replicas, replicas, partition.getPartitionEpoch + 1, isNew = false)
+    appendConsolidatedRecords(baseOffset = 2L, consolidationEpoch)
+
+    val leaderEpochCache = partition.localLogOrException.leaderEpochCache
+    assertEquals(util.List.of(new EpochEntry(consolidationEpoch, 0L)), leaderEpochCache.epochEntries)
+    assertEquals(util.OptionalInt.of(consolidationEpoch), leaderEpochCache.epochForOffset(1L))
+  }
+
+  @Test
+  def testMakeLeaderKeepsBornDisklessEpochAfterRestart(): Unit = {
+    val consolidationEpoch = 0
+    val leaderEpoch = 3
+    setupPartitionWithMocks(leaderEpoch = leaderEpoch, isLeader = true)
+    partition.consolidationLeaderEpoch = () => Some(consolidationEpoch)
+    appendConsolidatedRecords(baseOffset = 0L, consolidationEpoch)
+    assertEquals(util.List.of(new EpochEntry(consolidationEpoch, 0L)),
+      partition.localLogOrException.leaderEpochCache.epochEntries)
+
+    partition = new Partition(
+      topicPartition,
+      replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT,
+      localBrokerId = brokerId,
+      () => defaultBrokerEpoch(brokerId),
+      time,
+      alterPartitionListener,
+      delayedOperations,
+      metadataCache,
+      logManager,
+      alterPartitionManager)
+    partition.consolidationLeaderEpoch = () => Some(consolidationEpoch)
+    assertEquals(-1, partition.getLeaderEpoch)
+
+    val replicas = Array(brokerId, remoteReplicaId)
+    makeLeader(None, leaderEpoch, replicas, replicas, 1, isNew = true)
+    appendConsolidatedRecords(baseOffset = 2L, consolidationEpoch)
+
+    val leaderEpochCache = partition.localLogOrException.leaderEpochCache
+    assertEquals(util.List.of(new EpochEntry(consolidationEpoch, 0L)), leaderEpochCache.epochEntries)
+    assertEquals(util.OptionalInt.of(consolidationEpoch), leaderEpochCache.epochForOffset(1L))
+  }
+
+  private def appendConsolidatedRecords(baseOffset: Long, epoch: Int): Unit = {
+    val records = createRecords(util.List.of(
+      new SimpleRecord("k".getBytes, "v".getBytes),
+      new SimpleRecord("k".getBytes, "v".getBytes)
+    ), baseOffset, epoch)
+    partition.appendRecordsToFollowerOrFutureReplica(records, isFuture = false, partition.getLeaderEpoch)
+  }
 }

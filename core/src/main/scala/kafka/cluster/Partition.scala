@@ -130,6 +130,7 @@ object Partition {
       logManager = replicaManager.logManager,
       alterIsrManager = replicaManager.alterPartitionManager)
     partition.replicationStopOffset = () => replicaManager.replicationStopOffset(topicPartition)
+    partition.consolidationLeaderEpoch = () => replicaManager.consolidationLeaderEpoch(topicPartition)
     partition
   }
 
@@ -206,6 +207,8 @@ class Partition(val topicPartition: TopicPartition,
   // Inkless: where follower replication of a sealed partition stops, if it does. A field rather than a
   // constructor parameter, so Java callers such as the JMH benchmarks keep compiling.
   @volatile private[cluster] var replicationStopOffset: () => Option[Long] = () => None
+
+  @volatile private[cluster] var consolidationLeaderEpoch: () => Option[Int] = () => None
 
   // Logs belonging to this partition. Majority of time it will be only one log, but if log directory
   // is getting changed (as a result of ReplicaAlterLogDirs command), we may have two logs until copy
@@ -775,19 +778,29 @@ class Partition(val topicPartition: TopicPartition,
       // has changed.
       if (isNewLeaderEpoch) {
         val leaderEpochStartOffset = leaderLog.logEndOffset
+        val cachedLowerConsolidationEpoch = consolidationLeaderEpoch().filter { epoch =>
+          epoch < partitionRegistration.leaderEpoch && leaderLog.leaderEpochCache.epochEntry(epoch).isPresent
+        }
+        val skippedEpochCacheEntry = cachedLowerConsolidationEpoch match {
+          case Some(epoch) => s" Skipped the leader epoch cache entry because consolidation appends in epoch $epoch."
+          case None => ""
+        }
         stateChangeLogger.info(s"Leader $topicPartition with topic id $topicId starts at " +
           s"leader epoch ${partitionRegistration.leaderEpoch} from offset $leaderEpochStartOffset " +
           s"with partition epoch ${partitionRegistration.partitionEpoch}, high watermark ${leaderLog.highWatermark}, " +
           s"ISR ${isr.mkString("[", ",", "]")}, adding replicas ${addingReplicas.mkString("[", ",", "]")} and " +
           s"removing replicas ${removingReplicas.mkString("[", ",", "]")} ${if (isUnderMinIsr) "(under-min-isr)" else ""}. " +
-          s"Previous leader $leaderReplicaIdOpt and previous leader epoch was $leaderEpoch.")
+          s"Previous leader $leaderReplicaIdOpt and previous leader epoch was $leaderEpoch.$skippedEpochCacheEntry")
 
         // In the case of successive leader elections in a short time period, a follower may have
         // entries in its log from a later epoch than any entry in the new leader's log. In order
         // to ensure that these followers can truncate to the right offset, we must cache the new
         // leader epoch and the start offset since it should be larger than any epoch that a follower
         // would try to query.
-        leaderLog.assignEpochStartOffset(partitionRegistration.leaderEpoch, leaderEpochStartOffset)
+        // The consolidation skip breaks that: the latest cached epoch stays below the leader epoch, so
+        // LeaderEpochFileCache.endOffsetFor answers undefined for the current epoch.
+        if (cachedLowerConsolidationEpoch.isEmpty)
+          leaderLog.assignEpochStartOffset(partitionRegistration.leaderEpoch, leaderEpochStartOffset)
 
         // Initialize lastCaughtUpTime of replicas as well as their lastFetchTimeMs and
         // lastFetchLeaderLogEndOffset.
