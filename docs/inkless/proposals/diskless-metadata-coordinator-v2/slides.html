@@ -1,0 +1,2949 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Diskless metadata coordinator v2</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #18202a;
+      --muted: #5d6978;
+      --paper: #f6f8fb;
+      --card: #ffffff;
+      --line: #d9e0e8;
+      --soft: #edf2f7;
+      --accent: #155eef;
+      --accent-soft: #e7efff;
+      --accent-on: #ffffff;
+      --good: #067647;
+      --good-soft: #e5f5ed;
+      --warn: #a15c00;
+      --warn-soft: #fff3da;
+      --bad: #b42318;
+      --bad-soft: #ffebe9;
+      --cp0: #155eef;
+      --cp1: #7f56d9;
+      --cp2: #c4328a;
+      --cp3: #008b8b;
+      --cp4: #b54708;
+      --cp5: #087443;
+      --shadow: 0 16px 42px rgba(29, 52, 80, 0.12);
+      --stage-glow: rgba(21, 94, 239, 0.08);
+      --overlay: rgba(12, 22, 32, 0.48);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --ink: #e6edf5;
+        --muted: #a7b4c4;
+        --paper: #111821;
+        --card: #18232f;
+        --line: #304153;
+        --soft: #202e3d;
+        --accent: #82aaff;
+        --accent-soft: #1b315c;
+        --accent-on: #101923;
+        --good: #6ce0a6;
+        --good-soft: #123c2e;
+        --warn: #ffc66d;
+        --warn-soft: #4b3518;
+        --bad: #ff9b93;
+        --bad-soft: #4a211e;
+        --shadow: 0 16px 42px rgba(0, 0, 0, 0.32);
+        --stage-glow: rgba(130, 170, 255, 0.09);
+        --overlay: rgba(0, 0, 0, 0.58);
+      }
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    body {
+      font-size: 16px;
+      line-height: 1.35;
+    }
+
+    button,
+    input,
+    select {
+      font: inherit;
+    }
+
+    button {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--card);
+      color: var(--ink);
+      padding: 0.42rem 0.66rem;
+      cursor: pointer;
+      transition: border-color 120ms ease, background 120ms ease, transform 120ms ease;
+    }
+
+    button:hover {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+    }
+
+    button:active {
+      transform: translateY(1px);
+    }
+
+    button.primary {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: var(--accent-on);
+    }
+
+    button.danger {
+      border-color: var(--bad);
+      color: var(--bad);
+    }
+
+    button:focus-visible,
+    input:focus-visible,
+    select:focus-visible {
+      outline: 3px solid var(--accent-soft);
+      outline-offset: 2px;
+    }
+
+    input,
+    select {
+      width: 100%;
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--card);
+      color: var(--ink);
+      padding: 0.4rem 0.5rem;
+    }
+
+    code,
+    kbd {
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      background: var(--soft);
+      padding: 0.08rem 0.28rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.88em;
+    }
+
+    .deck {
+      display: grid;
+      width: 100vw;
+      height: 100vh;
+      place-items: center;
+      background:
+        radial-gradient(circle at 12% 0%, var(--stage-glow), transparent 35rem),
+        var(--paper);
+    }
+
+    .stage {
+      position: relative;
+      width: min(100vw, 177.7778vh);
+      height: min(100vh, 56.25vw);
+      overflow: hidden;
+      background: var(--paper);
+      box-shadow: var(--shadow);
+      font-size: 20px;
+    }
+
+    .slide {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.55rem;
+      padding: 3.7% 5.2% 5.2%;
+      opacity: 0;
+      pointer-events: none;
+      transform: translateX(2.2%);
+      transition: opacity 180ms ease, transform 180ms ease;
+      background:
+        radial-gradient(circle at 100% 0%, var(--stage-glow), transparent 34rem),
+        var(--paper);
+    }
+
+    .slide.active {
+      opacity: 1;
+      pointer-events: auto;
+      transform: translateX(0);
+    }
+
+    .slide::after {
+      position: absolute;
+      top: 0;
+      right: 0;
+      left: 0;
+      height: 5px;
+      background: var(--accent);
+      content: "";
+    }
+
+    .slide-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 1.5rem;
+      color: var(--muted);
+      font-size: 0.78rem;
+      font-weight: 750;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .section-label {
+      color: var(--accent);
+    }
+
+    h1,
+    h2,
+    h3,
+    h4,
+    p {
+      margin: 0;
+    }
+
+    h1,
+    h2,
+    h3,
+    h4 {
+      line-height: 1.12;
+      letter-spacing: -0.025em;
+    }
+
+    h1 {
+      max-width: 850px;
+      font-size: 4.25rem;
+    }
+
+    h2 {
+      max-width: 1060px;
+      font-size: 2.48rem;
+    }
+
+    h3 {
+      font-size: 1.2em;
+    }
+
+    h4 {
+      font-size: 1.05em;
+    }
+
+    .subtitle {
+      max-width: 780px;
+      color: var(--muted);
+      font-size: 1.3rem;
+    }
+
+    .takeaway {
+      max-width: 1040px;
+      color: var(--muted);
+      font-size: 1.05em;
+    }
+
+    .small {
+      color: var(--muted);
+      font-size: 1.05em;
+    }
+
+    .muted {
+      color: var(--muted);
+    }
+
+    .code-line {
+      display: inline-block;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--soft);
+      padding: 0.45rem 0.68rem;
+      color: var(--ink);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 1em;
+    }
+
+    .badge-row,
+    .chip-row,
+    .button-row,
+    .key-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.45rem;
+    }
+
+    .badge,
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.28rem;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--card);
+      padding: 0.25rem 0.55rem;
+      color: var(--muted);
+      font-size: 0.9em;
+    }
+
+    .badge strong,
+    .chip strong {
+      color: var(--ink);
+    }
+
+    .callout {
+      border: 1px solid var(--line);
+      border-left: 4px solid var(--accent);
+      border-radius: 8px;
+      background: var(--card);
+      padding: 0.65rem 0.8rem;
+    }
+
+    .callout.good {
+      border-left-color: var(--good);
+      background: var(--good-soft);
+    }
+
+    .callout.warn {
+      border-left-color: var(--warn);
+      background: var(--warn-soft);
+    }
+
+    .grid-2,
+    .grid-3,
+    .grid-4 {
+      display: grid;
+      gap: 0.8rem;
+      min-height: 0;
+    }
+
+    .grid-2 {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .grid-3 {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .grid-4 {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .card {
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--card);
+      padding: 0.85rem;
+    }
+
+    .card > p + p,
+    .card > h3 + p {
+      margin-top: 0.38rem;
+    }
+
+    .card .icon {
+      display: grid;
+      width: 2rem;
+      height: 2rem;
+      margin-bottom: 0.45rem;
+      place-items: center;
+      border-radius: 9px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-weight: 800;
+    }
+
+    .icon.good {
+      background: var(--good-soft);
+      color: var(--good);
+    }
+
+    .icon.warn {
+      background: var(--warn-soft);
+      color: var(--warn);
+    }
+
+    .icon.bad {
+      background: var(--bad-soft);
+      color: var(--bad);
+    }
+
+    .diagram {
+      display: grid;
+      min-height: 0;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--card);
+      padding: 0.65rem;
+    }
+
+    .diagram svg {
+      display: block;
+      width: 100%;
+      height: 100%;
+      min-height: 0;
+    }
+
+    .svg-box {
+      fill: var(--card);
+      stroke: var(--line);
+      stroke-width: 2;
+    }
+
+    .svg-box.accent {
+      stroke: var(--accent);
+    }
+
+    .svg-box.good {
+      stroke: var(--good);
+    }
+
+    .svg-box.warn {
+      stroke: var(--warn);
+    }
+
+    .svg-line {
+      stroke: var(--muted);
+      stroke-width: 2.5;
+    }
+
+    .svg-dash {
+      stroke: var(--line);
+      stroke-dasharray: 7 5;
+      stroke-width: 2;
+    }
+
+    .svg-text {
+      fill: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    .svg-muted {
+      fill: var(--muted);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    .title-slide {
+      justify-content: center;
+      gap: 1.1rem;
+      padding-right: 7%;
+      padding-left: 7%;
+    }
+
+    .title-slide .eyebrow {
+      color: var(--accent);
+      font-size: 0.84rem;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    .title-layout {
+      display: grid;
+      grid-template-columns: 1.08fr 0.92fr;
+      gap: 2.4rem;
+      align-items: center;
+    }
+
+    .title-mark {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+
+    .title-mark::before {
+      width: 0.7rem;
+      height: 0.7rem;
+      border-radius: 50%;
+      background: var(--accent);
+      content: "";
+    }
+
+    .two-column {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 1rem;
+      min-height: 0;
+      flex: 1;
+    }
+
+    .flow-row {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 0.55rem;
+      align-items: start;
+      min-height: 0;
+    }
+
+    .flow-card {
+      position: relative;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--card);
+      padding: 0.8rem;
+    }
+
+    .flow-card:not(:last-child)::after {
+      position: absolute;
+      top: 50%;
+      right: -0.62rem;
+      z-index: 2;
+      color: var(--accent);
+      content: "→";
+      font-size: 1.4rem;
+      font-weight: 800;
+    }
+
+    .flow-number {
+      display: inline-grid;
+      width: 1.55rem;
+      height: 1.55rem;
+      margin-bottom: 0.42rem;
+      place-items: center;
+      border-radius: 50%;
+      background: var(--accent);
+      color: var(--accent-on);
+      font-size: 0.9em;
+      font-weight: 800;
+    }
+
+    .fragment {
+      opacity: 0.17;
+      filter: saturate(0.45);
+      transition: opacity 160ms ease, filter 160ms ease;
+    }
+
+    .fragment.revealed {
+      opacity: 1;
+      filter: saturate(1);
+    }
+
+    .fragment-prompt {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 2rem;
+    }
+
+    .toy-panel {
+      display: flex;
+      min-height: 0;
+      flex: 1;
+      flex-direction: column;
+      gap: 0.55rem;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--card);
+      padding: 0.75rem;
+    }
+
+    .toy-head {
+      display: flex;
+      align-items: start;
+      justify-content: space-between;
+      gap: 0.8rem;
+    }
+
+    .toy-title {
+      color: var(--ink);
+    }
+
+    .toy-kicker {
+      margin-top: 0.2rem;
+      color: var(--muted);
+      font-size: 0.95em;
+    }
+
+    .toy-toolbar {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 0.5rem;
+      align-items: end;
+    }
+
+    .toy-toolbar label,
+    .control-label {
+      display: block;
+      color: var(--muted);
+      font-size: 0.95em;
+      font-weight: 700;
+    }
+
+    .toggle-label {
+      display: flex;
+      align-items: center;
+      gap: 0.4em;
+      color: var(--muted);
+      font-size: 0.95em;
+      font-weight: 700;
+    }
+
+    .toggle-label input {
+      width: auto;
+    }
+
+    .toy-toolbar label input,
+    .toy-toolbar label select {
+      margin-top: 0.18rem;
+    }
+
+    .barrier-toolbar {
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+    }
+
+    .barrier-toolbar .button-row {
+      gap: 0.25em;
+    }
+
+    .barrier-toolbar button {
+      font-size: inherit;
+      padding: 0.42rem 0.66rem;
+    }
+
+    .toy-output {
+      min-height: 0;
+      flex: 1;
+      overflow: hidden;
+      border-top: 1px solid var(--line);
+      padding-top: 0.55rem;
+    }
+
+    .toy-output table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 1em;
+    }
+
+    .toy-output th,
+    .toy-output td {
+      border-bottom: 1px solid var(--line);
+      padding: 0.28rem 0.35rem;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    .toy-output th {
+      color: var(--muted);
+      font-weight: 750;
+    }
+
+    .toy-output tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .toy-note {
+      color: var(--muted);
+      font-size: 0.95em;
+    }
+
+    .cp-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      border-left: 3px solid var(--cp);
+      border-radius: 5px;
+      background: var(--soft);
+      padding: 0.14rem 0.34rem;
+      color: var(--ink);
+      white-space: nowrap;
+    }
+
+    .cp-dot {
+      display: inline-block;
+      width: 0.58rem;
+      height: 0.58rem;
+      border-radius: 50%;
+      background: var(--cp);
+    }
+
+    .cp-0 { --cp: var(--cp0); }
+    .cp-1 { --cp: var(--cp1); }
+    .cp-2 { --cp: var(--cp2); }
+    .cp-3 { --cp: var(--cp3); }
+    .cp-4 { --cp: var(--cp4); }
+    .cp-5 { --cp: var(--cp5); }
+
+    .slot-strip {
+      display: grid;
+      grid-template-columns: repeat(16, minmax(0, 1fr));
+      gap: 2px;
+      margin: 0.35rem 0 0.45rem;
+    }
+
+    .slot-cell {
+      display: grid;
+      min-height: 1.4rem;
+      place-items: center;
+      border-radius: 3px;
+      background: var(--cp);
+      color: var(--accent-on);
+      font-size: 0.78em;
+      font-weight: 800;
+    }
+
+    .map-output {
+      display: grid;
+      grid-template-columns: 0.82fr 1.18fr;
+      gap: 0.6rem;
+      height: 100%;
+    }
+
+    .map-side,
+    .map-table {
+      min-width: 0;
+    }
+
+    .map-side {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.2rem;
+    }
+
+    .map-side .mini-card {
+      padding: 0.35rem;
+    }
+
+    .map-side .callout {
+      grid-column: auto;
+      padding: 0.45rem 0.6rem;
+    }
+
+    .mini-card {
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: var(--soft);
+      padding: 0.5rem;
+    }
+
+    .mini-card strong {
+      display: block;
+      margin-bottom: 0.12rem;
+    }
+
+    .queue-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 0.45rem;
+      height: auto;
+      align-items: start;
+    }
+
+    .queue-card {
+      min-width: 0;
+      border: 2px solid var(--cp);
+      border-radius: 9px;
+      background: var(--soft);
+      padding: 0.45rem;
+    }
+
+    .queue-card h4 {
+      color: var(--cp);
+    }
+
+    .queue-status {
+      color: var(--muted);
+      font-size: 0.95em;
+    }
+
+    .queue-entry {
+      margin-top: 0.35rem;
+      border-left: 3px solid var(--line);
+      border-radius: 4px;
+      background: var(--card);
+      padding: 0.3rem;
+      font-size: 0.95em;
+    }
+
+    .queue-entry.waiting {
+      border-left-color: var(--warn);
+    }
+
+    .queue-entry.committed {
+      border-left-color: var(--good);
+    }
+
+    .queue-entry.failed {
+      border-left-color: var(--bad);
+    }
+
+    .queue-entry strong {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .queue-entry p {
+      margin-top: 0.18rem;
+      color: var(--muted);
+      line-height: 1.2;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .status-good {
+      color: var(--good);
+    }
+
+    .status-warn {
+      color: var(--warn);
+    }
+
+    .status-bad {
+      color: var(--bad);
+    }
+
+    .event-log {
+      display: grid;
+      grid-template-columns: 1fr;
+      grid-auto-rows: max-content;
+      align-content: start;
+      gap: 0.2em;
+      min-height: 0;
+      overflow: visible;
+      margin: 0;
+      padding: 0 0 0 1.2rem;
+      color: var(--muted);
+      font-size: 0.95em;
+      line-height: 1.05;
+    }
+
+    .event-log li {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .lease-grid,
+    .row-view,
+    .barrier-view,
+    .snapshot-view,
+    .overlay-view {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.65rem;
+      height: auto;
+      align-items: start;
+    }
+
+    .lease-card,
+    .row-card,
+    .barrier-card,
+    .snapshot-card,
+    .overlay-card {
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: var(--soft);
+      padding: 0.55rem;
+    }
+
+    .row-card {
+      padding: 0.35rem;
+    }
+
+    .range-list,
+    .key-list {
+      display: grid;
+      gap: 0.3rem;
+      margin-top: 0.35rem;
+    }
+
+    .range-item,
+    .key-item {
+      overflow: hidden;
+      border-left: 3px solid var(--good);
+      border-radius: 4px;
+      background: var(--card);
+      padding: 0.3rem 0.38rem;
+      color: var(--ink);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.95em;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .range-item.ended {
+      border-left-color: var(--muted);
+      color: var(--muted);
+    }
+
+    .row-card dl,
+    .snapshot-card dl {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 0.18rem 0.7rem;
+      margin: 0.35rem 0 0;
+      font-size: 0.95em;
+    }
+
+    .row-card dl {
+      grid-template-columns: 1fr auto 1fr auto;
+      line-height: 1.1;
+    }
+
+    .row-card dt,
+    .snapshot-card dt {
+      color: var(--muted);
+    }
+
+    .row-card dd,
+    .snapshot-card dd {
+      margin: 0;
+      font-weight: 750;
+      text-align: right;
+    }
+
+    .verdict {
+      margin-top: 0.65rem;
+      border-left: 4px solid var(--accent);
+      border-radius: 5px;
+      background: var(--card);
+      padding: 0.55rem;
+      font-size: 1em;
+    }
+
+    .verdict.good {
+      border-left-color: var(--good);
+    }
+
+    .verdict.warn {
+      border-left-color: var(--warn);
+    }
+
+    .verdict.bad {
+      border-left-color: var(--bad);
+    }
+
+    .participant-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 0.45rem;
+    }
+
+    .participant-card {
+      min-width: 0;
+      border-top: 3px solid var(--cp);
+      border-radius: 7px;
+      background: var(--soft);
+      padding: 0.42rem;
+    }
+
+    .participant-card p {
+      margin-top: 0.18rem;
+      color: var(--muted);
+      font-size: 0.95em;
+    }
+
+    .participant-card .button-row {
+      margin-top: 0.3rem;
+    }
+
+    .participant-card button {
+      padding: 0.25rem 0.35rem;
+      font-size: 0.78em;
+    }
+
+    .flow-line {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: center;
+      gap: 0.35rem;
+      margin-top: 0.55rem;
+      color: var(--muted);
+      font-size: 0.95em;
+    }
+
+    .flow-node {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--card);
+      padding: 0.25rem 0.45rem;
+    }
+
+    .flow-arrow {
+      color: var(--accent);
+      font-size: 1rem;
+      font-weight: 800;
+    }
+
+    .meter {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 0.28rem;
+      margin-top: 0.75rem;
+    }
+
+    .meter-cell {
+      border-radius: 6px;
+      background: var(--card);
+      padding: 0.55rem 0.2rem;
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.95em;
+      text-align: center;
+    }
+
+    .meter-cell.applied {
+      background: var(--good-soft);
+      color: var(--good);
+    }
+
+    .meter-cell.overlay {
+      border: 2px solid var(--accent);
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+
+    .meter-cell.future {
+      border: 1px dashed var(--line);
+    }
+
+    .barrier-card.old {
+      border-top: 4px solid var(--bad);
+    }
+
+    .barrier-card.new {
+      border-top: 4px solid var(--good);
+    }
+
+    .barrier-state {
+      margin-top: 0.6rem;
+      border-radius: 7px;
+      background: var(--card);
+      padding: 0.6rem;
+      font-size: 1em;
+    }
+
+    .snapshot-card {
+      border-top: 4px solid var(--cp);
+    }
+
+    .snapshot-card.leader {
+      --cp: var(--cp0);
+    }
+
+    .snapshot-card.replica-b {
+      --cp: var(--cp1);
+    }
+
+    .snapshot-card.replica-c {
+      --cp: var(--cp3);
+    }
+
+    .snapshot-view {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .snapshot-line {
+      margin-top: 0.28rem;
+      color: var(--muted);
+      font-size: 0.9em;
+      line-height: 1.1;
+    }
+
+    .comparison {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.8rem;
+      min-height: 0;
+      flex: 1;
+    }
+
+    .comparison-card {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--card);
+      padding: 0.85rem;
+    }
+
+    .comparison-card.v1 {
+      border-top: 4px solid var(--bad);
+    }
+
+    .comparison-card.v2 {
+      border-top: 4px solid var(--good);
+    }
+
+    ul.compact,
+    ol.compact {
+      display: grid;
+      gap: 0.38rem;
+      margin: 0.55rem 0 0;
+      padding-left: 1.2rem;
+    }
+
+    .risk-grid {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 0.55rem;
+      min-height: 0;
+      flex: 1;
+    }
+
+    .risk-card {
+      border: 1px solid var(--line);
+      border-top: 4px solid var(--warn);
+      border-radius: 10px;
+      background: var(--card);
+      padding: 0.65rem;
+    }
+
+    .risk-card p {
+      margin-top: 0.35rem;
+      color: var(--muted);
+      font-size: 1em;
+    }
+
+    .recap-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 0.7rem;
+      min-height: 0;
+      flex: 1;
+    }
+
+    .recap-card {
+      display: grid;
+      grid-template-columns: 2rem 1fr;
+      gap: 0.6rem;
+      align-content: start;
+      border: 1px solid var(--line);
+      border-radius: 11px;
+      background: var(--card);
+      padding: 0.7rem;
+    }
+
+    .recap-number {
+      display: grid;
+      width: 1.85rem;
+      height: 1.85rem;
+      place-items: center;
+      border-radius: 50%;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-weight: 850;
+    }
+
+    .recap-card p {
+      margin-top: 0.2rem;
+      color: var(--muted);
+      font-size: 1em;
+    }
+
+    .glossary {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 0.6rem;
+      min-height: 0;
+      flex: 1;
+    }
+
+    .term {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--card);
+      padding: 0.65rem;
+    }
+
+    .term dt {
+      color: var(--accent);
+      font-weight: 800;
+    }
+
+    .term dd {
+      margin: 0.25rem 0 0;
+      color: var(--muted);
+      font-size: 1em;
+    }
+
+    .notes-content {
+      display: none;
+    }
+
+    .notes-panel {
+      position: absolute;
+      right: 1.2rem;
+      bottom: 3.2rem;
+      z-index: 30;
+      width: 34%;
+      max-height: 45%;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--card);
+      box-shadow: var(--shadow);
+      padding: 0.8rem;
+    }
+
+    .notes-panel[hidden],
+    .overview[hidden] {
+      display: none;
+    }
+
+    .notes-panel h3 {
+      margin-bottom: 0.45rem;
+      color: var(--accent);
+      font-size: 0.9rem;
+    }
+
+    .notes-panel p + p {
+      margin-top: 0.45rem;
+    }
+
+    .overview {
+      position: absolute;
+      inset: 0;
+      z-index: 20;
+      overflow: auto;
+      background: var(--overlay);
+      padding: 4.2% 5.2% 6%;
+    }
+
+    .overview-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 0.8rem;
+      color: var(--accent-on);
+    }
+
+    .overview-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 0.55rem;
+    }
+
+    .overview-item {
+      min-height: 7rem;
+      border: 2px solid var(--line);
+      border-radius: 9px;
+      background: var(--card);
+      color: var(--ink);
+      padding: 0.55rem;
+      text-align: left;
+    }
+
+    .overview-item.current {
+      border-color: var(--accent);
+    }
+
+    .overview-index {
+      display: block;
+      color: var(--accent);
+      font-size: 0.72rem;
+      font-weight: 800;
+    }
+
+    .overview-title {
+      display: block;
+      margin-top: 0.3rem;
+      font-size: 0.82rem;
+      font-weight: 750;
+    }
+
+    .hud {
+      position: absolute;
+      right: 0;
+      bottom: 0;
+      left: 0;
+      z-index: 40;
+      display: grid;
+      grid-template-columns: auto 1fr auto auto;
+      gap: 0.55rem;
+      align-items: center;
+      height: 2.55rem;
+      border-top: 1px solid var(--line);
+      background: var(--card);
+      padding: 0.35rem 0.7rem;
+    }
+
+    .hud button {
+      padding: 0.25rem 0.5rem;
+      font-size: 0.78rem;
+    }
+
+    .progress-wrap {
+      height: 0.36rem;
+      overflow: hidden;
+      border-radius: 999px;
+      background: var(--soft);
+    }
+
+    .progress-bar {
+      height: 100%;
+      width: 0;
+      border-radius: inherit;
+      background: var(--accent);
+      transition: width 160ms ease;
+    }
+
+    .counter {
+      min-width: 3.2rem;
+      color: var(--muted);
+      font-size: 0.78rem;
+      text-align: right;
+    }
+
+    .hud-hint {
+      color: var(--muted);
+      font-size: 0.72rem;
+      white-space: nowrap;
+    }
+
+    @media (max-width: 900px) {
+      .slide {
+        padding-right: 4%;
+        padding-left: 4%;
+      }
+
+      h1 {
+        font-size: 3.3rem;
+      }
+
+      h2 {
+        font-size: 2.1rem;
+      }
+
+      .title-layout,
+      .two-column {
+        grid-template-columns: 1fr;
+      }
+
+      .title-layout .diagram {
+        display: none;
+      }
+
+      .overview-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="deck">
+    <div class="stage" id="stage">
+      <main id="slides">
+        <section class="slide title-slide active" data-title="The control plane moves into Kafka">
+          <div class="title-layout">
+            <div>
+              <p class="eyebrow">Inkless · distributed systems design</p>
+              <h1>The control plane moves into Kafka</h1>
+              <p class="subtitle">Diskless metadata coordinator v2</p>
+              <p class="takeaway">A presenter’s path through routing, leases, partial commits, deletion safety, failover, and snapshots.</p>
+              <div class="badge-row">
+                <span class="badge"><strong>Audience</strong> Kafka engineers</span>
+                <span class="badge"><strong>Format</strong> offline, one file</span>
+                <span class="badge"><strong>Core rule</strong> one writer per user partition</span>
+              </div>
+              <p class="title-mark">Use the arrows to move; press <kbd>N</kbd> for notes</p>
+            </div>
+            <div class="diagram" aria-label="System overview">
+              <svg viewBox="0 0 620 340" role="img" aria-label="Broker uploads a WAL object, coordinator leaders commit metadata, and replicas keep SQLite views">
+                <rect class="svg-box accent" x="18" y="22" width="150" height="72" rx="12"></rect>
+                <text class="svg-text" x="93" y="52" text-anchor="middle" font-size="18" font-weight="700">Broker</text>
+                <text class="svg-muted" x="93" y="75" text-anchor="middle" font-size="13">WAL + committer</text>
+                <rect class="svg-box accent" x="220" y="12" width="195" height="92" rx="12"></rect>
+                <text class="svg-text" x="317" y="44" text-anchor="middle" font-size="17" font-weight="700">__diskless_metadata</text>
+                <text class="svg-muted" x="317" y="67" text-anchor="middle" font-size="13">N coordinator partitions</text>
+                <text class="svg-muted" x="317" y="86" text-anchor="middle" font-size="13">one leader per partition</text>
+                <rect class="svg-box good" x="470" y="22" width="130" height="72" rx="12"></rect>
+                <text class="svg-text" x="535" y="52" text-anchor="middle" font-size="17" font-weight="700">SQLite</text>
+                <text class="svg-muted" x="535" y="75" text-anchor="middle" font-size="13">replica cache</text>
+                <line class="svg-line" x1="168" y1="58" x2="220" y2="58"></line>
+                <text class="svg-muted" x="194" y="47" text-anchor="middle" font-size="12">commit</text>
+                <line class="svg-line" x1="415" y1="58" x2="470" y2="58"></line>
+                <text class="svg-muted" x="443" y="47" text-anchor="middle" font-size="12">apply</text>
+                <rect class="svg-box warn" x="92" y="206" width="180" height="76" rx="12"></rect>
+                <text class="svg-text" x="182" y="238" text-anchor="middle" font-size="17" font-weight="700">Object storage</text>
+                <text class="svg-muted" x="182" y="261" text-anchor="middle" font-size="13">WAL bytes</text>
+                <rect class="svg-box warn" x="365" y="194" width="190" height="100" rx="12"></rect>
+                <text class="svg-text" x="460" y="226" text-anchor="middle" font-size="17" font-weight="700">Tracking partition</text>
+                <text class="svg-muted" x="460" y="249" text-anchor="middle" font-size="13">leases · releases</text>
+                <text class="svg-muted" x="460" y="270" text-anchor="middle" font-size="13">deletion queue</text>
+                <line class="svg-line" x1="93" y1="94" x2="145" y2="206"></line>
+                <line class="svg-line" x1="345" y1="104" x2="414" y2="194"></line>
+                <line class="svg-line" x1="272" y1="244" x2="365" y2="244"></line>
+                <text class="svg-muted" x="318" y="232" text-anchor="middle" font-size="12">release / fence</text>
+              </svg>
+            </div>
+          </div>
+          <div class="notes-content">
+            <p>This design removes PostgreSQL from the diskless control-plane deployment. Kafka stores the ordered state, while object storage continues to hold WAL bytes.</p>
+            <p>The rest of the deck follows one file from routing through upload, commit, failover, and eventual deletion. The key question is always which durable fact makes the next decision safe.</p>
+          </div>
+        </section>
+
+        <section class="slide" data-title="Object storage holds bytes, but only metadata gives them meaning">
+          <div class="slide-header"><span class="section-label">The problem</span><span>Why a control plane exists</span></div>
+          <h2>Object storage holds bytes, but only metadata gives them meaning</h2>
+          <p class="takeaway">A WAL object can contain batches from many user partitions. Consumers still need ordered offsets and byte coordinates before they can read.</p>
+          <div class="flow-row">
+            <div class="flow-card"><span class="flow-number">1</span><h3>Write bytes</h3><p class="small">A broker gathers batches in a WAL file.</p></div>
+            <div class="flow-card"><span class="flow-number">2</span><h3>Upload object</h3><p class="small">Object storage receives shared bytes, not Kafka coordinates.</p></div>
+            <div class="flow-card"><span class="flow-number">3</span><h3>Commit coordinates</h3><p class="small">A control plane assigns offsets and locations.</p></div>
+            <div class="flow-card"><span class="flow-number">4</span><h3>Read by offset</h3><p class="small">Consumers find coordinates, then fetch bytes.</p></div>
+          </div>
+          <div class="grid-2">
+            <div class="card"><div class="icon">P</div><h3>PostgreSQL works</h3><p class="small">It supplies durable shared state, but every broker reaches a separate database cluster.</p></div>
+            <div class="card"><div class="icon warn">M</div><h3>Memory is for tests</h3><p class="small">It has no external dependency, but restart loses the control-plane state.</p></div>
+          </div>
+          <div class="callout"><strong>Design target:</strong> remove the external database without losing any data that a classic Kafka topic keeps through the same failure.</div>
+          <div class="notes-content">
+            <p>Object storage is deliberately focused: it stores the bytes and serves them by key. It does not know that a batch belongs to <code>orders-7</code>, covers offsets <code>120–128</code>, or occupies a byte range.</p>
+            <p>The control plane is the index and the ordering authority. Version 2 keeps the existing control-plane interface while changing where that state lives.</p>
+          </div>
+        </section>
+
+        <section class="slide" data-title="A protected internal topic becomes the durable control plane">
+          <div class="slide-header"><span class="section-label">The big idea</span><span>Kafka becomes the source of truth</span></div>
+          <h2>A protected internal topic becomes the durable control plane</h2>
+          <p class="takeaway"><code>__diskless_metadata</code> has fixed coordinator partitions. Each leader is the single writer for the user partitions mapped to it, and each replica rebuilds a local SQLite view.</p>
+          <div class="two-column">
+            <div class="diagram">
+              <svg viewBox="0 0 660 350" role="img" aria-label="User partitions map to coordinator partition leaders and replicas">
+                <rect class="svg-box" x="18" y="34" width="155" height="70" rx="12"></rect>
+                <text class="svg-text" x="95" y="65" text-anchor="middle" font-size="17" font-weight="700">User partitions</text>
+                <text class="svg-muted" x="95" y="87" text-anchor="middle" font-size="13">orders-0 · telemetry-3</text>
+                <rect class="svg-box accent" x="250" y="18" width="185" height="102" rx="12"></rect>
+                <text class="svg-text" x="342" y="51" text-anchor="middle" font-size="17" font-weight="700">CP2 leader</text>
+                <text class="svg-muted" x="342" y="75" text-anchor="middle" font-size="13">one ordered log</text>
+                <text class="svg-muted" x="342" y="96" text-anchor="middle" font-size="13">one writer</text>
+                <rect class="svg-box good" x="505" y="34" width="135" height="70" rx="12"></rect>
+                <text class="svg-text" x="572" y="65" text-anchor="middle" font-size="17" font-weight="700">Replicas</text>
+                <text class="svg-muted" x="572" y="87" text-anchor="middle" font-size="13">SQLite views</text>
+                <line class="svg-line" x1="173" y1="69" x2="250" y2="69"></line>
+                <line class="svg-line" x1="435" y1="69" x2="505" y2="69"></line>
+                <rect class="svg-box warn" x="143" y="207" width="185" height="84" rx="12"></rect>
+                <text class="svg-text" x="235" y="240" text-anchor="middle" font-size="17" font-weight="700">Outcome record</text>
+                <text class="svg-muted" x="235" y="263" text-anchor="middle" font-size="13">offsets + results</text>
+                <rect class="svg-box warn" x="390" y="207" width="185" height="84" rx="12"></rect>
+                <text class="svg-text" x="482" y="240" text-anchor="middle" font-size="17" font-weight="700">High watermark</text>
+                <text class="svg-muted" x="482" y="263" text-anchor="middle" font-size="13">apply in log order</text>
+                <line class="svg-dash" x1="342" y1="120" x2="235" y2="207"></line>
+                <line class="svg-dash" x1="342" y1="120" x2="482" y2="207"></line>
+              </svg>
+            </div>
+            <div class="grid-2" style="grid-template-columns:1fr;grid-template-rows:repeat(3,1fr)">
+              <div class="card"><div class="icon">1</div><h3>Partitioned logs</h3><p class="small">One unavailable coordinator delays only its mapped user partitions.</p></div>
+              <div class="card"><div class="icon good">2</div><h3>Replayable state</h3><p class="small">Records carry assigned values, so replicas do not recompute decisions.</p></div>
+              <div class="card"><div class="icon warn">3</div><h3>Kafka durability</h3><p class="small"><code>acks=-1</code>, a fixed minimum ISR, and the high watermark gate replies.</p></div>
+            </div>
+          </div>
+          <div class="notes-content">
+            <p>The topic is not a generic key-value store. Each coordinator partition is an independent state machine with its own log, leader, SQLite database, snapshots, and overlay.</p>
+            <p>The leader appends an outcome record, and replicas apply it only after the high watermark passes it. The record contains every assigned value and batch result, so replay reaches the same state on every replica.</p>
+            <p>The topic is protected because it contains offsets, leases, fences, and the only deletion queue. A normal admin action cannot weaken or remove it.</p>
+          </div>
+        </section>
+
+        <section class="slide" data-title="A stable hash sends each user partition to one coordinator leader">
+          <div class="slide-header"><span class="section-label">Routing</span><span>Interactive toy 1</span></div>
+          <h2>A stable hash sends each user partition to one coordinator leader</h2>
+          <p class="takeaway">The protocol hashes a 20-byte user-partition key into 4096 slots, then maps the slot to <code>slot % N</code>. The same rule also pins a broker’s tracking partition.</p>
+          <div class="toy-panel">
+            <div class="toy-head">
+              <div><h3 class="toy-title">Partition mapping</h3><p class="toy-kicker">Real Kafka Murmur2 over topic ID plus big-endian partition index</p></div>
+              <span class="badge">One color per coordinator</span>
+            </div>
+            <div class="toy-toolbar">
+              <label>Coordinator partitions<select id="map-n"><option>1</option><option>2</option><option>4</option><option selected>8</option><option>16</option></select></label>
+              <label>Topic ID<input id="map-topic-id" value="00112233-4455-6677-8899-aabbccddeeff"></label>
+              <label>User partition<input id="map-partition" type="number" min="0" max="999" value="7"></label>
+              <label>Broker ID<input id="map-broker" type="number" min="0" value="2"></label>
+            </div>
+            <div class="button-row"><button class="primary" id="map-apply">Apply values</button><button id="map-reset">Reset</button></div>
+            <div id="map-output" class="toy-output"></div>
+          </div>
+          <div class="notes-content">
+            <p>The log key is exactly the topic ID in most-significant-byte order followed by the partition index as four big-endian bytes. Kafka’s Murmur2 and positive-value conversion produce the slot.</p>
+            <p>The deck uses a fixed topic ID so the result stays reproducible. The design allows only a power of two for <code>N</code>, and every broker reads that value from the metadata image.</p>
+            <p>The toy uses four-byte big-endian broker IDs for the tracking hash. The design leaves that broker-ID byte encoding as an implementation item, so this is a presentation assumption rather than a protocol decision.</p>
+          </div>
+        </section>
+
+        <section class="slide" data-title="The 4096-slot layer makes a future doubling bounded">
+          <div class="slide-header"><span class="section-label">Why slots</span><span>Growth without a full reshuffle</span></div>
+          <h2>The 4096-slot layer makes a future doubling bounded</h2>
+          <p class="takeaway">When the coordinator count doubles, each old coordinator keeps half its slots and its new partner takes the other half. The mapping identifies the bounded handoff.</p>
+          <div class="two-column">
+            <div class="card">
+              <h3>Before: <code>N=4</code></h3>
+              <div class="slot-strip" aria-label="Slots mapped with four coordinators">
+                <span class="slot-cell cp-0">0</span><span class="slot-cell cp-1">1</span><span class="slot-cell cp-2">2</span><span class="slot-cell cp-3">3</span>
+                <span class="slot-cell cp-0">4</span><span class="slot-cell cp-1">5</span><span class="slot-cell cp-2">6</span><span class="slot-cell cp-3">7</span>
+                <span class="slot-cell cp-0">8</span><span class="slot-cell cp-1">9</span><span class="slot-cell cp-2">10</span><span class="slot-cell cp-3">11</span>
+                <span class="slot-cell cp-0">12</span><span class="slot-cell cp-1">13</span><span class="slot-cell cp-2">14</span><span class="slot-cell cp-3">15</span>
+              </div>
+              <p class="small">Each coordinator owns every fourth slot.</p>
+            </div>
+            <div class="card">
+              <h3>After: <code>N=8</code></h3>
+              <div class="slot-strip" aria-label="Slots mapped with eight coordinators">
+                <span class="slot-cell cp-0">0</span><span class="slot-cell cp-1">1</span><span class="slot-cell cp-2">2</span><span class="slot-cell cp-3">3</span>
+                <span class="slot-cell cp-4">4</span><span class="slot-cell cp-5">5</span><span class="slot-cell cp-0">6</span><span class="slot-cell cp-1">7</span>
+                <span class="slot-cell cp-2">8</span><span class="slot-cell cp-3">9</span><span class="slot-cell cp-4">10</span><span class="slot-cell cp-5">11</span>
+                <span class="slot-cell cp-0">12</span><span class="slot-cell cp-1">13</span><span class="slot-cell cp-2">14</span><span class="slot-cell cp-3">15</span>
+              </div>
+              <p class="small">Old CP <code>p</code> keeps slots with new remainder <code>p</code>; CP <code>p+4</code> receives the other half.</p>
+            </div>
+          </div>
+          <div class="grid-3">
+            <div class="card"><h3>Stable protocol</h3><p class="small"><code>S=4096</code> is fixed, so brokers agree across versions.</p></div>
+            <div class="card"><h3>No table to synchronize</h3><p class="small">A power-of-two <code>N</code> makes the two modulo steps equivalent to modulo <code>N</code>.</p></div>
+            <div class="card"><h3>Growth remains future work</h3><p class="small">The mapping bounds the move, but state handoff still needs an explicit procedure.</p></div>
+          </div>
+          <div class="notes-content">
+            <p>A plain modulo by the current partition count would move almost every user partition when the count changes. The fixed slot layer turns a future doubling into a split of known slot ranges.</p>
+            <p>Version 2 keeps the count fixed after topic creation. The deck shows why the protocol reserves a path for growth without pretending that the handoff itself is implemented.</p>
+          </div>
+        </section>
+
+        <section class="slide" data-title="A closed file becomes durable coordinates in one ordered sequence">
+          <div class="slide-header"><span class="section-label">One produce</span><span>Progressive reveal</span></div>
+          <h2>A closed file becomes durable coordinates in one ordered sequence</h2>
+          <div class="fragment-prompt">
+            <p class="takeaway">Press <strong>Reveal next step</strong> or the forward key to build the path from file close to the producer reply.</p>
+            <button class="primary" id="produce-reveal">Reveal next step</button>
+          </div>
+          <div class="flow-row">
+            <div class="flow-card fragment"><span class="flow-number">1</span><h3>Close the file</h3><p class="small">The broker epoch and next leased sequence become the file’s pair.</p></div>
+            <div class="flow-card fragment"><span class="flow-number">2</span><h3>Name the object</h3><p class="small"><code>cluster.broker.epoch.sequence</code> gives every retry the same key.</p></div>
+            <div class="flow-card fragment"><span class="flow-number">3</span><h3>Upload the bytes</h3><p class="small">The upload needs no coordinator round trip before it starts.</p></div>
+            <div class="flow-card fragment"><span class="flow-number">4</span><h3>Split the commit</h3><p class="small">One part goes to each touched coordinator and one to tracking.</p></div>
+          </div>
+          <div class="flow-row">
+            <div class="flow-card fragment"><span class="flow-number">5</span><h3>Append outcomes</h3><p class="small">Each leader assigns offsets and appends with <code>acks=-1</code>.</p></div>
+            <div class="flow-card fragment"><span class="flow-number">6</span><h3>Pass the watermark</h3><p class="small">SQLite applies the record only after required replicas hold it.</p></div>
+            <div class="flow-card fragment"><span class="flow-number">7</span><h3>Merge the answer</h3><p class="small">Confirmed parts return results; an unconfirmed part returns <code>KAFKA_STORAGE_ERROR</code>.</p></div>
+            <div class="flow-card fragment"><span class="flow-number">8</span><h3>Keep the object alive</h3><p class="small">Tracking waits for releases or fences before it queues deletion.</p></div>
+          </div>
+          <div class="callout warn">Every part shares the file deadline, but a part’s outcome can remain unknown after that deadline until a later durable event resolves it.</div>
+          <div class="notes-content">
+            <p>At file close, the broker assigns the pair and deterministic key. That is why the upload can begin without another round trip and why a retry does not create a new object name.</p>
+            <p>The file fans out only after upload. Each coordinator partition decides its own batches, and the broker merges those per-batch results in the original request order.</p>
+            <p>A part that reaches its deadline returns <code>KAFKA_STORAGE_ERROR</code>, but its request may still commit later. A later commit, fence, epoch retirement, or lease end closes that unknown-outcome window.</p>
+          </div>
+        </section>
+
+        <section class="slide" data-title="Per-partition queues isolate a slow coordinator">
+          <div class="slide-header"><span class="section-label">Partial failure</span><span>Interactive toy 2</span></div>
+          <h2>Per-partition queues isolate a slow coordinator</h2>
+          <p class="takeaway">A later file waits behind an earlier part only on the same coordinator queue. Healthy queues keep committing while a stuck part reaches its own file deadline.</p>
+          <div class="toy-panel">
+            <div class="toy-head">
+              <div><h3 class="toy-title">Life of a commit</h3><p class="toy-kicker">F1 closes at tick 0; F2 closes at tick 2; tracking parts use CP3</p></div>
+              <span class="badge">Tick <strong id="life-tick">0</strong> · F1 deadline 7 · F2 deadline 9</span>
+            </div>
+            <div class="button-row">
+              <button id="life-reset">Reset</button>
+              <button class="primary" id="life-step">Step</button>
+              <button id="life-play">Play</button>
+              <button id="life-toggle-cp1">Make CP1 offline</button>
+            </div>
+            <div id="life-output" class="toy-output"></div>
+            <ol id="life-log" class="event-log" aria-live="polite"></ol>
+          </div>
+          <div class="notes-content">
+            <p>The broker used to have one commit thread, so one unavailable coordinator could hold every later file. Version 2 changes the shared caller to keep one ordered queue per commit queue.</p>
+            <p>In the toy, F2’s CP0, CP2, and tracking parts can complete while F1’s CP1 part waits. At its own deadline, the part returns <code>KAFKA_STORAGE_ERROR</code>, but the outcome remains unknown until the coordinator’s durable sequence rules resolve it.</p>
+          </div>
+        </section>
+
+        <section class="slide" data-title="Leased ranges remove the round trip before an upload">
+          <div class="slide-header"><span class="section-label">Leases</span><span>Interactive toy 3</span></div>
+          <h2>Leased ranges remove the round trip before an upload</h2>
+          <p class="takeaway">The broker leases sequence ranges ahead of time, names each object deterministically, and falls back to another tracking partition when its normal one is unavailable.</p>
+          <div class="toy-panel">
+            <div class="toy-head">
+              <div><h3 class="toy-title">Leases and object keys</h3><p class="toy-kicker">The toy uses <code>K=8</code>; the protocol constant is 1024</p></div>
+              <span class="badge">Broker 2 · N=4</span>
+            </div>
+            <div class="button-row">
+              <button id="lease-reset">Reset</button>
+              <button class="primary" id="lease-step">Close next file</button>
+              <button id="lease-restart">Restart broker</button>
+              <button id="lease-toggle-tracking">Take tracking offline</button>
+            </div>
+            <div id="lease-output" class="toy-output"></div>
+            <ol id="lease-log" class="event-log" aria-live="polite"></ol>
+          </div>
+          <div class="notes-content">
+            <p>The tracking partition confirms ranges, not individual objects. The broker can therefore close a file, derive its key, and upload immediately.</p>
+            <p>The pair orders files by epoch first and sequence second. The broker chooses lease starts above every range requested in the epoch, including a request whose reply was lost, so fallback partitions cannot overlap.</p>
+            <p>A restart raises the broker epoch and ends old leases. The toy uses a short range so the renewal and fallback behavior is visible in a few clicks.</p>
+          </div>
+        </section>
+
+        <section class="slide" data-title="The broker row remembers the answer">
+          <div class="slide-header"><span class="section-label">Retries</span><span>Interactive toy 4</span></div>
+          <h2>The broker row remembers the answer</h2>
+          <p class="takeaway">Each coordinator partition stores the last result, a separate fenced-through pair, and a retired marker. A retry compares its pair with that durable floor.</p>
+          <div class="toy-panel">
+            <div class="toy-head">
+              <div><h3 class="toy-title">Broker row and acceptance rules</h3><p class="toy-kicker">Try a new pair, retry it before and after apply, then raise the fence</p></div>
+              <span class="badge">Broker 2 · one coordinator</span>
+            </div>
+            <div class="toy-toolbar">
+              <label>Epoch<input id="row-epoch" type="number" min="0" value="7"></label>
+              <label>Sequence<input id="row-seq" type="number" min="0" value="3"></label>
+              <div class="button-row"><button class="primary" id="row-send">Send commit</button><button id="row-apply">Apply pending</button></div>
+              <div class="button-row"><button id="row-fence">Fence through pair</button><button id="row-reset">Reset</button></div>
+            </div>
+            <div id="row-output" class="toy-output"></div>
+            <ol id="row-log" class="event-log" aria-live="polite"></ol>
+          </div>
+          <div class="notes-content">
+            <p>The row’s floor is the higher of the last committed pair and the fenced-through pair. A pair equal to the last commit returns the stored result even after retention removes the batch rows.</p>
+            <p>A pair above the floor enters the leader overlay and eventually becomes the new remembered result. Anything below the floor is stale, while a retired row rejects the old epoch.</p>
+            <p>Only the tracking partition checks that the sequence belongs to a lease. Participant partitions use the durable floor and fences.</p>
+          </div>
+        </section>
+
+        <section class="slide" data-title="Partial commit is a feature of the existing control-plane contract">
+          <div class="slide-header"><span class="section-label">No two-phase commit</span><span>Per-part outcomes are enough</span></div>
+          <h2>Partial commit is a feature of the existing control-plane contract</h2>
+          <p class="takeaway">A WAL file can succeed on CP0 and CP2 while CP1 fails. The broker returns the results it knows and retries only the failed user partitions.</p>
+          <div class="diagram" style="flex:1">
+            <svg viewBox="0 0 980 300" role="img" aria-label="One file fans out to three coordinators and a tracking partition with independent outcomes">
+              <rect class="svg-box accent" x="35" y="106" width="150" height="74" rx="12"></rect>
+              <text class="svg-text" x="110" y="138" text-anchor="middle" font-size="18" font-weight="700">File F7</text>
+              <text class="svg-muted" x="110" y="160" text-anchor="middle" font-size="13">one upload, many parts</text>
+              <rect class="svg-box good" x="350" y="18" width="160" height="62" rx="11"></rect>
+              <text class="svg-text" x="430" y="47" text-anchor="middle" font-size="17" font-weight="700">CP0</text>
+              <text class="svg-muted" x="430" y="66" text-anchor="middle" font-size="12">committed · offsets</text>
+              <rect class="svg-box warn" x="350" y="118" width="160" height="62" rx="11"></rect>
+              <text class="svg-text" x="430" y="147" text-anchor="middle" font-size="17" font-weight="700">CP1</text>
+              <text class="svg-muted" x="430" y="166" text-anchor="middle" font-size="12">deadline · unknown</text>
+              <rect class="svg-box good" x="350" y="218" width="160" height="62" rx="11"></rect>
+              <text class="svg-text" x="430" y="247" text-anchor="middle" font-size="17" font-weight="700">CP2</text>
+              <text class="svg-muted" x="430" y="266" text-anchor="middle" font-size="12">committed · offsets</text>
+              <rect class="svg-box warn" x="700" y="106" width="205" height="74" rx="12"></rect>
+              <text class="svg-text" x="802" y="138" text-anchor="middle" font-size="17" font-weight="700">Tracking CP</text>
+              <text class="svg-muted" x="802" y="160" text-anchor="middle" font-size="13">hold until releases / fences</text>
+              <line class="svg-line" x1="185" y1="143" x2="350" y2="49"></line>
+              <line class="svg-line" x1="185" y1="143" x2="350" y2="149"></line>
+              <line class="svg-line" x1="185" y1="143" x2="350" y2="249"></line>
+              <line class="svg-line" x1="510" y1="49" x2="700" y2="143"></line>
+              <line class="svg-line" x1="510" y1="149" x2="700" y2="143"></line>
+              <line class="svg-line" x1="510" y1="249" x2="700" y2="143"></line>
+            </svg>
+          </div>
+          <div class="grid-2">
+            <div class="comparison-card v1"><h3>What two-phase commit would add</h3><ul class="compact"><li>A serial prepare step before the file can finish.</li><li>A coordinator that must hold every participant open together.</li><li>A failure mode that blocks healthy partitions behind one unavailable participant.</li></ul></div>
+            <div class="comparison-card v2"><h3>What v2 keeps</h3><ul class="compact"><li>Kafka’s existing per-partition outcome model.</li><li>One queue and one deadline per coordinator part.</li><li>Tracking state that keeps the shared object safe across partial success.</li></ul></div>
+          </div>
+          <div class="notes-content">
+            <p>The control-plane contract already returns a result per batch. A non-transactional Kafka produce does not promise atomicity across partitions, so a two-phase protocol would add blocking without preserving a guarantee clients do not have.</p>
+            <p>The tracking part is not a prepare record. It records participants and later proves that no participant can still reference the object.</p>
+          </div>
+        </section>
+
+        <section class="slide" data-title="The tracking partition deletes only after releases or fences prove safety">
+          <div class="slide-header"><span class="section-label">Deletion</span><span>Interactive toy 5</span></div>
+          <h2>The tracking partition deletes only after releases or fences prove safety</h2>
+          <p class="takeaway">The tracking partition queues a key only when every participant releases it or a fence proves that participant cannot still reference it. A clock decides only when the queued key is deleted.</p>
+          <div class="toy-panel">
+            <div class="toy-head">
+              <div><h3 class="toy-title">Safe object deletion</h3><p class="toy-kicker">Release CP0 and CP1, make CP2 silent, then resolve its fence</p></div>
+              <span class="badge">Grace period 3 ticks</span>
+            </div>
+            <div id="delete-output" class="toy-output"></div>
+            <div class="button-row"><button class="primary" id="delete-resolve-fences">Resolve fences</button><button id="delete-advance">Advance grace period</button><button id="delete-reset">Reset object</button></div>
+            <ol id="delete-log" class="event-log" aria-live="polite"></ol>
+          </div>
+          <div class="notes-content">
+            <p>Participants release an object when an apply removes their last batch. The report is durable and idempotent; a new participant leader resends releases that have no release-accepted record.</p>
+            <p>A silent participant cannot be trusted to report, so the tracking partition sends a range fence. The participant answers which sequences it still holds, and only those referenced sequences wait for a later release.</p>
+            <p>The grace period protects readers and shrinks the late-upload leak. It never establishes safety. The log position, release state, and fence state do that.</p>
+          </div>
+        </section>
+
+        <section class="slide" data-title="The leader overlay ends at the high watermark">
+          <div class="slide-header"><span class="section-label">Failover</span><span>Interactive toy 6</span></div>
+          <h2>The leader overlay ends at the high watermark</h2>
+          <p class="takeaway">A leader reserves offsets in memory, but SQLite sees them only after replication. An unreplicated suffix disappears on leader change, and callers retry.</p>
+          <div class="toy-panel">
+            <div class="toy-head">
+              <div><h3 class="toy-title">Leader overlay and high watermark</h3><p class="toy-kicker">Append, replicate, or crash before followers fetch</p></div>
+              <span class="badge">Leader A → Leader B</span>
+            </div>
+            <div class="button-row"><button class="primary" id="overlay-append">Append batch</button><button id="overlay-step">Step replication</button><button class="danger" id="overlay-crash">Crash leader now</button><button id="overlay-retry">Retry commit</button><button id="overlay-reset">Reset</button></div>
+            <div id="overlay-output" class="toy-output"></div>
+            <ol id="overlay-log" class="event-log" aria-live="polite"></ol>
+          </div>
+          <div class="notes-content">
+            <p>The overlay lets one writer reserve offsets for later requests without giving followers a speculative view. Followers apply only records at or below the high watermark.</p>
+            <p>If an append fails, leadership changes, or a new leader truncates the unreplicated suffix, the overlay entry and every later entry are dropped. Parked replies get retriable errors, so no caller treats speculative state as durable.</p>
+            <p>A new leader waits until its high watermark reaches the log end it saw at election before serving. That gate prevents it from answering from an older prefix.</p>
+          </div>
+        </section>
+
+        <section class="slide" data-title="A barrier makes an out-of-range answer truthful">
+          <div class="slide-header"><span class="section-label">Reads</span><span>Interactive toy 7</span></div>
+          <h2>A barrier makes an out-of-range answer truthful</h2>
+          <p class="takeaway">A current leader answers below its high watermark directly. Above it, the current leader commits a barrier before returning <code>OFFSET_OUT_OF_RANGE</code>; a deposed leader times out with <code>OFFSET_NOT_AVAILABLE</code>.</p>
+          <div class="toy-panel">
+            <div class="toy-head">
+              <div><h3 class="toy-title">Deposed leader and the barrier</h3><p class="toy-kicker">Old high watermark 42 · current high watermark 45 · barrier deadline 500 ms</p></div>
+              <span class="badge">Try offset 44, then 50</span>
+            </div>
+            <div class="toy-toolbar barrier-toolbar">
+              <label>Requested offset<input id="barrier-offset" type="number" min="0" value="44"></label>
+              <label class="toggle-label"><input id="barrier-toggle" type="checkbox" checked> Barrier enabled</label>
+              <div class="button-row"><button class="primary" id="barrier-ask-old">Ask old</button><button class="primary" id="barrier-ask-new">Ask current</button></div>
+              <div class="button-row"><button id="barrier-advance">Advance 500 ms</button><button id="barrier-grow-current">Advance current HW</button></div>
+              <div class="button-row"><button id="barrier-commit-current">Commit barrier</button><button id="barrier-reset">Reset</button></div>
+            </div>
+            <div id="barrier-output" class="toy-output"></div>
+            <ol id="barrier-log" class="event-log" aria-live="polite"></ol>
+          </div>
+          <div class="notes-content">
+            <p>A deposed leader serves a committed prefix, which makes stale data lower or unknown. An out-of-range response above its high watermark is different: it can make a consumer reset and skip records committed under the new leader.</p>
+            <p>The current leader’s barrier commits in one replication round trip. If the requested offset is still beyond the watermark, the answer is truthful. A barrier from the deposed leader never commits because followers no longer fetch from it, so its 500 ms deadline returns <code>OFFSET_NOT_AVAILABLE</code>.</p>
+            <p>The delayed-fetch probe uses a no-wait request and never appends the barrier.</p>
+          </div>
+        </section>
+
+        <section class="slide" data-title="SQLite is a cache of the log, and snapshots move the log start safely">
+          <div class="slide-header"><span class="section-label">Local state</span><span>Interactive toy 8</span></div>
+          <h2>SQLite is a cache of the log, and snapshots move the log start safely</h2>
+          <p class="takeaway">Each replica stores applied state and its offset in one transaction. The leader advances log start only when its older snapshot and enough in-sync peer reports cover the same prefix.</p>
+          <div class="toy-panel">
+            <div class="toy-head">
+              <div><h3 class="toy-title">Snapshots and log start</h3><p class="toy-kicker">Three replicas · <code>min.insync.replicas=2</code> · newest plus one older snapshot</p></div>
+              <span class="badge">Reports count only in ISR</span>
+            </div>
+            <div class="button-row"><button class="primary" id="snap-take-a">Take leader snapshot</button><button id="snap-take-b">Take B snapshot</button><button id="snap-take-c">Take C snapshot</button><button id="snap-report">Report all snapshots</button><button id="snap-toggle-b">Remove / restore B ISR</button><button id="snap-reset">Reset</button></div>
+            <div id="snapshot-output" class="toy-output"></div>
+            <ol id="snapshot-log" class="event-log" aria-live="polite"></ol>
+          </div>
+          <div class="notes-content">
+            <p>The database is a cache, not another source of truth. A power loss can roll back recent SQLite applies together with the applied offset, and replay from the durable log restores them.</p>
+            <p>Every replica keeps a newest snapshot and one older snapshot. The leader uses its older snapshot and the highest report from enough other in-sync replicas, so a report from a replica outside the ISR cannot advance log start.</p>
+            <p>If no replica has a covering snapshot after log start moves, the coordinator stays unavailable rather than serving partial state. Snapshot transfer uses one snapshot ID so a resumed transfer cannot mix files.</p>
+          </div>
+        </section>
+
+        <section class="slide" data-title="Durability comes from Kafka rules plus a protected topic">
+          <div class="slide-header"><span class="section-label">Protection</span><span>Durability and isolation</span></div>
+          <h2>Durability comes from Kafka rules plus a protected topic</h2>
+          <p class="takeaway">The topic’s settings and request guards close the paths that could resurrect offsets, bypass one-writer ownership, or delete a live object.</p>
+          <div class="grid-2" style="flex:1">
+            <div class="card">
+              <div class="icon good">✓</div>
+              <h3>Fixed safety settings</h3>
+              <ul class="compact">
+                <li><code>flush.messages=1</code></li>
+                <li><code>acks=-1</code> for coordinator appends</li>
+                <li>Creation-time minimum ISR</li>
+                <li>No unclean election</li>
+                <li>No time or size retention, no compaction</li>
+                <li>Storage identity filters unsafe leaders</li>
+              </ul>
+            </div>
+            <div class="card">
+              <div class="icon bad">!</div>
+              <h3>Requests the topic rejects</h3>
+              <ul class="compact">
+                <li>Client produce, including admin-client bypasses</li>
+                <li><code>DeleteTopics</code> and client creation</li>
+                <li><code>CreatePartitions</code></li>
+                <li>Unclean <code>ElectLeaders</code></li>
+                <li>Replica-count changes</li>
+                <li>Client <code>DeleteRecords</code></li>
+              </ul>
+            </div>
+          </div>
+          <div class="callout good"><strong>Feature gate:</strong> a new cluster finalizes the coordinator feature at format time. The configured control-plane class must match; existing PostgreSQL-backed clusters stay on PostgreSQL.</div>
+          <div class="notes-content">
+            <p>The internal-topic flag alone does not protect every admin request, so the design adds explicit name-keyed guards with no bypass. The coordinator’s own append origin remains allowed, while client and broker admin paths are rejected.</p>
+            <p><code>flush.messages=1</code> matters because state spans a tracking partition, participant partitions, and object storage. A lost tail on one side could otherwise queue deletion while another side resurrects a batch reference.</p>
+            <p>Storage identity, rather than clean shutdown state, decides whether a returning replica can lead. This prevents a wiped or reformatted directory from winning last-known-leader recovery.</p>
+          </div>
+        </section>
+
+        <section class="slide" data-title="KRaft owns topic intent, while the coordinator reconciles state asynchronously">
+          <div class="slide-header"><span class="section-label">Lifecycle</span><span>Controller and coordinator have different jobs</span></div>
+          <h2>KRaft owns topic intent, while the coordinator reconciles state asynchronously</h2>
+          <p class="takeaway">Topic creation and deletion commit to cluster metadata only. The mapped coordinator leader observes that image, appends its own state record, and never makes the controller wait.</p>
+          <div class="flow-row">
+            <div class="flow-card"><span class="flow-number">A</span><h3>Metadata image</h3><p class="small">KRaft records the diskless topic or its deletion.</p></div>
+            <div class="flow-card"><span class="flow-number">B</span><h3>Coordinator diff</h3><p class="small">The leader compares the image with its SQLite rows and pending overlay.</p></div>
+            <div class="flow-card"><span class="flow-number">C</span><h3>Durable record</h3><p class="small">Partition creation, topic deletion, initialization, or repair becomes ordered state.</p></div>
+            <div class="flow-card"><span class="flow-number">D</span><h3>Readiness gate</h3><p class="small">A produce before reconciliation gets a retriable error, not a second writer.</p></div>
+          </div>
+          <div class="grid-3">
+            <div class="card"><h3>Same mapping</h3><p class="small">Lifecycle records use the same coordinator as commits for that user partition.</p></div>
+            <div class="card"><h3>Delete retries itself</h3><p class="small">If SQLite still holds a topic ID absent from the metadata image, the next update or election appends <code>topic-deleted</code>. The log record is the retry; no separate queue exists.</p></div>
+            <div class="card"><h3>Maintenance stays local</h3><p class="small">Retention, purge, prune, and cross-tier reports run at the coordinator that owns the state.</p></div>
+          </div>
+          <div class="notes-content">
+            <p>The controller owns cluster intent and must not block on a coordinator leader. The coordinator turns that intent into an ordered record in the same partition that owns the user partition’s commits.</p>
+            <p>That separation also makes deletes retryable. If the coordinator is down when metadata removes a topic, the next metadata update or election presents the deletion again.</p>
+          </div>
+        </section>
+
+        <section class="slide" data-title="Version 2 moves safety from guesses into durable records">
+          <div class="slide-header"><span class="section-label">v1 to v2</span><span>Why the design changed</span></div>
+          <h2>Version 2 moves safety from guesses into durable records</h2>
+          <p class="takeaway">The common pattern is durable ordering: if a fact controls whether an object can be referenced, the log records that fact so every replica can replay it.</p>
+          <div class="comparison">
+            <div class="comparison-card v1">
+              <h3>Version 1 problem</h3>
+              <ul class="compact">
+                <li>Per-object intent added a replicated append before every upload.</li>
+                <li>Deletion safety depended on broker clocks.</li>
+                <li>Partial sends could trigger direct broker deletion.</li>
+                <li>Admin paths could weaken the coordinator topic.</li>
+                <li>A deposed leader could return a false out-of-range.</li>
+                <li>Unreadable records could be skipped.</li>
+                <li>A wiped disk could win a last-known-leader election.</li>
+              </ul>
+            </div>
+            <div class="comparison-card v2">
+              <h3>Version 2 decision</h3>
+              <ul class="compact">
+                <li>Leases name keys before upload with no per-object intent.</li>
+                <li>Releases and fences prove when a key cannot be referenced.</li>
+                <li>The tracking queue is the only delete path after a commit may land.</li>
+                <li>Name-keyed guards and fixed configs protect the topic.</li>
+                <li>A committed barrier confirms leadership before out-of-range.</li>
+                <li>Apply stops at a record it cannot read.</li>
+                <li>Storage identity filters unsafe election candidates.</li>
+              </ul>
+            </div>
+          </div>
+          <div class="notes-content">
+            <p>Version 1 made the upload path pay for an intent record and asked clocks to decide when a key was safe to remove. Those choices added latency and left races around partial commits and failover.</p>
+            <p>Version 2 pushes decisions into replayable state: leases, broker rows, fences, barriers, topic guards, and snapshot metadata. The result is not a transaction across coordinator partitions; it is a set of ordered per-part decisions with explicit object tracking.</p>
+          </div>
+        </section>
+
+        <section class="slide" data-title="The remaining risks are explicit and bounded">
+          <div class="slide-header"><span class="section-label">Boundaries</span><span>Accepted risks and open items</span></div>
+          <h2>The remaining risks are explicit and bounded</h2>
+          <p class="takeaway">The design accepts a few failure modes that Kafka or PostgreSQL already expose. Naming the boundary keeps the safety claim precise.</p>
+          <div class="risk-grid">
+            <div class="risk-card"><h3>All replicas lost</h3><p>Loss affects the <code>1/N</code> user partitions mapped to that coordinator, and their WAL objects become orphans. Rack- or zone-aware replication factor 3 makes this unlikely; it does not reduce the affected set.</p></div>
+            <div class="risk-card"><h3>Late upload</h3><p>Storage can finish an upload after its key is deleted. That leaks storage, not data; the lease bounds a cut-off broker’s remaining files.</p></div>
+            <div class="risk-card"><h3>Non-idempotent retry</h3><p>A late part can appear after a retry through another broker, as with a classic <code>acks=all</code> timeout.</p></div>
+            <div class="risk-card"><h3>Clock skew</h3><p>Retention and cleaner grace periods keep Kafka’s existing time exposure. Operators need NTP monitoring.</p></div>
+            <div class="risk-card"><h3>Capacity</h3><p>SQLite shares heap, page cache, disk, and garbage collection with the broker. Benchmarks decide the deployment shape.</p></div>
+          </div>
+          <div class="callout">Open implementation choices include private request names and error codes, the SQLite driver, commit and idle-lease timeouts, broker-ID encoding, overlay size, and append linger.</div>
+          <div class="notes-content">
+            <p>These risks do not silently weaken the core invariant. Losing every replica is the same class of loss as losing every replica of a classic Kafka partition, while a late upload produces an orphaned object rather than a missing committed batch.</p>
+            <p>The performance and packaging questions remain open by design. The review can decide them with benchmarks and dependency checks without changing the ordering model.</p>
+          </div>
+        </section>
+
+        <section class="slide" data-title="Six rules explain the design">
+          <div class="slide-header"><span class="section-label">Recap</span><span>Carry these rules into review</span></div>
+          <h2>Six rules explain the design</h2>
+          <div class="recap-grid">
+            <div class="recap-card"><span class="recap-number">1</span><div><h3>Kafka is the truth</h3><p>SQLite accelerates reads and restart, but the coordinator log decides state.</p></div></div>
+            <div class="recap-card"><span class="recap-number">2</span><div><h3>One writer owns each user partition</h3><p>Hashing routes it to one coordinator leader, even when a file spans many leaders.</p></div></div>
+            <div class="recap-card"><span class="recap-number">3</span><div><h3>Slots make growth bounded</h3><p>4096 fixed slots turn a future power-of-two split into a known handoff.</p></div></div>
+            <div class="recap-card"><span class="recap-number">4</span><div><h3>Pairs make retries deterministic</h3><p>Leases, deterministic keys, broker rows, and floors make old pairs stale.</p></div></div>
+            <div class="recap-card"><span class="recap-number">5</span><div><h3>Fences prove deletion safety</h3><p>Releases and fences decide whether a key can still be referenced; the clock only schedules cleanup.</p></div></div>
+            <div class="recap-card"><span class="recap-number">6</span><div><h3>Barriers protect consumer position</h3><p>A current leader proves its view before out-of-range, while a deposed leader returns a retriable answer.</p></div></div>
+          </div>
+          <div class="callout good"><strong>Availability shape:</strong> a coordinator failure stalls its own mapped partitions, not every diskless produce.</div>
+          <div class="notes-content">
+            <p>The design is easiest to review by asking which rule covers each failure. Routing covers ownership, pairs cover retries, releases and fences cover objects, and barriers cover the one stale-read case that could make a consumer skip.</p>
+            <p>The high watermark ties leader replies to replicated state. The protected topic makes the assumptions durable instead of leaving them to operator discipline.</p>
+          </div>
+        </section>
+
+        <section class="slide" data-title="The vocabulary maps each failure mode to one durable fact">
+          <div class="slide-header"><span class="section-label">Glossary</span><span>End with shared language</span></div>
+          <h2>The vocabulary maps each failure mode to one durable fact</h2>
+          <div class="glossary">
+            <div class="term"><dt>Coordinator partition</dt><dd>A partition of <code>__diskless_metadata</code> whose leader writes mapped user-partition state.</dd></div>
+            <div class="term"><dt>Tracking partition</dt><dd>The partition that issues leases, records participants, receives releases, and owns the deletion queue.</dd></div>
+            <div class="term"><dt>Overlay</dt><dd>A leader’s in-memory view of appended records that have not passed the high watermark.</dd></div>
+            <div class="term"><dt>Broker row</dt><dd>Per-uploader epoch, last result, fenced-through pair, and retired marker.</dd></div>
+            <div class="term"><dt>Floor</dt><dd>The higher of the last committed pair and the fenced-through pair.</dd></div>
+            <div class="term"><dt>Fence</dt><dd>A durable range boundary that makes every lower sequence impossible to commit at a participant.</dd></div>
+            <div class="term"><dt>Barrier</dt><dd>A record that a leader commits before answering out-of-range above its high watermark.</dd></div>
+            <div class="term"><dt>High watermark</dt><dd>The highest replicated position eligible for state application and a durable reply.</dd></div>
+          </div>
+          <div class="callout">Questions to carry into implementation review: Which record closes this race? Which replica proves this prefix? Which request is allowed to write this topic?</div>
+          <div class="notes-content">
+            <p>These terms are deliberately operational. A coordinator partition owns ordered user state, a tracking partition owns object lifecycle, and the broker row remembers the answer that retries need.</p>
+            <p>When a review finds a new race, ask which durable fact resolves it. If the answer is only a wall clock or an external scan, the design boundary needs another look.</p>
+          </div>
+        </section>
+      </main>
+
+      <aside class="notes-panel" id="notes-panel" hidden aria-live="polite">
+        <h3>Speaker notes</h3>
+        <div id="notes-body"></div>
+      </aside>
+
+      <section class="overview" id="overview" hidden aria-label="Slide overview">
+        <div class="overview-head">
+          <h2>Slide overview</h2>
+          <button id="overview-close">Close overview</button>
+        </div>
+        <div class="overview-grid" id="overview-grid"></div>
+      </section>
+
+      <nav class="hud" aria-label="Slideshow controls">
+        <button id="prev-slide" aria-label="Previous slide">←</button>
+        <div class="progress-wrap" aria-label="Slide progress"><div class="progress-bar" id="progress-bar"></div></div>
+        <span class="counter" id="counter">1 / 20</span>
+        <span class="hud-hint">← → Space · <kbd>N</kbd> notes · <kbd>O</kbd> overview · <kbd>F</kbd> fullscreen</span>
+        <button id="next-slide" class="primary" aria-label="Next slide">→</button>
+      </nav>
+    </div>
+  </div>
+
+  <script>
+    (() => {
+      "use strict";
+
+      const $ = (id) => document.getElementById(id);
+      const SLOTS = 4096;
+
+      function escapeHTML(value) {
+        return String(value)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#039;");
+      }
+
+      function cpClass(partition) {
+        return `cp-${((partition % 6) + 6) % 6}`;
+      }
+
+      function murmur2(data) {
+        const length = data.length;
+        const seed = 0x9747b28c;
+        const multiplier = 0x5bd1e995;
+        const shift = 24;
+        let hash = (seed ^ length) | 0;
+        const length4 = length >> 2;
+
+        for (let i = 0; i < length4; i += 1) {
+          const index = i << 2;
+          let key = (
+            (data[index] & 0xff) |
+            ((data[index + 1] & 0xff) << 8) |
+            ((data[index + 2] & 0xff) << 16) |
+            ((data[index + 3] & 0xff) << 24)
+          );
+          key = Math.imul(key, multiplier);
+          key ^= key >>> shift;
+          key = Math.imul(key, multiplier);
+          hash = Math.imul(hash, multiplier);
+          hash = (hash ^ key) | 0;
+        }
+
+        const index = length4 << 2;
+        switch (length - index) {
+          case 3:
+            hash ^= (data[index + 2] & 0xff) << 16;
+          case 2:
+            hash ^= (data[index + 1] & 0xff) << 8;
+          case 1:
+            hash ^= data[index] & 0xff;
+            hash = Math.imul(hash, multiplier);
+            break;
+          default:
+            break;
+        }
+
+        hash ^= hash >>> 13;
+        hash = Math.imul(hash, multiplier);
+        hash ^= hash >>> 15;
+        return hash | 0;
+      }
+
+      function toPositive(number) {
+        return number & 0x7fffffff;
+      }
+
+      function topicKey(uuid, partition) {
+        const clean = uuid.replaceAll("-", "").padEnd(32, "0").slice(0, 32);
+        const result = new Uint8Array(20);
+        for (let i = 0; i < 16; i += 1) {
+          const byte = Number.parseInt(clean.slice(i * 2, i * 2 + 2), 16);
+          result[i] = Number.isFinite(byte) ? byte : 0;
+        }
+        new DataView(result.buffer).setInt32(16, partition, false);
+        return result;
+      }
+
+      function brokerKey(brokerId) {
+        const result = new Uint8Array(4);
+        new DataView(result.buffer).setUint32(0, brokerId >>> 0, false);
+        return result;
+      }
+
+      function mappingFor(uuid, partition, n) {
+        const hash = murmur2(topicKey(uuid, partition));
+        const positive = toPositive(hash);
+        const slot = positive % SLOTS;
+        return { hash, positive, slot, coordinator: slot % n };
+      }
+
+      function trackingFor(brokerId, n) {
+        return toPositive(murmur2(brokerKey(brokerId))) % n;
+      }
+
+      function logList(element, entries) {
+        element.innerHTML = entries.slice(-4).map((entry) => {
+          const text = String(entry);
+          const shortText = text.length > 104 ? `${text.slice(0, 101)}…` : text;
+          return `<li>${escapeHTML(shortText)}</li>`;
+        }).join("");
+      }
+
+      function addLog(state, message) {
+        state.logs.push(message);
+        if (state.logs.length > 14) state.logs.shift();
+      }
+
+      function pairCompare(aEpoch, aSeq, bEpoch, bSeq) {
+        if (aEpoch !== bEpoch) return aEpoch - bEpoch;
+        return aSeq - bSeq;
+      }
+
+      function pairText(epoch, sequence) {
+        if (epoch === null || epoch === undefined || sequence === null || sequence === undefined) return "—";
+        return `(${epoch}, ${sequence})`;
+      }
+
+      const slides = Array.from(document.querySelectorAll(".slide"));
+      const fragmentCounts = slides.map((slide) => slide.querySelectorAll(".fragment").length);
+      const revealed = slides.map(() => 0);
+      let activeIndex = 0;
+      let notesOpen = false;
+
+      function renderFragments() {
+        const fragments = slides[activeIndex].querySelectorAll(".fragment");
+        fragments.forEach((fragment, index) => {
+          fragment.classList.toggle("revealed", index < revealed[activeIndex]);
+        });
+        const stepButton = $("produce-reveal");
+        if (stepButton && activeIndex === 5) {
+          stepButton.textContent = revealed[activeIndex] >= fragmentCounts[activeIndex] ? "All steps shown" : "Reveal next step";
+          stepButton.disabled = revealed[activeIndex] >= fragmentCounts[activeIndex];
+        }
+      }
+
+      function renderNotes() {
+        if (!notesOpen) return;
+        const notes = slides[activeIndex].querySelector(".notes-content");
+        $("notes-body").innerHTML = notes ? notes.innerHTML : "<p>No notes for this slide.</p>";
+      }
+
+      function renderHUD() {
+        $("counter").textContent = `${activeIndex + 1} / ${slides.length}`;
+        $("progress-bar").style.width = `${((activeIndex + 1) / slides.length) * 100}%`;
+      }
+
+      function setSlide(index, updateHash = true) {
+        activeIndex = Math.max(0, Math.min(slides.length - 1, index));
+        slides.forEach((slide, slideIndex) => {
+          slide.classList.toggle("active", slideIndex === activeIndex);
+        });
+        renderFragments();
+        renderHUD();
+        renderNotes();
+        if (updateHash) {
+          window.location.hash = `#${activeIndex + 1}`;
+        }
+      }
+
+      function advance() {
+        if (revealed[activeIndex] < fragmentCounts[activeIndex]) {
+          revealed[activeIndex] += 1;
+          renderFragments();
+          return;
+        }
+        if (activeIndex < slides.length - 1) setSlide(activeIndex + 1);
+      }
+
+      function previous() {
+        if (revealed[activeIndex] > 0) {
+          revealed[activeIndex] -= 1;
+          renderFragments();
+          return;
+        }
+        if (activeIndex > 0) setSlide(activeIndex - 1);
+      }
+
+      function revealNext() {
+        if (revealed[activeIndex] < fragmentCounts[activeIndex]) {
+          revealed[activeIndex] += 1;
+          renderFragments();
+        }
+      }
+
+      function toggleNotes() {
+        notesOpen = !notesOpen;
+        $("notes-panel").hidden = !notesOpen;
+        renderNotes();
+      }
+
+      function renderOverview() {
+        $("overview-grid").innerHTML = slides.map((slide, index) => {
+          const title = slide.dataset.title || `Slide ${index + 1}`;
+          return `<button class="overview-item ${index === activeIndex ? "current" : ""}" data-overview-index="${index}">
+            <span class="overview-index">${index + 1}</span>
+            <span class="overview-title">${escapeHTML(title)}</span>
+          </button>`;
+        }).join("");
+        document.querySelectorAll("[data-overview-index]").forEach((button) => {
+          button.addEventListener("click", () => {
+            setSlide(Number(button.dataset.overviewIndex));
+            $("overview").hidden = true;
+          });
+        });
+      }
+
+      function toggleOverview() {
+        const overview = $("overview");
+        overview.hidden = !overview.hidden;
+        if (!overview.hidden) renderOverview();
+      }
+
+      function toggleFullscreen() {
+        if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
+          document.documentElement.requestFullscreen().catch(() => {});
+        } else if (document.exitFullscreen) {
+          document.exitFullscreen().catch(() => {});
+        }
+      }
+
+      function isFormTarget(target) {
+        return target && (
+          target.matches("input, select, textarea, button") ||
+          target.isContentEditable ||
+          target.closest("input, select, textarea, button")
+        );
+      }
+
+      document.addEventListener("keydown", (event) => {
+        if (isFormTarget(event.target)) return;
+        let handled = true;
+        switch (event.key) {
+          case "ArrowRight":
+          case " ":
+          case "PageDown":
+            advance();
+            break;
+          case "ArrowLeft":
+          case "PageUp":
+            previous();
+            break;
+          case "Home":
+            setSlide(0);
+            break;
+          case "End":
+            setSlide(slides.length - 1);
+            break;
+          case "n":
+          case "N":
+            toggleNotes();
+            break;
+          case "o":
+          case "O":
+            toggleOverview();
+            break;
+          case "f":
+          case "F":
+            toggleFullscreen();
+            break;
+          default:
+            handled = false;
+        }
+        if (handled) event.preventDefault();
+      });
+
+      window.addEventListener("hashchange", () => {
+        const value = Number.parseInt(window.location.hash.slice(1), 10);
+        if (Number.isFinite(value)) setSlide(value - 1, false);
+      });
+
+      $("prev-slide").addEventListener("click", previous);
+      $("next-slide").addEventListener("click", advance);
+      $("overview-close").addEventListener("click", () => { $("overview").hidden = true; });
+      $("produce-reveal").addEventListener("click", revealNext);
+
+      const initialHash = Number.parseInt(window.location.hash.slice(1), 10);
+      setSlide(Number.isFinite(initialHash) ? initialHash - 1 : 0, false);
+
+      const mapState = {
+        n: 8,
+        previousN: 8,
+        uuid: "00112233-4455-6677-8899-aabbccddeeff",
+        partition: 7,
+        broker: 2
+      };
+
+      function renderMapping() {
+        const selected = mappingFor(mapState.uuid, mapState.partition, mapState.n);
+        const tracking = trackingFor(mapState.broker, mapState.n);
+        const cells = Array.from({ length: 32 }, (_, slot) => `<span class="slot-cell ${cpClass(slot % mapState.n)}">${slot}</span>`).join("");
+        const splitText = mapState.n === mapState.previousN * 2
+          ? `N doubles: old CP p keeps half; new CP p+${mapState.previousN} gets the rest.`
+          : `N=${mapState.n}: ${SLOTS / mapState.n} slots per CP.`;
+        $("map-output").innerHTML = `
+          <div class="map-output">
+            <div class="map-side">
+              <div class="mini-card"><strong>User partition</strong><span class="cp-pill ${cpClass(selected.coordinator)}"><span class="cp-dot"></span>CP${selected.coordinator}</span><p class="toy-note">hash ${selected.hash}</p></div>
+              <div class="mini-card"><strong>Slot → coordinator</strong><span class="code-line">${selected.slot} → CP${selected.coordinator}</span></div>
+              <div class="mini-card"><strong>Broker ${mapState.broker} tracking</strong><span class="cp-pill ${cpClass(tracking)}"><span class="cp-dot"></span>CP${tracking}</span></div>
+              <div class="callout">${splitText}</div>
+            </div>
+            <div class="map-table">
+              <div class="chip-row"><span class="chip"><strong>N</strong> ${mapState.n}</span><span class="chip"><strong>Slots per CP</strong> ${SLOTS / mapState.n}</span><span class="chip"><strong>Key</strong> topic ID + BE32 partition</span></div>
+              <div class="slot-strip" aria-label="First 32 of 4096 slots">${cells}</div>
+              <div class="mini-card"><strong>Route</strong><span class="toy-note"><code>${escapeHTML(mapState.uuid.slice(0, 12))}…</code> + BE32(${mapState.partition}) → slot ${selected.slot} → <span class="cp-pill ${cpClass(selected.coordinator)}"><span class="cp-dot"></span>CP${selected.coordinator}</span></span></div>
+            </div>
+          </div>
+        `;
+      }
+
+      function readMapInputs() {
+        mapState.n = Number($("map-n").value);
+        mapState.uuid = $("map-topic-id").value.trim() || mapState.uuid;
+        mapState.partition = Math.max(0, Number($("map-partition").value) || 0);
+        mapState.broker = Math.max(0, Number($("map-broker").value) || 0);
+      }
+
+      $("map-apply").addEventListener("click", () => {
+        mapState.previousN = mapState.n;
+        readMapInputs();
+        renderMapping();
+      });
+      $("map-n").addEventListener("change", () => {
+        mapState.previousN = mapState.n;
+        mapState.n = Number($("map-n").value);
+        renderMapping();
+      });
+      $("map-reset").addEventListener("click", () => {
+        mapState.n = 8;
+        mapState.previousN = 8;
+        mapState.uuid = "00112233-4455-6677-8899-aabbccddeeff";
+        mapState.partition = 7;
+        mapState.broker = 2;
+        $("map-n").value = "8";
+        $("map-topic-id").value = mapState.uuid;
+        $("map-partition").value = "7";
+        $("map-broker").value = "2";
+        renderMapping();
+      });
+      renderMapping();
+
+      const lifeState = { tick: 0, playing: false, timer: null, slow: new Set(), logs: [] };
+      function lifeParts() {
+        return [
+          { file: "F1", order: 1, close: 0, split: 1, upload: 2, deadline: 7, queue: 0, batches: "orders/0, orders/3", status: "closed", offset: "—" },
+          { file: "F1", order: 1, close: 0, split: 1, upload: 2, deadline: 7, queue: 1, batches: "orders/1", status: "closed", offset: "—" },
+          { file: "F1", order: 1, close: 0, split: 1, upload: 2, deadline: 7, queue: 2, batches: "telemetry/0", status: "closed", offset: "—" },
+          { file: "F1", order: 1, close: 0, split: 1, upload: 2, deadline: 7, queue: 3, batches: "tracking part", status: "closed", offset: "—" },
+          { file: "F2", order: 2, close: 2, split: 3, upload: 4, deadline: 9, queue: 0, batches: "orders/4", status: "not-closed", offset: "—" },
+          { file: "F2", order: 2, close: 2, split: 3, upload: 4, deadline: 9, queue: 1, batches: "orders/2", status: "not-closed", offset: "—" },
+          { file: "F2", order: 2, close: 2, split: 3, upload: 4, deadline: 9, queue: 3, batches: "tracking part", status: "not-closed", offset: "—" }
+        ];
+      }
+      let lifePartsState = lifeParts();
+
+      function lifePrevious(part) {
+        return lifePartsState.filter((candidate) => candidate.queue === part.queue && candidate.order < part.order).sort((a, b) => b.order - a.order)[0];
+      }
+
+      function lifeText(part) {
+        if (part.status === "not-closed") return `closes ${part.close}`;
+        if (part.status === "closed") return `closed · split ${part.split}`;
+        if (part.status === "split") return `split · upload ${part.upload}`;
+        if (part.status === "uploaded") return "uploaded";
+        if (part.status === "waiting") {
+          const prior = lifePrevious(part);
+          return prior && !["committed", "failed"].includes(prior.status)
+            ? `behind ${prior.file} on this queue`
+            : `offline · retry to ${part.deadline}`;
+        }
+        if (part.status === "committed") return `committed · ${part.queue === 3 ? "tracking" : part.offset}`;
+        return "KAFKA_STORAGE_ERROR · unknown";
+      }
+
+      function lifeOffset(part) {
+        if (part.file === "F1" && part.queue === 0) return "120–121";
+        if (part.file === "F1" && part.queue === 1) return "80";
+        if (part.file === "F1" && part.queue === 2) return "44";
+        if (part.file === "F2" && part.queue === 0) return "122";
+        if (part.file === "F2" && part.queue === 1) return "81";
+        return `${part.file} tracking state`;
+      }
+
+      function lifeStatusClass(status) {
+        return status === "committed" ? "committed" : status === "failed" ? "failed" : status === "waiting" ? "waiting" : "";
+      }
+
+      function lifeDeadline(part) {
+        part.status = "failed";
+        addLog(lifeState, `${part.file} CP${part.queue} deadline: KAFKA_STORAGE_ERROR; outcome unknown until a later commit, fence, epoch retirement, or lease end.`);
+      }
+
+      function lifeAdvanceParts() {
+        lifePartsState.slice().sort((a, b) => a.order - b.order).forEach((part) => {
+          if (!["uploaded", "waiting"].includes(part.status)) return;
+          const prior = lifePrevious(part);
+          if (prior && !["committed", "failed"].includes(prior.status)) {
+            part.status = lifeState.tick >= part.deadline ? (lifeDeadline(part), "failed") : "waiting";
+            return;
+          }
+          if (lifeState.slow.has(part.queue)) {
+            part.status = lifeState.tick >= part.deadline ? (lifeDeadline(part), "failed") : "waiting";
+            return;
+          }
+          part.status = "committed";
+          part.offset = lifeOffset(part);
+          addLog(lifeState, `${part.file} on CP${part.queue} commits at tick ${lifeState.tick}; other queues keep moving.`);
+        });
+      }
+
+      function renderLife() {
+        const queues = [0, 1, 2, 3].map((queue) => {
+          const entries = lifePartsState.filter((part) => part.queue === queue).map((part) => `
+            <div class="queue-entry ${lifeStatusClass(part.status)}">
+              <strong>${part.file} · ${escapeHTML(part.batches)}</strong>
+              <p>${escapeHTML(lifeText(part))} · d${part.deadline}</p>
+            </div>
+          `).join("");
+          return `<div class="queue-card ${cpClass(queue)}"><h4>CP${queue}${queue === 3 ? " · tracking" : ""}</h4><p class="queue-status">${lifeState.slow.has(queue) ? "offline / slow" : "available"}</p>${entries}</div>`;
+        }).join("");
+        $("life-tick").textContent = String(lifeState.tick);
+        $("life-output").innerHTML = `<div class="queue-grid">${queues}</div>`;
+        logList($("life-log"), lifeState.logs);
+        $("life-toggle-cp1").textContent = lifeState.slow.has(1) ? "Restore CP1" : "Make CP1 offline";
+      }
+
+      function lifeStep() {
+        if (lifeState.tick >= 9) {
+          lifeState.playing = false;
+          clearInterval(lifeState.timer);
+          return;
+        }
+        lifeState.tick += 1;
+        if (lifeState.tick === 1) {
+          lifePartsState.filter((part) => part.file === "F1").forEach((part) => { part.status = "split"; });
+          addLog(lifeState, "F1 splits into coordinator parts and one tracking part.");
+        } else if (lifeState.tick === 2) {
+          lifePartsState.filter((part) => part.file === "F1").forEach((part) => { part.status = "uploaded"; });
+          lifePartsState.filter((part) => part.file === "F2").forEach((part) => { part.status = "closed"; });
+          addLog(lifeState, "F1 uploads; F2 closes and starts its own deadline.");
+        } else if (lifeState.tick === 3) {
+          lifePartsState.filter((part) => part.file === "F2").forEach((part) => { part.status = "split"; });
+          addLog(lifeState, "F2 splits into its coordinator parts and tracking part.");
+        } else if (lifeState.tick === 4) {
+          lifePartsState.filter((part) => part.file === "F2").forEach((part) => { part.status = "uploaded"; });
+          addLog(lifeState, "F2 uploads; healthy queues can run while CP1 remains stuck.");
+        }
+        lifeAdvanceParts();
+        renderLife();
+      }
+
+      function toggleLifePlay() {
+        lifeState.playing = !lifeState.playing;
+        clearInterval(lifeState.timer);
+        $("life-play").textContent = lifeState.playing ? "Pause" : "Play";
+        if (lifeState.playing) lifeState.timer = setInterval(lifeStep, 850);
+      }
+
+      $("life-reset").addEventListener("click", () => {
+        lifeState.tick = 0;
+        lifeState.logs = [];
+        lifeState.slow.clear();
+        lifeState.playing = false;
+        clearInterval(lifeState.timer);
+        $("life-play").textContent = "Play";
+        lifePartsState = lifeParts();
+        renderLife();
+      });
+      $("life-step").addEventListener("click", lifeStep);
+      $("life-play").addEventListener("click", toggleLifePlay);
+      $("life-toggle-cp1").addEventListener("click", () => {
+        lifeState.slow.has(1) ? lifeState.slow.delete(1) : lifeState.slow.add(1);
+        addLog(lifeState, lifeState.slow.has(1) ? "CP1 is unavailable; its queue waits to its own deadline." : "CP1 is available again.");
+        renderLife();
+      });
+      renderLife();
+
+      const leaseState = { K: 8, n: 4, broker: 2, baseTracking: 2, trackingUp: true, epoch: 7, nextRangeStart: 100, ranges: [], oldRanges: [], keys: [], logs: [] };
+
+      function leaseDestination() {
+        return leaseState.trackingUp
+          ? { partition: leaseState.baseTracking, fallback: false }
+          : { partition: (leaseState.baseTracking + 1) % leaseState.n, fallback: true };
+      }
+
+      function requestLease(reason) {
+        const destination = leaseDestination();
+        const start = leaseState.nextRangeStart;
+        const end = start + leaseState.K - 1;
+        leaseState.nextRangeStart = end + 1;
+        leaseState.ranges.push({ epoch: leaseState.epoch, start, end, next: start, issuedBy: destination.partition, fallback: destination.fallback, ended: false });
+        addLog(leaseState, `${reason}: CP${destination.partition} grants [${start}, ${end}]${destination.fallback ? " through fallback" : ""}.`);
+      }
+
+      function activeLease() {
+        return leaseState.ranges.find((range) => !range.ended && range.next <= range.end && range.epoch === leaseState.epoch);
+      }
+
+      function renderLease() {
+        const ranges = [...leaseState.oldRanges.map((range) => ({ ...range, historical: true })), ...leaseState.ranges].slice(-3).map((range) => {
+          const remaining = Math.max(0, range.end - range.next + 1);
+          return `<div class="range-item ${range.ended ? "ended" : ""}">epoch ${range.epoch} · [${range.start}, ${range.end}] · next ${range.next} · ${remaining} left · CP${range.issuedBy}${range.fallback ? " fallback" : ""}</div>`;
+        }).join("");
+        $("lease-output").innerHTML = `
+          <div class="lease-grid">
+            <div class="lease-card"><h4>Sequence source</h4><p class="toy-note">epoch <code>${leaseState.epoch}</code> · normal CP${leaseState.baseTracking} · ${leaseState.trackingUp ? "online" : "offline; next partition used"}</p><div class="range-list">${ranges}</div></div>
+            <div class="lease-card"><h4>Recent object keys</h4><p class="toy-note">Retries reuse the same key.</p><div class="key-list">${leaseState.keys.slice(0, 3).map((key) => `<div class="key-item">${escapeHTML(key)}</div>`).join("") || "<div class=\"key-item\">No file closed yet.</div>"}</div></div>
+          </div>
+        `;
+        logList($("lease-log"), leaseState.logs);
+        $("lease-toggle-tracking").textContent = leaseState.trackingUp ? "Take tracking offline" : "Restore tracking partition";
+      }
+
+      function resetLease() {
+        leaseState.epoch = 7;
+        leaseState.nextRangeStart = 100;
+        leaseState.ranges = [];
+        leaseState.oldRanges = [];
+        leaseState.keys = [];
+        leaseState.logs = [];
+        leaseState.trackingUp = true;
+        requestLease("Initial lease");
+        renderLease();
+      }
+
+      function leaseStep() {
+        let range = activeLease();
+        if (!range) {
+          requestLease("No sequence remains");
+          range = activeLease();
+        }
+        const sequence = range.next;
+        range.next += 1;
+        leaseState.keys.unshift(`cluster-demo.${leaseState.broker}.${leaseState.epoch}.${sequence}`);
+        addLog(leaseState, `File closes with (${leaseState.epoch}, ${sequence}) and uploads with its deterministic key.`);
+        const remaining = range.end - range.next + 1;
+        if (remaining < leaseState.K / 2 && !leaseState.ranges.some((item) => item.epoch === leaseState.epoch && item !== range && !item.ended && item.next <= item.end)) {
+          requestLease("Background renewal below K/2");
+        }
+        renderLease();
+      }
+
+      $("lease-reset").addEventListener("click", resetLease);
+      $("lease-step").addEventListener("click", leaseStep);
+      $("lease-restart").addEventListener("click", () => {
+        leaseState.oldRanges.push(...leaseState.ranges.filter((range) => !range.ended).map((range) => ({ ...range, ended: true })));
+        leaseState.ranges = [];
+        const oldEpoch = leaseState.epoch;
+        leaseState.epoch += 1;
+        leaseState.nextRangeStart = 0;
+        addLog(leaseState, `Restart raises epoch ${oldEpoch} → ${leaseState.epoch}; old leases end.`);
+        requestLease("New epoch lease");
+        renderLease();
+      });
+      $("lease-toggle-tracking").addEventListener("click", () => {
+        leaseState.trackingUp = !leaseState.trackingUp;
+        addLog(leaseState, leaseState.trackingUp ? "Normal tracking partition is available." : "Normal tracking partition is down; renewal falls back to CP3.");
+        renderLease();
+      });
+      resetLease();
+
+      const rowState = { lastEpoch: 7, lastSeq: 2, lastResult: "offset 42, timestamp 1700", fenceEpoch: 7, fenceSeq: 1, retired: false, pending: null, pendingQueue: [], verdict: "Ready. The row floor is (7, 2).", verdictType: "", logs: [] };
+
+      function rowFloor() {
+        if (pairCompare(rowState.lastEpoch, rowState.lastSeq, rowState.fenceEpoch, rowState.fenceSeq) >= 0) return { epoch: rowState.lastEpoch, seq: rowState.lastSeq };
+        return { epoch: rowState.fenceEpoch, seq: rowState.fenceSeq };
+      }
+
+      function setVerdict(text, type) {
+        rowState.verdict = text;
+        rowState.verdictType = type || "";
+      }
+
+      function renderRow() {
+        const floor = rowFloor();
+        $("row-output").innerHTML = `
+          <div class="row-view">
+            <div class="row-card"><h4>Durable broker row</h4><dl>
+              <dt>Last commit</dt><dd>${pairText(rowState.lastEpoch, rowState.lastSeq)}</dd>
+              <dt>Result</dt><dd>${escapeHTML(rowState.lastResult)}</dd>
+              <dt>Fenced through</dt><dd>${pairText(rowState.fenceEpoch, rowState.fenceSeq)}</dd>
+              <dt>Floor</dt><dd>${pairText(floor.epoch, floor.seq)}</dd>
+              <dt>Pending</dt><dd>${rowState.pending ? pairText(rowState.pending.epoch, rowState.pending.sequence) : "—"}</dd>
+              <dt>Queued</dt><dd>${rowState.pendingQueue.length ? rowState.pendingQueue.map((item) => pairText(item.epoch, item.sequence)).join(", ") : "—"}</dd>
+            </dl></div>
+            <div class="row-card"><h4>Latest verdict</h4><div class="verdict ${rowState.verdictType}">${escapeHTML(rowState.verdict)}</div><p class="toy-note">The retry returns the stored result, not a reconstruction from possibly released batches.</p></div>
+          </div>
+        `;
+        logList($("row-log"), rowState.logs);
+      }
+
+      function rowSend() {
+        const epoch = Number($("row-epoch").value);
+        const sequence = Number($("row-seq").value);
+        const floor = rowFloor();
+        if (rowState.retired || epoch < rowState.lastEpoch) {
+          setVerdict(`Stale epoch: row is at epoch ${rowState.lastEpoch} or retired.`, "bad");
+          addLog(rowState, `(${epoch}, ${sequence}) rejected as stale epoch.`);
+        } else if (rowState.pending && epoch === rowState.pending.epoch && sequence === rowState.pending.sequence) {
+          setVerdict("Retry while pending: append nothing; wait for the pending result.", "warn");
+          addLog(rowState, `(${epoch}, ${sequence}) retries the pending overlay entry.`);
+        } else if (rowState.pending && pairCompare(epoch, sequence, rowState.pending.epoch, rowState.pending.sequence) < 0) {
+          setVerdict(`Stale sequence: newer pair ${pairText(rowState.pending.epoch, rowState.pending.sequence)} is pending.`, "bad");
+          addLog(rowState, `(${epoch}, ${sequence}) arrives below the newest pending pair.`);
+        } else if (rowState.pending && pairCompare(epoch, sequence, rowState.pending.epoch, rowState.pending.sequence) > 0) {
+          const alreadyQueued = rowState.pendingQueue.some((item) => item.epoch === epoch && item.sequence === sequence);
+          if (alreadyQueued) {
+            setVerdict("Retry while queued: append nothing.", "warn");
+            addLog(rowState, `(${epoch}, ${sequence}) retries its queued overlay entry.`);
+          } else {
+            rowState.pendingQueue.push({ epoch, sequence, result: `offset ${100 + sequence}, timestamp ${1800 + sequence}` });
+            setVerdict(`New commit queued behind ${pairText(rowState.pending.epoch, rowState.pending.sequence)}.`, "good");
+            addLog(rowState, `(${epoch}, ${sequence}) waits behind the earlier pending pair.`);
+          }
+        } else if (rowState.lastEpoch === epoch && rowState.lastSeq === sequence) {
+          setVerdict(`Retry after apply: return stored result “${rowState.lastResult}”.`, "good");
+          addLog(rowState, `(${epoch}, ${sequence}) returns its stored result.`);
+        } else if (pairCompare(epoch, sequence, floor.epoch, floor.seq) > 0) {
+          rowState.pending = { epoch, sequence, result: `offset ${100 + sequence}, timestamp ${1800 + sequence}` };
+          setVerdict(`New commit enters the overlay: ${pairText(epoch, sequence)}.`, "good");
+          addLog(rowState, `(${epoch}, ${sequence}) is above the floor and becomes pending.`);
+        } else {
+          setVerdict(`Stale sequence: ${pairText(epoch, sequence)} is not above floor ${pairText(floor.epoch, floor.seq)}.`, "bad");
+          addLog(rowState, `(${epoch}, ${sequence}) is rejected as stale sequence.`);
+        }
+        renderRow();
+      }
+
+      function rowApply() {
+        if (!rowState.pending) {
+          setVerdict("No pending commit exists.", "warn");
+          renderRow();
+          return;
+        }
+        const pending = rowState.pending;
+        rowState.lastEpoch = pending.epoch;
+        rowState.lastSeq = pending.sequence;
+        rowState.lastResult = pending.result;
+        rowState.pending = rowState.pendingQueue.shift() || null;
+        setVerdict(`Applied at the high watermark. Stored result is “${rowState.lastResult}”.`, "good");
+        addLog(rowState, `${pairText(pending.epoch, pending.sequence)} applies to SQLite and becomes the remembered result.`);
+        renderRow();
+      }
+
+      function rowFence() {
+        const epoch = Number($("row-epoch").value);
+        const sequence = Number($("row-seq").value);
+        if (rowState.pending || rowState.pendingQueue.length) {
+          setVerdict("Fence waits behind pending overlay entries so an earlier commit can win.", "warn");
+          addLog(rowState, `Fence ${pairText(epoch, sequence)} waits behind pending entries.`);
+        } else if (pairCompare(epoch, sequence, rowFloor().epoch, rowFloor().seq) > 0) {
+          rowState.fenceEpoch = epoch;
+          rowState.fenceSeq = sequence;
+          setVerdict(`Fence applies through ${pairText(epoch, sequence)}. Lower pairs are stale.`, "warn");
+          addLog(rowState, `Fence raises fenced-through to ${pairText(epoch, sequence)}.`);
+        } else {
+          setVerdict("Fence is already covered by the floor.", "warn");
+          addLog(rowState, `Fence ${pairText(epoch, sequence)} changes nothing.`);
+        }
+        renderRow();
+      }
+
+      function resetRow() {
+        rowState.lastEpoch = 7;
+        rowState.lastSeq = 2;
+        rowState.lastResult = "offset 42, timestamp 1700";
+        rowState.fenceEpoch = 7;
+        rowState.fenceSeq = 1;
+        rowState.retired = false;
+        rowState.pending = null;
+        rowState.pendingQueue = [];
+        rowState.verdict = "Ready. The row floor is (7, 2).";
+        rowState.verdictType = "";
+        rowState.logs = [];
+        $("row-epoch").value = "7";
+        $("row-seq").value = "3";
+        renderRow();
+      }
+
+      $("row-send").addEventListener("click", rowSend);
+      $("row-apply").addEventListener("click", rowApply);
+      $("row-fence").addEventListener("click", rowFence);
+      $("row-reset").addEventListener("click", resetRow);
+      resetRow();
+
+      const deletionState = { tick: 0, grace: 3, queuedAt: null, deleted: false, logs: [], participants: [] };
+
+      function newParticipants() {
+        return [0, 1, 2, 3].map((id) => ({ id, batches: true, heard: false, released: false, silent: false, fenced: false, referenced: false }));
+      }
+
+      function maybeQueueDeletion() {
+        const ready = deletionState.participants.every((participant) => (participant.released || participant.fenced) && !participant.referenced);
+        if (ready && deletionState.queuedAt === null) {
+          deletionState.queuedAt = deletionState.tick;
+          addLog(deletionState, `All participants are released or fenced. Tracking marks the object at tick ${deletionState.tick}.`);
+        }
+      }
+
+      function renderDeletion() {
+        const cards = deletionState.participants.map((participant) => {
+          const state = participant.fenced ? (participant.referenced ? "referenced" : "fenced") : participant.released ? "released" : participant.silent ? "silent" : "holds batch";
+          const controls = participant.id === 3
+            ? `<button data-delete-release="${participant.id}">${participant.released ? "Released" : "Release"}</button>`
+            : `<button data-delete-release="${participant.id}">${participant.batches ? "Remove" : "Removed"}</button><button data-delete-silent="${participant.id}">${participant.silent ? "Restore" : "Silent"}</button>`;
+          return `<div class="participant-card ${cpClass(participant.id)}"><h4>CP${participant.id}${participant.id === 3 ? " · tracking" : ""}</h4><p>${escapeHTML(state)} · ${participant.heard ? "heard" : "no report"}</p><div class="button-row">${controls}</div></div>`;
+        }).join("");
+        const queueState = deletionState.deleted
+          ? "deleted by FileCleaner"
+          : deletionState.queuedAt === null
+            ? "not queued"
+            : `queued at ${deletionState.queuedAt}; ${Math.max(0, deletionState.grace - (deletionState.tick - deletionState.queuedAt))} grace ticks remain`;
+        $("delete-output").innerHTML = `<div class="participant-grid">${cards}</div><div class="flow-line"><span class="flow-node">participant state</span><span class="flow-arrow">→</span><span class="flow-node">releases / fences</span><span class="flow-arrow">→</span><span class="flow-node">deletion queue</span><span class="flow-arrow">→</span><span class="flow-node">${queueState}</span></div>`;
+        document.querySelectorAll("[data-delete-release]").forEach((button) => button.addEventListener("click", () => releaseParticipant(Number(button.dataset.deleteRelease))));
+        document.querySelectorAll("[data-delete-silent]").forEach((button) => button.addEventListener("click", () => toggleSilent(Number(button.dataset.deleteSilent))));
+        logList($("delete-log"), deletionState.logs);
+      }
+
+      function releaseParticipant(id) {
+        const participant = deletionState.participants[id];
+        if (participant.released) return;
+        participant.batches = false;
+        if (participant.silent) {
+          addLog(deletionState, `CP${id} loses its batches but stays silent; no release report arrives.`);
+        } else {
+          participant.heard = true;
+          participant.released = true;
+          addLog(deletionState, `CP${id} removes its last batches and reports release.`);
+        }
+        maybeQueueDeletion();
+        renderDeletion();
+      }
+
+      function toggleSilent(id) {
+        const participant = deletionState.participants[id];
+        participant.silent = !participant.silent;
+        addLog(deletionState, participant.silent ? `CP${id} becomes silent; tracking must fence it.` : `CP${id} is reachable again.`);
+        renderDeletion();
+      }
+
+      function resolveFences() {
+        const heardReady = deletionState.participants.filter((participant) => participant.heard).every((participant) => participant.released);
+        const trackingReleased = deletionState.participants[3].released;
+        if (!trackingReleased || !heardReady) {
+          addLog(deletionState, "Tracking waits for itself and every heard participant to release.");
+          renderDeletion();
+          return;
+        }
+        deletionState.participants.forEach((participant) => {
+          if (!participant.heard && participant.id !== 3 && !participant.fenced) {
+            participant.fenced = true;
+            participant.referenced = participant.batches;
+            addLog(deletionState, `Fence resolves silent CP${participant.id}: ${participant.referenced ? "the object is still referenced" : "no batch remains"}.`);
+          }
+        });
+        maybeQueueDeletion();
+        renderDeletion();
+      }
+
+      function advanceDeletion() {
+        deletionState.tick += 1;
+        if (deletionState.queuedAt !== null && !deletionState.deleted && deletionState.tick - deletionState.queuedAt >= deletionState.grace) {
+          deletionState.deleted = true;
+          addLog(deletionState, "FileCleaner waits the grace period, then deletes the queued key.");
+        } else {
+          addLog(deletionState, `Clock advances to tick ${deletionState.tick}; it decides only when a queued key can be deleted.`);
+        }
+        renderDeletion();
+      }
+
+      function resetDeletion() {
+        deletionState.tick = 0;
+        deletionState.queuedAt = null;
+        deletionState.deleted = false;
+        deletionState.logs = [];
+        deletionState.participants = newParticipants();
+        renderDeletion();
+      }
+
+      $("delete-resolve-fences").addEventListener("click", resolveFences);
+      $("delete-advance").addEventListener("click", advanceDeletion);
+      $("delete-reset").addEventListener("click", resetDeletion);
+      resetDeletion();
+
+      const overlayState = { leader: "A", applied: 98, highWatermark: 98, overlay: [], electionEnd: null, gate: false, replies: [], logs: [] };
+
+      function renderOverlay() {
+        const cells = [97, 98, 99, 100, 101].map((offset) => {
+          const state = offset <= overlayState.applied ? "applied" : overlayState.overlay.includes(offset) ? "overlay" : "future";
+          return `<div class="meter-cell ${state}">offset ${offset}</div>`;
+        }).join("");
+        const gateText = overlayState.gate ? `catching up to election-time log end ${overlayState.electionEnd}` : "serving enabled";
+        $("overlay-output").innerHTML = `<div class="overlay-view"><div class="overlay-card"><h4>Leader ${overlayState.leader}</h4><p class="toy-note">${escapeHTML(gateText)}</p><div class="meter">${cells}</div><div class="chip-row"><span class="chip"><strong>Applied</strong> ${overlayState.applied}</span><span class="chip"><strong>High watermark</strong> ${overlayState.highWatermark}</span><span class="chip"><strong>Overlay</strong> ${overlayState.overlay.length ? overlayState.overlay.join("–") : "empty"}</span></div></div><div class="overlay-card"><h4>Follower and reply state</h4><p class="toy-note">Followers fetch the Kafka log; they do not copy the leader overlay.</p><ul class="compact"><li>${overlayState.replies.length ? escapeHTML(overlayState.replies[overlayState.replies.length - 1]) : "No reply yet."}</li><li>${overlayState.gate ? "New leader rejects requests with a retriable error." : "New writes can reserve offsets."}</li></ul></div></div>`;
+        logList($("overlay-log"), overlayState.logs);
+      }
+
+      $("overlay-append").addEventListener("click", () => {
+        if (overlayState.overlay.length || overlayState.gate) {
+          addLog(overlayState, "The leader cannot append while the overlay or election gate is active.");
+        } else {
+          overlayState.overlay = [99, 100];
+          addLog(overlayState, "Leader A reserves offsets 99–100; followers have not advanced the high watermark.");
+        }
+        renderOverlay();
+      });
+      $("overlay-step").addEventListener("click", () => {
+        if (overlayState.gate && overlayState.highWatermark < overlayState.electionEnd) {
+          overlayState.highWatermark = overlayState.electionEnd;
+          overlayState.applied = overlayState.electionEnd;
+          overlayState.gate = false;
+          addLog(overlayState, `Leader ${overlayState.leader} catches up. The high watermark reaches ${overlayState.highWatermark}; serving opens.`);
+        } else if (overlayState.overlay.length) {
+          overlayState.highWatermark = overlayState.overlay[overlayState.overlay.length - 1];
+          overlayState.applied = overlayState.highWatermark;
+          overlayState.replies.push(`reply for ${overlayState.overlay[0]}–${overlayState.overlay[overlayState.overlay.length - 1]}`);
+          overlayState.overlay = [];
+          addLog(overlayState, "Followers replicate the batch; SQLite applies it and the parked reply completes.");
+        } else {
+          addLog(overlayState, "No pending overlay entry needs replication.");
+        }
+        renderOverlay();
+      });
+      $("overlay-crash").addEventListener("click", () => {
+        if (overlayState.leader !== "A") {
+          addLog(overlayState, "Leader A has already changed.");
+        } else {
+          const dropped = overlayState.overlay.slice();
+          overlayState.leader = "B";
+          overlayState.electionEnd = Math.max(overlayState.highWatermark, dropped.length ? dropped[dropped.length - 1] : overlayState.highWatermark);
+          overlayState.overlay = [];
+          overlayState.gate = overlayState.highWatermark < overlayState.electionEnd;
+          overlayState.replies.push("retriable error for parked work");
+          addLog(overlayState, `Leader A crashes. ${dropped.length ? `Uncommitted suffix ${dropped[0]}–${dropped[dropped.length - 1]} drops` : "Uncommitted work drops"}; callers retry.`);
+          addLog(overlayState, `Leader B starts empty and waits for high watermark ${overlayState.electionEnd}.`);
+        }
+        renderOverlay();
+      });
+      $("overlay-retry").addEventListener("click", () => {
+        if (overlayState.leader !== "B" || overlayState.gate) {
+          addLog(overlayState, "The retry waits for the new leader’s high-watermark gate.");
+        } else {
+          overlayState.overlay = [99, 100];
+          addLog(overlayState, "The broker retries the same commit pair against leader B.");
+        }
+        renderOverlay();
+      });
+      $("overlay-reset").addEventListener("click", () => {
+        overlayState.leader = "A";
+        overlayState.applied = 98;
+        overlayState.highWatermark = 98;
+        overlayState.overlay = [];
+        overlayState.electionEnd = null;
+        overlayState.gate = false;
+        overlayState.replies = [];
+        overlayState.logs = [];
+        renderOverlay();
+      });
+      renderOverlay();
+
+      const barrierState = { enabled: true, requested: 44, old: { highWatermark: 42, pending: false, pendingOffset: null, answer: "waiting" }, current: { highWatermark: 45, pending: false, pendingOffset: null, answer: "waiting" }, logs: [] };
+
+      function selectedBarrierOffset() {
+        const value = Number($("barrier-offset").value);
+        return Number.isFinite(value) && value >= 0 ? Math.floor(value) : barrierState.requested;
+      }
+
+      function renderBarrier() {
+        const renderCard = (which, title, tone) => {
+          const target = barrierState[which];
+          const pendingText = target.pending
+            ? `Barrier is parked for offset ${target.pendingOffset}.`
+            : which === "old"
+              ? "Followers no longer fetch from this leader."
+              : "A committed barrier confirms this leader’s state.";
+          return `<div class="barrier-card ${tone}"><h4>${title}</h4><p class="toy-note">High watermark <code>${target.highWatermark}</code> · requested <code>${barrierState.requested}</code></p><div class="barrier-state"><strong>${escapeHTML(target.answer)}</strong><br>${pendingText}</div></div>`;
+        };
+        $("barrier-output").innerHTML = `<div class="barrier-view">${renderCard("old", "Old / deposed leader", "old")}${renderCard("current", "Current leader", "new")}</div>`;
+        logList($("barrier-log"), barrierState.logs);
+      }
+
+      function askBarrier(which) {
+        const target = barrierState[which];
+        const label = which === "old" ? "old leader" : "current leader";
+        const requested = selectedBarrierOffset();
+        barrierState.requested = requested;
+        barrierState.enabled = $("barrier-toggle").checked;
+        target.pending = false;
+        target.pendingOffset = null;
+        if (requested <= target.highWatermark) {
+          target.answer = `batches at ${requested} · direct, no barrier`;
+          addLog(barrierState, `${label} answers directly because ${requested} is at or below high watermark ${target.highWatermark}.`);
+        } else if (!barrierState.enabled) {
+          target.answer = "OFFSET_OUT_OF_RANGE · unsafe stale answer";
+          const detail = which === "old" && requested === 44
+            ? "The record exists under the current leader, so this reset is wrong."
+            : "The leader has not proved its view.";
+          addLog(barrierState, `Barrier off: ${label} returns OFFSET_OUT_OF_RANGE immediately. ${detail}`);
+        } else {
+          target.pending = true;
+          target.pendingOffset = requested;
+          target.answer = "barrier pending";
+          addLog(barrierState, `${label} parks offset ${requested} and appends a barrier.`);
+          if (which === "old") addLog(barrierState, "The old leader’s barrier never commits because followers stopped fetching from it.");
+        }
+        renderBarrier();
+      }
+
+      $("barrier-ask-old").addEventListener("click", () => askBarrier("old"));
+      $("barrier-ask-new").addEventListener("click", () => askBarrier("current"));
+      $("barrier-advance").addEventListener("click", () => {
+        if (barrierState.old.pending) {
+          const requested = barrierState.old.pendingOffset;
+          barrierState.old.pending = false;
+          barrierState.old.pendingOffset = null;
+          barrierState.old.answer = `OFFSET_NOT_AVAILABLE · 500 ms elapsed for ${requested}`;
+          addLog(barrierState, `Old-leader barrier for ${requested} does not commit; it returns OFFSET_NOT_AVAILABLE.`);
+        } else {
+          addLog(barrierState, "No old-leader barrier is waiting.");
+        }
+        renderBarrier();
+      });
+      $("barrier-grow-current").addEventListener("click", () => {
+        const requested = barrierState.current.pendingOffset ?? selectedBarrierOffset();
+        barrierState.current.highWatermark = Math.max(barrierState.current.highWatermark, requested);
+        addLog(barrierState, `Current high watermark advances to ${barrierState.current.highWatermark}.`);
+        renderBarrier();
+      });
+      $("barrier-commit-current").addEventListener("click", () => {
+        if (!barrierState.current.pending) {
+          addLog(barrierState, "No current-leader barrier is waiting.");
+        } else {
+          const requested = barrierState.current.pendingOffset;
+          barrierState.current.pending = false;
+          barrierState.current.pendingOffset = null;
+          if (barrierState.current.highWatermark >= requested) {
+            barrierState.current.answer = `barrier committed · batches at ${requested}`;
+            addLog(barrierState, `Current barrier commits; the high watermark reaches ${requested}, so the fetch returns batches.`);
+          } else {
+            barrierState.current.answer = `OFFSET_OUT_OF_RANGE · barrier committed for ${requested}`;
+            addLog(barrierState, `Current barrier commits; ${requested} remains beyond the high watermark, so OFFSET_OUT_OF_RANGE is truthful.`);
+          }
+        }
+        renderBarrier();
+      });
+      $("barrier-reset").addEventListener("click", () => {
+        barrierState.enabled = true;
+        barrierState.requested = 44;
+        barrierState.old = { highWatermark: 42, pending: false, pendingOffset: null, answer: "waiting" };
+        barrierState.current = { highWatermark: 45, pending: false, pendingOffset: null, answer: "waiting" };
+        barrierState.logs = [];
+        $("barrier-offset").value = "44";
+        $("barrier-toggle").checked = true;
+        renderBarrier();
+      });
+      $("barrier-offset").addEventListener("input", () => {
+        barrierState.requested = selectedBarrierOffset();
+        renderBarrier();
+      });
+      $("barrier-toggle").addEventListener("change", () => {
+        barrierState.enabled = $("barrier-toggle").checked;
+        addLog(barrierState, `Barrier is ${barrierState.enabled ? "enabled" : "off for the unsafe comparison"}.`);
+        renderBarrier();
+      });
+      renderBarrier();
+
+      const snapshotState = { logStart: 0, minISR: 2, replicas: [{ id: "A", role: "leader", older: 80, newest: 100, reported: 100, inISR: true }, { id: "B", role: "follower", older: 70, newest: 90, reported: 90, inISR: true }, { id: "C", role: "follower", older: 60, newest: 85, reported: 85, inISR: true }], logs: [] };
+
+      function renderSnapshots() {
+        const cards = snapshotState.replicas.map((replica, index) => `<div class="snapshot-card ${index === 0 ? "leader" : index === 1 ? "replica-b" : "replica-c"}"><h4>Replica ${replica.id}${replica.role === "leader" ? " · leader" : ""}</h4><p class="snapshot-line">snapshots ${replica.older} → ${replica.newest}</p><p class="snapshot-line">report ${replica.reported} · ISR ${replica.inISR ? "yes" : "no"} · counts ${index === 0 || replica.inISR ? "yes" : "no"}</p></div>`).join("");
+        const leader = snapshotState.replicas[0];
+        const counted = snapshotState.replicas.slice(1).filter((replica) => replica.inISR).map((replica) => replica.reported).sort((a, b) => b - a);
+        const candidate = counted.length >= snapshotState.minISR - 1 ? Math.min(leader.older, counted[snapshotState.minISR - 2]) : "not available";
+        $("snapshot-output").innerHTML = `<div class="snapshot-view">${cards}</div><div class="flow-line"><span class="flow-node">leader older ${leader.older}</span><span class="flow-arrow">+</span><span class="flow-node">best other ISR report ${counted.length ? counted[0] : "—"}</span><span class="flow-arrow">→</span><span class="flow-node">candidate ${candidate} · log start ${snapshotState.logStart}</span></div>`;
+        logList($("snapshot-log"), snapshotState.logs);
+      }
+
+      function snapshotTake(id) {
+        const replica = snapshotState.replicas.find((item) => item.id === id);
+        replica.older = replica.newest;
+        replica.newest += 20;
+        addLog(snapshotState, `Replica ${id} finishes a snapshot pair [${replica.older}, ${replica.newest}]. It must report the new snapshot.`);
+        renderSnapshots();
+      }
+
+      function snapshotReport() {
+        snapshotState.replicas.forEach((replica) => {
+          replica.reported = replica.newest;
+          addLog(snapshotState, `Replica ${replica.id} reports ${replica.reported}${replica.inISR ? " and it counts." : " but it is outside the ISR, so it does not count."}`);
+        });
+        const leader = snapshotState.replicas[0];
+        const others = snapshotState.replicas.slice(1).filter((replica) => replica.inISR).map((replica) => replica.reported).sort((a, b) => b - a);
+        if (others.length >= snapshotState.minISR - 1) {
+          const candidate = Math.min(leader.older, others[snapshotState.minISR - 2]);
+          if (candidate > snapshotState.logStart) {
+            snapshotState.logStart = candidate;
+            addLog(snapshotState, `Leader advances log start to ${candidate}; enough ISR snapshots cover it.`);
+          } else {
+            addLog(snapshotState, `Log start stays at ${snapshotState.logStart}; candidate ${candidate} does not move it.`);
+          }
+        } else {
+          addLog(snapshotState, "Log start stays put because fewer than minISR replicas prove coverage.");
+        }
+        renderSnapshots();
+      }
+
+      function resetSnapshots() {
+        snapshotState.logStart = 0;
+        snapshotState.replicas = [{ id: "A", role: "leader", older: 80, newest: 100, reported: 100, inISR: true }, { id: "B", role: "follower", older: 70, newest: 90, reported: 90, inISR: true }, { id: "C", role: "follower", older: 60, newest: 85, reported: 85, inISR: true }];
+        snapshotState.logs = [];
+        renderSnapshots();
+      }
+
+      $("snap-take-a").addEventListener("click", () => snapshotTake("A"));
+      $("snap-take-b").addEventListener("click", () => snapshotTake("B"));
+      $("snap-take-c").addEventListener("click", () => snapshotTake("C"));
+      $("snap-report").addEventListener("click", snapshotReport);
+      $("snap-toggle-b").addEventListener("click", () => {
+        const replica = snapshotState.replicas[1];
+        replica.inISR = !replica.inISR;
+        addLog(snapshotState, `Replica B is ${replica.inISR ? "back in" : "out of"} the ISR. Its report ${replica.inISR ? "counts after a fresh report." : "stops counting."}`);
+        renderSnapshots();
+      });
+      $("snap-reset").addEventListener("click", resetSnapshots);
+      renderSnapshots();
+    })();
+  </script>
+</body>
+</html>
