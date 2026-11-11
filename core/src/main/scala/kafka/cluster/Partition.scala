@@ -797,6 +797,8 @@ class Partition(val topicPartition: TopicPartition,
         // to ensure that these followers can truncate to the right offset, we must cache the new
         // leader epoch and the start offset since it should be larger than any epoch that a follower
         // would try to query.
+        // The consolidation skip breaks that: the latest cached epoch stays below the leader epoch, so
+        // LeaderEpochFileCache.endOffsetFor answers undefined for the current epoch.
         if (cachedLowerConsolidationEpoch.isEmpty)
           leaderLog.assignEpochStartOffset(partitionRegistration.leaderEpoch, leaderEpochStartOffset)
 
