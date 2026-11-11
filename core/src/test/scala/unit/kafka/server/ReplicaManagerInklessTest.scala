@@ -2051,6 +2051,39 @@ class ReplicaManagerInklessTest {
     }
   }
 
+  // In phase 1 of the classic-to-diskless switch, the part of the classic prefix below the local log
+  // start offset is already in remote storage. A remote segment can hold discarded records past the
+  // seal, so the tiered read carries the seal as its upper bound in phase 1 too.
+  @Test
+  def testReadFromLogBoundsTieredReadAtTheSealInPhaseOne(): Unit = {
+    val replicaManager = spy(createReplicaManager(List(disklessTopicPartition.topic()),
+      remoteLogManager = Some(mock(classOf[RemoteLogManager]))))
+    try {
+      val tp = disklessTopicPartition.topicPartition()
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(100L)
+      when(replicaManager.inklessMetadataView().isClassicPrefixInRemoteStorage(tp)).thenReturn(false)
+      stubLeaderReadingLocalClassicPrefix(replicaManager)
+      val partition = replicaManager.getPartitionOrException(tp)
+      when(partition.log.get.localLogStartOffset).thenReturn(60L)
+      when(partition.fetchRecords(any(), any(), anyLong(), anyInt(), anyBoolean(), anyBoolean(), anyBoolean()))
+        .thenThrow(new OffsetOutOfRangeException("Received request for offset 50 below the local log start offset 60"))
+
+      val fetchParams = new FetchParams(FetchRequest.ORDINARY_CONSUMER_ID, -1L, 0L, 1, 1024,
+        FetchIsolation.HIGH_WATERMARK, Optional.empty())
+      val fetchInfos = Seq(
+        disklessTopicPartition -> new PartitionData(disklessTopicPartition.topicId(), 50L, 0L, 1024, Optional.empty())
+      )
+      val result = replicaManager.readFromLog(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, readFromPurgatory = false)
+        .head._2
+
+      assertEquals(Errors.NONE, result.error)
+      assertTrue(result.info.delayedRemoteStorageFetch.isPresent)
+      assertEquals(OptionalLong.of(100L), result.info.delayedRemoteStorageFetch.get.upperBoundOffset)
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
   // The local read would reach the high watermark below minBytes, so without the refusal the
   // consolidating path would stitch a diskless supplement onto the local prefix. A read that returns
   // nothing passes the refusal, and a supplement from the local log end offset would skip the rest
