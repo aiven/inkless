@@ -1132,10 +1132,12 @@ class InklessClassicToDisklessSwitchTest(Test):
         )
         self.kafka.start_jmx_tool(idx, node)
 
-    def _rolling_restart(self, clean_shutdown=True):
-        self.logger.info("Performing rolling restart of all brokers")
+    def _rolling_restart(self, clean_shutdown=True, nodes=None):
+        if nodes is None:
+            nodes = self.kafka.nodes
+        self.logger.info("Performing rolling restart of brokers %s", [self.kafka.idx(n) for n in nodes])
         partition_0_replicas = self.kafka.replicas(self.topic, partition=0)
-        for node in self.kafka.nodes:
+        for node in nodes:
             self._restart_broker(node, clean_shutdown=clean_shutdown)
             self._wait_for_all_partitions_have_leaders()
             # Pace the next bounce on evidence that this broker is fetching again, without
@@ -2382,8 +2384,10 @@ class InklessClassicToDisklessSwitchTest(Test):
         - ``postgres_outage_at_phase_2`` keeps the control plane unreachable
           until the controller sets the flag on every partition. Consolidation
           from the seal then starts without Postgres.
-        - ``rolling_restart_at_phase_2`` bounces every broker while the
-          upload and the flag requests run.
+        - ``rolling_restart_at_phase_2`` stops the leader of partition 0 before
+          the hold ends and keeps it down until every partition is in phase 2.
+          The leader then rejoins in phase 2, and the other brokers restart
+          one at a time.
 
         After the hold, the test requires phase 2 on every partition, produces
         a diskless tail, and checks every record across the seal.
@@ -2481,8 +2485,17 @@ class InklessClassicToDisklessSwitchTest(Test):
             self.verifier.block_dependency("control_plane")
             self.verifier.heal_dependency("object_storage")
         elif fault == "rolling_restart_at_phase_2":
+            # The first broker stays down until every partition is in phase 2, so the
+            # transition runs while a broker is restarting.
+            first = leader_node
+            self._stop_broker(first, clean_shutdown=True)
+            self._wait_for_all_partitions_have_leaders()
             self.verifier.heal_dependency("object_storage")
-            self._rolling_restart()
+            self._wait_for_classic_prefix_in_remote_storage(timeout_sec=self.PHASE_2_TIMEOUT_SEC)
+            self._start_broker(first)
+            self._wait_for_all_partitions_have_leaders()
+            self._wait_for_broker_in_isr(first, num_partitions=1)
+            self._rolling_restart(nodes=[n for n in self.kafka.nodes if n != first])
         else:
             self.verifier.heal_dependency("object_storage")
 
