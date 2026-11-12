@@ -2039,11 +2039,46 @@ class ReplicaManagerInklessTest {
         assertEquals(Errors.NONE, result.error)
         assertTrue(result.info.delayedRemoteStorageFetch.isPresent)
         assertEquals(50L, result.info.delayedRemoteStorageFetch.get.fetchInfo.fetchOffset)
+        // The read ends at the seal, because a remote segment can hold discarded records past it.
+        assertEquals(OptionalLong.of(100L), result.info.delayedRemoteStorageFetch.get.upperBoundOffset)
       } else {
         assertEquals(Errors.NOT_LEADER_OR_FOLLOWER, result.error)
         assertFalse(result.info.delayedRemoteStorageFetch.isPresent)
       }
       assertTrue(replicaManager.isClassicPrefixDeletionDeferred(tp))
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  // In phase 1 of the classic-to-diskless switch, the part of the classic prefix below the local log
+  // start offset is already in remote storage. A remote segment can hold discarded records past the
+  // seal, so the tiered read carries the seal as its upper bound in phase 1 too.
+  @Test
+  def testReadFromLogBoundsTieredReadAtTheSealInPhaseOne(): Unit = {
+    val replicaManager = spy(createReplicaManager(List(disklessTopicPartition.topic()),
+      remoteLogManager = Some(mock(classOf[RemoteLogManager]))))
+    try {
+      val tp = disklessTopicPartition.topicPartition()
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(100L)
+      when(replicaManager.inklessMetadataView().isClassicPrefixInRemoteStorage(tp)).thenReturn(false)
+      stubLeaderReadingLocalClassicPrefix(replicaManager)
+      val partition = replicaManager.getPartitionOrException(tp)
+      when(partition.log.get.localLogStartOffset).thenReturn(60L)
+      when(partition.fetchRecords(any(), any(), anyLong(), anyInt(), anyBoolean(), anyBoolean(), anyBoolean()))
+        .thenThrow(new OffsetOutOfRangeException("Received request for offset 50 below the local log start offset 60"))
+
+      val fetchParams = new FetchParams(FetchRequest.ORDINARY_CONSUMER_ID, -1L, 0L, 1, 1024,
+        FetchIsolation.HIGH_WATERMARK, Optional.empty())
+      val fetchInfos = Seq(
+        disklessTopicPartition -> new PartitionData(disklessTopicPartition.topicId(), 50L, 0L, 1024, Optional.empty())
+      )
+      val result = replicaManager.readFromLog(fetchParams, fetchInfos, QuotaFactory.UNBOUNDED_QUOTA, readFromPurgatory = false)
+        .head._2
+
+      assertEquals(Errors.NONE, result.error)
+      assertTrue(result.info.delayedRemoteStorageFetch.isPresent)
+      assertEquals(OptionalLong.of(100L), result.info.delayedRemoteStorageFetch.get.upperBoundOffset)
     } finally {
       replicaManager.shutdown(checkpointHW = false)
     }
