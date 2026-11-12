@@ -689,16 +689,17 @@ class InklessClassicToDisklessSwitchTest(Test):
     def _record_acked(self, producer):
         """Add every record that ``producer`` saw acknowledged to the ledger of its topic.
 
-        If the same offset gets acks for different content, the broker
-        assigned one offset twice.
+        If an offset gets a second ack, the broker assigned that offset twice.
+        The check rejects the second ack even when its content matches,
+        because each producer run restarts the same key and value sequence.
         """
         ledger = self._acked_records.setdefault(producer.topic, {})
         for data in producer.acked_values_full:
             position = (int(data["partition"]), int(data["offset"]))
             record = (str(data.get("key")), str(data["value"]))
             previous = ledger.get(position)
-            assert previous is None or previous == record, \
-                "Offset %d of %s-%d was acked for both %s and %s" % \
+            assert previous is None, \
+                "Offset %d of %s-%d was acked twice, for %s and then %s" % \
                 (position[1], producer.topic, position[0], previous, record)
             ledger[position] = record
 
