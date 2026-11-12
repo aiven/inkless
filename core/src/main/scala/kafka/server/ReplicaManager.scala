@@ -26,6 +26,7 @@ import io.aiven.inkless.produce.AppendHandler
 import io.aiven.inkless.consolidation.{ConsolidatedDisklessLogPruner, ConsolidationFetcherManager, ConsolidationMetrics, ConsolidationReconciler, DelayedConsolidationFetch}
 import kafka.cluster.Partition
 import kafka.log.LogManager
+import kafka.server.DisklessFetchOffsetRouter.ClassicSearchRange
 import kafka.server.QuotaFactory.QuotaManagers
 import kafka.server.ReplicaManager.{AtMinIsrPartitionCountMetricName, ConsolidationFetchBytesInPerSecMetricName, ConsolidationHighWatermarkLagFetchRateMetricName, ConsolidationHighWatermarkLagPartitionCountMetricName, ConsolidationLocalBytesPerSecMetricName, ConsolidationSupplementBytesPerSecMetricName, ConsolidationSupplementRateMetricName, FailedIsrUpdatesPerSecMetricName, IsrExpandsPerSecMetricName, IsrShrinksPerSecMetricName, LeaderCountMetricName, OfflineReplicaCountMetricName, PartitionCountMetricName, PartitionsWithLateTransactionsCountMetricName, ProducerIdCountMetricName, ReassigningPartitionsMetricName, SealedPartitionsCountMetricName, DisklessSwitchedReplicasOutsideIsrCountMetricName, UnderMinIsrPartitionCountMetricName, UnderReplicatedPartitionsMetricName, DisklessSwitchedPrefixLagMetricName, DisklessSwitchedPrefixMissingFetchRateMetricName, ConsolidationDeferredPrefixFetchRateMetricName, PrefixDeferralLogGapMs, createLogReadResult, isListOffsetsTimestampUnsupported}
 import kafka.server.metadata.InklessMetadataView
@@ -2219,12 +2220,17 @@ class ReplicaManager(val config: KafkaConfig,
     val hasCompleteClassicPrefix: (TopicPartition, Long) => Boolean =
       (tp, classicToDisklessStartOffset) => logManager.getLog(tp).exists(_.highWatermark >= classicToDisklessStartOffset)
     // The remote search starts at the leader epoch of the log start. A tier-state rebuild clears the epoch cache
-    // before it restores it, so until then the search reads nothing below the local log start.
-    val classicSearchableEnd: TopicPartition => Long = tp => logManager.getLog(tp).map { log =>
-      val remotePrefixUnsearchable = log.remoteLogEnabled() && log.logStartOffset < log.localLogStartOffset &&
-        log.leaderEpochCache.epochForOffset(log.logStartOffset).isEmpty
-      if (remotePrefixUnsearchable) log.logStartOffset else log.logEndOffset
-    }.getOrElse(UnifiedLog.UNKNOWN_OFFSET)
+    // before it restores it, so until then the search reads nothing below the local log start. The truncation count
+    // is read first, so a truncation that the reads below straddle changes it and the range stops being current.
+    val classicSearchRange: TopicPartition => ClassicSearchRange = tp => logManager.getLog(tp) match {
+      case Some(log) =>
+        val truncationCount = log.truncationCount()
+        val remotePrefixUnsearchable = log.remoteLogEnabled() && log.logStartOffset < log.localLogStartOffset &&
+          log.leaderEpochCache.epochForOffset(log.logStartOffset).isEmpty
+        val end = if (remotePrefixUnsearchable) log.logStartOffset else log.logEndOffset
+        ClassicSearchRange(end, () => logManager.getLog(tp).exists(_ eq log) && log.truncationCount() == truncationCount)
+      case None => ClassicSearchRange.Unknown
+    }
 
     topics.foreach { topic =>
       topic.partitions.asScala.foreach { partition =>
@@ -2240,7 +2246,7 @@ class ReplicaManager(val config: KafkaConfig,
         } else if (maybeFetchOffsetJob.exists(_.mustHandle(topic.name))) {
           statusByPartition += topicPartition ->
             disklessFetchOffsetRouter.route(maybeFetchOffsetJob.get, () => inklessFetchOffsetHandler.get.createJob(),
-              topicPartition, partition, replicaId, version, classicLogStart, hasCompleteClassicPrefix, classicSearchableEnd,
+              topicPartition, partition, replicaId, version, classicLogStart, hasCompleteClassicPrefix, classicSearchRange,
               classicFetch)
         } else {
           statusByPartition += topicPartition -> classicFetch(topicPartition, partition, false)

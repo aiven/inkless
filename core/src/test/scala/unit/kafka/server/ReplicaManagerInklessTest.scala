@@ -8788,6 +8788,40 @@ class ReplicaManagerInklessTest {
     }
   }
 
+  // A tier-state rebuild runs while the remote search reads the log: it truncates the log, which clears the leader
+  // epoch cache, and restores the cache before the control plane answers. Both before and after the lookup the
+  // log looks searchable up to 900, past the WAL start, but the search read nothing.
+  @Test
+  def testFetchOffsetSpecificTimestampOnConsolidatingReplicaFailsWhenTheLogTruncatesDuringTheLookup(): Unit = {
+    val remoteLogManager = mock(classOf[RemoteLogManager])
+    var rebuildDuringSearch = true
+    withConsolidatingReplica(walStartControlPlane(), Some(remoteLogManager)) { (replicaManager, log) =>
+      def rebuildRemotePrefix(): Unit = {
+        log.truncateFullyAndStartAt(900L, Optional.of(java.lang.Long.valueOf(0L)))
+        log.leaderEpochCache.assign(0, 0L)
+      }
+      when(remoteLogManager.asyncOffsetRead(any(), anyLong(), anyLong(), any(), any())).thenAnswer { _ =>
+        if (rebuildDuringSearch) rebuildRemotePrefix()
+        new AsyncOffsetReadFutureHolder[OffsetResultHolder.FileRecordsOrError](
+          CompletableFuture.completedFuture(null),
+          CompletableFuture.completedFuture(new OffsetResultHolder.FileRecordsOrError(Optional.empty(), Optional.empty())))
+      }
+      rebuildRemotePrefix()
+      val truncationsBefore = log.truncationCount()
+
+      assertEquals(Errors.OFFSET_NOT_AVAILABLE.code,
+        listOffsetsByTimestamp(replicaManager, consolidatingTp, timestamp = 11000L).errorCode)
+      assertEquals(truncationsBefore + 1, log.truncationCount())
+      assertSame(log, replicaManager.logManager.getLog(consolidatingTp).get)
+
+      rebuildDuringSearch = false
+      val response = listOffsetsByTimestamp(replicaManager, consolidatingTp, timestamp = 11000L)
+
+      assertEquals(Errors.NONE.code, response.errorCode)
+      assertEquals(1000L, response.offset)
+    }
+  }
+
   private val consolidatingTp = new TopicPartition("consolidating-topic", 0)
   private val consolidatingTopicId = Uuid.randomUuid()
 

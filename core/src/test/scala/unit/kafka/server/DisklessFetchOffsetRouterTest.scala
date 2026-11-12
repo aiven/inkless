@@ -17,6 +17,7 @@
 package kafka.server
 
 import io.aiven.inkless.consume.FetchOffsetHandler
+import kafka.server.DisklessFetchOffsetRouter.ClassicSearchRange
 import kafka.server.metadata.InklessMetadataView
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.errors.{LeaderNotAvailableException, OffsetNotAvailableException}
@@ -106,6 +107,7 @@ class DisklessFetchOffsetRouterTest {
                     classicLogStartOffset: Option[Long] = None,
                     hasCompleteClassicPrefix: Boolean = true,
                     classicSearchableEnd: TopicPartition => Long = _ => Long.MaxValue,
+                    searchRangeIsCurrent: () => Boolean = () => true,
                     classicResult: ListOffsetsPartitionStatus = defaultClassicResult,
                     newJob: () => FetchOffsetHandler.Job = () =>
                       throw new AssertionError("newJob() should not be called by this routing path")): ListOffsetsPartitionStatus = {
@@ -118,7 +120,7 @@ class DisklessFetchOffsetRouterTest {
       version = version,
       classicLogStartOffsetProvider = _ => classicLogStartOffset,
       hasCompleteClassicPrefix = (_, _) => hasCompleteClassicPrefix,
-      classicSearchableEnd = classicSearchableEnd,
+      classicSearchRange = tpArg => ClassicSearchRange(classicSearchableEnd(tpArg), searchRangeIsCurrent),
       classicFetchOffset = (tpArg, partition, allow) => {
         classicCalls += ((tpArg, partition, allow))
         classicResult
@@ -595,7 +597,7 @@ class DisklessFetchOffsetRouterTest {
         version = 7,
         classicLogStartOffsetProvider = _ => localClassicLogStart,
         hasCompleteClassicPrefix = (_, _) => true,
-        classicSearchableEnd = _ => Long.MaxValue,
+        classicSearchRange = _ => ClassicSearchRange(Long.MaxValue, () => true),
         classicFetchOffset = (tpArg, partition, allow) => {
           classicCalls += ((tpArg, partition, allow))
           defaultClassicResult
@@ -779,29 +781,54 @@ class DisklessFetchOffsetRouterTest {
   }
 
   @Test
-  def consolidatingSpecificTimestampUsesTheSearchableEndReadBeforeTheClassicLookup(): Unit = {
-    // A rebuild moves the local log past the WAL start after the classic leg searched the empty log.
+  def consolidatingSpecificTimestampReadsTheSearchRangeOnceBeforeTheClassicLookup(): Unit = {
     when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
-    disklessTaskFuture.complete(offsetResult(offset = 800L, timestamp = 10800L))
+    disklessTaskFuture.complete(offsetResult(offset = 1000L, timestamp = 11000L))
     walStartFuture.complete(offsetResult(offset = 800L))
-    val searchableEnds = mutable.Queue(0L)
+    val events = mutable.ListBuffer.empty[String]
 
-    val status = route(consolidatingRouter(), timestamp = 10100L, classicResult = syncNoMatch,
-      classicSearchableEnd = _ => searchableEnds.dequeueFirst(_ => true).getOrElse(900L))
+    val status = route(consolidatingRouter(), timestamp = 11000L, classicResult = syncNoMatch,
+      classicSearchableEnd = _ => { events += s"range after ${classicCalls.size} classic calls"; 900L })
+    resultOf(status)
+
+    assertEquals(List("range after 0 classic calls"), events.toList)
+  }
+
+  @Test
+  def consolidatingSpecificTimestampFailsWhenTheSearchRangeStopsBeingCurrent(): Unit = {
+    // A rebuild or recreation runs after the range read, so the local search might have read less than the range.
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+    disklessTaskFuture.complete(offsetResult(offset = 1000L, timestamp = 11000L))
+    walStartFuture.complete(offsetResult(offset = 800L))
+
+    val status = route(consolidatingRouter(), timestamp = 11000L, classicResult = syncNoMatch,
+      classicSearchableEnd = _ => 900L, searchRangeIsCurrent = () => false)
 
     assertPrefixNotSearchable(status)
   }
 
   @Test
-  def consolidatingSpecificTimestampFailsWhenTheLocalLogIsCutBackDuringTheLookup(): Unit = {
-    // The broker recreates the replica after the classic leg searched it.
-    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
-    disklessTaskFuture.complete(offsetResult(offset = 800L, timestamp = 10800L))
-    walStartFuture.complete(offsetResult(offset = 800L))
-    val searchableEnds = mutable.Queue(900L)
+  def switchedSpecificTimestampFailsWhenTheSearchRangeStopsBeingCurrent(): Unit = {
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(100L)
 
-    val status = route(consolidatingRouter(), timestamp = 10100L, classicResult = syncNoMatch,
-      classicSearchableEnd = _ => searchableEnds.dequeueFirst(_ => true).getOrElse(0L))
+    val status = route(newRouter(), timestamp = 123L, classicResult = syncNoMatch, classicSearchableEnd = _ => 150L,
+      searchRangeIsCurrent = () => false)
+
+    assertPrefixNotSearchable(status)
+    verify(job, never()).add(any(), any())
+  }
+
+  @Test
+  def consolidatingSpecificTimestampChecksTheSearchRangeWhenTheControlPlaneAnswers(): Unit = {
+    // The range is current at routing time and stops being current before the control plane answers.
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+    var current = true
+
+    val status = route(consolidatingRouter(), timestamp = 11000L, classicResult = syncNoMatch,
+      classicSearchableEnd = _ => 900L, searchRangeIsCurrent = () => current)
+    current = false
+    disklessTaskFuture.complete(offsetResult(offset = 1000L, timestamp = 11000L))
+    walStartFuture.complete(offsetResult(offset = 800L))
 
     assertPrefixNotSearchable(status)
   }
