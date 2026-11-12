@@ -91,10 +91,9 @@ gh release download inkless-release-0.33 --repo aiven/inkless --pattern "*.tgz"
 These branches receive new Inkless releases. When a release is cut, all of them are updated
 with the same Inkless version number.
 
-A Kafka patch version update can be released on a branch without a new Inkless release. In that case, the
-`inkless-<kafka-version>-<inkless-version>` tag exists, but the
-[GitHub Releases](https://github.com/aiven/inkless/releases) page doesn't list it. To find the
-latest version on a branch, check the tags in the repository.
+A Kafka patch version update doesn't need a new Inkless release. Tag the synced branch with the
+current Inkless version and add the tag to the published release. See
+[Adding an upstream sync to a release](#adding-an-upstream-sync-to-a-release).
 
 | Kafka version | Branch        |
 |---------------|---------------|
@@ -151,6 +150,22 @@ branch with cherry-pick sync and re-trigger.
 **Resuming a partial release:** if a run created the tags but never published the GitHub Release
 (e.g. it failed after step 3), re-run with the same `inkless_version` and `resume=true`. It skips
 validation and tag creation, and re-runs build + finalize. Do not delete tags or bump the version.
+
+### Adding an upstream sync to a release
+
+If a release branch changes only by an upstream Kafka patch sync, keep the Inkless version.
+Don't cut a new one.
+
+1. Merge the sync PR into the release branch.
+2. Tag the merge commit as `inkless-<kafka-version>-<inkless-version>` and push the tag. The
+   tag push builds the Docker image for that Kafka version.
+3. Run **Inkless Release** with the same `inkless_version` and `resume=true`. The workflow builds
+   the highest patch tag for each branch. Then it regenerates the release notes, which list every tag of the version, and uploads the binary.
+
+The `CHANGELOG.md` heading keeps the old Kafka version. The next release entry lists the new one.
+
+For the commands and the effects on the release assets, see
+[Release the sync under the current Inkless version](../../inkless-sync/RELEASE-SYNC-GUIDE.md#release-the-sync-under-the-current-inkless-version).
 
 ### Break-glass: build and publish by hand
 
