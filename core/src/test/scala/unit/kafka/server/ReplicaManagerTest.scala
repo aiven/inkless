@@ -5843,6 +5843,7 @@ class ReplicaManagerTest {
     assertEquals(-1, fetchInfo.fetchOffsetMetadata.relativePositionInSegment)
     assertEquals(MemoryRecords.EMPTY, fetchInfo.records)
     assertTrue(fetchInfo.delayedRemoteStorageFetch.isPresent)
+    assertEquals(OptionalLong.empty, fetchInfo.delayedRemoteStorageFetch.get.upperBoundOffset)
 
     val allMetrics = metrics.metrics()
     val avgMetric = allMetrics.get(metrics.metricName("remote-fetch-throttle-time-avg", "RemoteLogManager"))
