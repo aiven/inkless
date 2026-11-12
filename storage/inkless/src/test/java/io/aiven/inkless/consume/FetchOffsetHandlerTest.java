@@ -61,6 +61,7 @@ import io.aiven.inkless.control_plane.ListOffsetsRequest;
 import io.aiven.inkless.control_plane.ListOffsetsResponse;
 import io.aiven.inkless.control_plane.MetadataView;
 
+import static org.apache.kafka.common.requests.ListOffsetsRequest.EARLIEST_LOCAL_TIMESTAMP;
 import static org.apache.kafka.common.requests.ListOffsetsRequest.EARLIEST_TIMESTAMP;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -196,6 +197,106 @@ class FetchOffsetHandlerTest {
             assertThat(future.get().exception().get()).isInstanceOf(UnknownServerException.class);
             assertThat(future.get().exception().get()).message().isEqualTo("error");
             assertThat(future.get().timestampAndOffset()).isEmpty();
+        }
+    }
+
+    @Test
+    void walStartLookupGoesInTheSameCallAfterTheTimestampLookups() throws ExecutionException, InterruptedException {
+        when(metadataView.getTopicId(TOPIC_0)).thenReturn(TOPIC_ID_0);
+        when(controlPlane.listOffsets(any())).thenReturn(List.of(
+            ListOffsetsResponse.success(TIDP_T0P0, 11000, 1000),
+            ListOffsetsResponse.success(TIDP_T0P0, -1, 800)
+        ));
+
+        final FetchOffsetHandler.Job job = new FetchOffsetHandler.Job(metadataView, controlPlane, crossTierLogStartCache, executor, time, metrics);
+        final var walStart = job.addWalStart(T0P0);
+        final var timestampLookup = job.add(T0P0, new ListOffsetsRequestData.ListOffsetsPartition().setPartitionIndex(0).setTimestamp(11000));
+
+        job.start();
+        verify(executor).submit(runnableCaptor.capture());
+        runnableCaptor.getValue().run();
+
+        verify(controlPlane).listOffsets(List.of(
+            new ListOffsetsRequest(TIDP_T0P0, 11000),
+            new ListOffsetsRequest(TIDP_T0P0, EARLIEST_LOCAL_TIMESTAMP)
+        ));
+        assertThat(timestampLookup.get().timestampAndOffset()).contains(new FileRecords.TimestampAndOffset(11000, 1000, Optional.of(0)));
+        assertThat(walStart.get().timestampAndOffset()).contains(new FileRecords.TimestampAndOffset(-1, 800, Optional.of(0)));
+    }
+
+    @Test
+    void walStartLookupDoesNotFillTheCrossTierEarliestCache() throws ExecutionException, InterruptedException {
+        when(metadataView.getTopicId(TOPIC_0)).thenReturn(TOPIC_ID_0);
+        when(metadataView.isConsolidatingDisklessTopic(TOPIC_0)).thenReturn(true);
+        final CrossTierLogStartCache cacheMock = mock(CrossTierLogStartCache.class);
+        when(cacheMock.get(TIDP_T0P0)).thenReturn(null);
+        when(controlPlane.listOffsets(any())).thenReturn(List.of(
+            ListOffsetsResponse.success(TIDP_T0P0, -1, 100),
+            ListOffsetsResponse.success(TIDP_T0P0, -1, 800)
+        ));
+
+        final FetchOffsetHandler.Job job = new FetchOffsetHandler.Job(metadataView, controlPlane, cacheMock, executor, time, metrics);
+        final var earliest = job.add(T0P0, new ListOffsetsRequestData.ListOffsetsPartition().setPartitionIndex(0).setTimestamp(EARLIEST_TIMESTAMP));
+        final var walStart = job.addWalStart(T0P0);
+
+        job.start();
+        verify(executor).submit(runnableCaptor.capture());
+        runnableCaptor.getValue().run();
+
+        assertThat(earliest.get().timestampAndOffset()).contains(new FileRecords.TimestampAndOffset(-1, 100, Optional.of(0)));
+        assertThat(walStart.get().timestampAndOffset()).contains(new FileRecords.TimestampAndOffset(-1, 800, Optional.of(0)));
+        verify(cacheMock).put(TIDP_T0P0, 100L);
+        verify(cacheMock, never()).put(TIDP_T0P0, 800L);
+    }
+
+    @Test
+    void walStartOnlyJobQueriesTheControlPlane() throws ExecutionException, InterruptedException {
+        when(metadataView.getTopicId(TOPIC_0)).thenReturn(TOPIC_ID_0);
+        when(controlPlane.listOffsets(any())).thenReturn(List.of(ListOffsetsResponse.success(TIDP_T0P0, -1, 800)));
+
+        final FetchOffsetHandler.Job job = new FetchOffsetHandler.Job(metadataView, controlPlane, crossTierLogStartCache, executor, time, metrics);
+        final var walStart = job.addWalStart(T0P0);
+
+        job.start();
+        verify(executor).submit(runnableCaptor.capture());
+        runnableCaptor.getValue().run();
+
+        assertThat(walStart.get().timestampAndOffset()).contains(new FileRecords.TimestampAndOffset(-1, 800, Optional.of(0)));
+    }
+
+    @Test
+    void controlPlaneFailureFailsWalStartLookups() throws ExecutionException, InterruptedException {
+        when(metadataView.getTopicId(TOPIC_0)).thenReturn(TOPIC_ID_0);
+        when(controlPlane.listOffsets(any())).thenThrow(new UnknownServerException("error"));
+
+        final FetchOffsetHandler.Job job = new FetchOffsetHandler.Job(metadataView, controlPlane, crossTierLogStartCache, executor, time, metrics);
+        final var timestampLookup = job.add(T0P0, new ListOffsetsRequestData.ListOffsetsPartition().setPartitionIndex(0).setTimestamp(5));
+        final var walStart = job.addWalStart(T0P0);
+
+        job.start();
+        verify(executor).submit(runnableCaptor.capture());
+        runnableCaptor.getValue().run();
+
+        for (final var future : List.of(timestampLookup, walStart)) {
+            assertThat(future.get().exception()).containsInstanceOf(UnknownServerException.class);
+        }
+    }
+
+    @Test
+    void responseCountMismatchFailsEveryLookup() throws ExecutionException, InterruptedException {
+        when(metadataView.getTopicId(TOPIC_0)).thenReturn(TOPIC_ID_0);
+        when(controlPlane.listOffsets(any())).thenReturn(List.of(ListOffsetsResponse.success(TIDP_T0P0, 5, 1000)));
+
+        final FetchOffsetHandler.Job job = new FetchOffsetHandler.Job(metadataView, controlPlane, crossTierLogStartCache, executor, time, metrics);
+        final var timestampLookup = job.add(T0P0, new ListOffsetsRequestData.ListOffsetsPartition().setPartitionIndex(0).setTimestamp(5));
+        final var walStart = job.addWalStart(T0P0);
+
+        job.start();
+        verify(executor).submit(runnableCaptor.capture());
+        runnableCaptor.getValue().run();
+
+        for (final var future : List.of(timestampLookup, walStart)) {
+            assertThat(future.get().exception()).containsInstanceOf(IllegalStateException.class);
         }
     }
 

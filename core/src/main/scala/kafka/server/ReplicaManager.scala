@@ -2218,6 +2218,13 @@ class ReplicaManager(val config: KafkaConfig,
     val classicLogStart: TopicPartition => Option[Long] = tp => logManager.getLog(tp).map(_.logStartOffset)
     val hasCompleteClassicPrefix: (TopicPartition, Long) => Boolean =
       (tp, classicToDisklessStartOffset) => logManager.getLog(tp).exists(_.highWatermark >= classicToDisklessStartOffset)
+    // The remote search starts at the leader epoch of the log start. A tier-state rebuild clears the epoch cache
+    // before it restores it, so until then the search reads nothing below the local log start.
+    val classicSearchableEnd: TopicPartition => Long = tp => logManager.getLog(tp).map { log =>
+      val remotePrefixUnsearchable = log.remoteLogEnabled() && log.logStartOffset < log.localLogStartOffset &&
+        log.leaderEpochCache.epochForOffset(log.logStartOffset).isEmpty
+      if (remotePrefixUnsearchable) log.logStartOffset else log.logEndOffset
+    }.getOrElse(UnifiedLog.UNKNOWN_OFFSET)
 
     topics.foreach { topic =>
       topic.partitions.asScala.foreach { partition =>
@@ -2233,7 +2240,8 @@ class ReplicaManager(val config: KafkaConfig,
         } else if (maybeFetchOffsetJob.exists(_.mustHandle(topic.name))) {
           statusByPartition += topicPartition ->
             disklessFetchOffsetRouter.route(maybeFetchOffsetJob.get, () => inklessFetchOffsetHandler.get.createJob(),
-              topicPartition, partition, replicaId, version, classicLogStart, hasCompleteClassicPrefix, classicFetch)
+              topicPartition, partition, replicaId, version, classicLogStart, hasCompleteClassicPrefix, classicSearchableEnd,
+              classicFetch)
         } else {
           statusByPartition += topicPartition -> classicFetch(topicPartition, partition, false)
         }
