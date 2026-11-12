@@ -105,6 +105,14 @@ make test
 [COMMIT_HASH] Merge upstream [TAG] into [WORKING_BRANCH]
 ```
 
+### Release
+
+- [ ] Upstream sync merged before the Inkless commit sync, in its own PR
+- [ ] Skip the rest if a new Inkless release follows soon
+- [ ] Tag `inkless-[TAG]-[INKLESS_VERSION]` pushed
+- [ ] `Inkless Publish` run succeeded
+- [ ] `Inkless Release` run with `resume=true` succeeded
+
 ### Files Modified
 | Type | Count |
 |------|-------|

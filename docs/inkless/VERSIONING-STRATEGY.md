@@ -325,6 +325,7 @@ git push origin inkless-4.1.1-0.33
 - Merge commits are used (not rebase)
 - Keeps Inkless changes on top
 - Kafka patch number updates in version tag
+- To tag the merge and add it to a published Inkless release, see [Release the sync under the current Inkless version](../../inkless-sync/RELEASE-SYNC-GUIDE.md#release-the-sync-under-the-current-inkless-version)
 
 ---
 

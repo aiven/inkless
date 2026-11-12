@@ -253,6 +253,12 @@ If there are fixes in the release that should go to main:
 git log main..inkless-4.0 --oneline
 ```
 
+### Release the sync
+
+Sync the upstream Kafka patch release first. Then sync the Inkless commits. Open one pull request for each sync.
+
+If a new Inkless release follows soon, skip this section. If the release branch has no other new Inkless commits, tag the merge commit with the current Inkless version and add it to the published release. Don't cut a new Inkless version. See [Release the sync under the current Inkless version](RELEASE-SYNC-GUIDE.md#release-the-sync-under-the-current-inkless-version).
+
 ### Clean Up Worktree
 
 ```bash

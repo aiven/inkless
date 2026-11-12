@@ -420,10 +420,15 @@ jobs:
             printf '```\n\n'
             printf '## Kafka Versions\n'
 
-            if ! TAGS=$(echo "$KAFKA_BASE_MATRIX" | jq -r '.include[].tag // empty' | sort -V | uniq); then
+            if ! MATRIX_TAGS=$(echo "$KAFKA_BASE_MATRIX" | jq -r '.include[].tag // empty'); then
               echo "::error::Could not parse kafka_base_matrix as JSON: $KAFKA_BASE_MATRIX" >&2
               exit 1
             fi
+            # List every Kafka-base tag of this version, not only the built ones, so a
+            # resumed release keeps the earlier Kafka patch versions in the notes.
+            EXISTING_TAGS=$(git tag -l "inkless-*-${INKLESS_VERSION}")
+            TAGS=$(printf '%s\n%s\n' "$MATRIX_TAGS" "$EXISTING_TAGS" \
+              | grep -E "^inkless-[0-9]+\.[0-9]+\.[0-9]+-${INKLESS_VERSION//./\\.}\$" | sort -Vu)
             while IFS= read -r tag; do
               if [[ "$tag" =~ ^inkless-([0-9]+\.[0-9]+\.[0-9]+)-(.+)$ ]]; then
                 KAFKA_VER="${BASH_REMATCH[1]}"

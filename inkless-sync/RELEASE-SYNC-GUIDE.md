@@ -349,6 +349,58 @@ make test
 ./gradlew :core:test --tests "*Inkless*"
 ```
 
+## Release the sync under the current Inkless version
+
+Use this procedure when the upstream sync is the only change on the release branch. The branch has no new Inkless commits. The Inkless version stays the same. Example: `inkless-4.3` synced to Kafka 4.3.2 after release 0.51 included Kafka 4.3.1.
+
+Keep the Inkless version for an upstream-only change. See [VERSIONING-STRATEGY.md](../docs/inkless/VERSIONING-STRATEGY.md) for the version rules.
+
+If a new Inkless release follows soon, skip these steps. The next release tags the synced branch head.
+
+Sync the upstream Kafka patch release first. Then sync the Inkless commits. Open one pull request for each sync.
+
+The first case was `inkless-4.2.2-0.49`. The team tagged it after release 0.49, and the release page doesn't list it. The 4.3.2 sync is the first one added to the published release.
+
+### Steps
+
+1. Merge the sync PR into the release branch. Check that `gradle.properties` shows the new Kafka version.
+2. Create the Kafka-base tag on the merge commit, with the existing tag message format:
+
+   ```bash
+   git fetch origin
+   git tag -a inkless-4.3.2-0.51 origin/inkless-4.3 -m "Inkless release 0.51 on Kafka 4.3.2"
+   ```
+
+3. Check the tag target with `git show inkless-4.3.2-0.51`. A pushed tag starts a public build and publishes a Docker image.
+
+   ```bash
+   git push origin inkless-4.3.2-0.51
+   ```
+
+4. Wait for the `Inkless Publish` run that the tag push starts. It builds the `4.3.2-0.51` image and moves the `4.3-latest` alias. The run leaves the GitHub Release unchanged.
+5. Run the `Inkless Release` workflow with `inkless_version` set to `0.51` and `resume` set to `true`. The workflow skips tagging. It rebuilds the images and binaries. Then it regenerates the release notes and uploads the binaries to `inkless-release-0.51`.
+
+The `CHANGELOG.md` heading of the release keeps the old Kafka version. The entry of the next release lists the new version.
+
+### What the `resume` run does
+
+- For each active branch, the workflow builds the highest-patch tag for the version. For `inkless-4.3` it builds `inkless-4.3.2-0.51` and not `inkless-4.3.1-0.51`.
+- The release notes list every `inkless-<kafka-version>-0.51` tag, so they name Kafka 4.3.1 and Kafka 4.3.2. The workflow replaces any manual edit of the notes.
+- The upload uses `--clobber`, so the old `kafka_2.13-4.3.1-inkless.tgz` asset stays on the release. Keep it. Users can still download the earlier Kafka patch version.
+- The workflow rebuilds the `0.51` and `latest` Docker images from `inkless-release-0.51` on `main`, with the same content.
+- The branches `inkless-4.1` and `inkless-4.2` are rebuilt from their existing tags.
+
+### Verify
+
+```bash
+gh release view inkless-release-0.51 --json body,assets --jq '.assets[].name'
+docker buildx imagetools inspect ghcr.io/aiven/inkless:4.3.2-0.51
+```
+
+The asset list must include `kafka_2.13-4.3.2-inkless.tgz`. The release notes must link `inkless-4.3.2-0.51`.
+
+> The first run of this procedure, for Kafka 4.3.2 on release 0.51, matched these effects.
+
 ## AI-Assisted Sync
 
 For AI-assisted release syncs, see [RELEASE-SYNC-PROMPT.md](RELEASE-SYNC-PROMPT.md) for a ready-to-use prompt.
