@@ -4722,6 +4722,7 @@ public class RemoteLogManagerTest {
     @CsvSource({
         "2, 100, 99",   // the segment crosses the bound in one epoch
         "3, 100, 99",   // the segment holds a discarded epoch past the bound
+        "2, 95, -1",    // the first batch crosses the bound, so the read returns no records
         "2, 103, 102",  // the segment ends below the bound
         "3, -1, 102"    // no bound
     })

@@ -2003,6 +2003,11 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
                 int validBytes = 0;
                 for (RecordBatch batch : MemoryRecords.readableRecords(buffer.duplicate()).batches()) {
                     if (batch.lastOffset() >= upperBoundOffset) {
+                        if (validBytes == 0) {
+                            // An empty response makes the consumer fetch the same offset again, so log the cause.
+                            LOGGER.warn("Returning no records for offset {} in partition {} because batch {}-{} crosses the upper bound offset {}",
+                                    offset, tp, batch.baseOffset(), batch.lastOffset(), upperBoundOffset);
+                        }
                         buffer.limit(validBytes);
                         break;
                     }
