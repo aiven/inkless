@@ -101,6 +101,7 @@ import io.aiven.inkless.test_utils.S3TestContainer;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -366,15 +367,19 @@ public class ClassicToDisklessSwitchLastKnownLeaderClusterTest {
         waitForCondition(() -> isOnlineLeader(leader, tp), "the partition to be online on the leader");
 
         admin.repairDisklessLog(topic, 0, leader).all().get(20, TimeUnit.SECONDS);
-        GatedRemoteStorageManager.COPY_ALLOWED.set(true);
 
+        // Phase 2 consolidates from the seal and moves the log end offsets past it, so the check runs in phase 1.
         waitForPartition(admin, topic, p -> p.isr().size() == 3, "the ISR to recover");
-        waitForCondition(() -> cluster.brokers().values().stream().allMatch(b ->
-            b.replicaManager().inklessMetadataView().isClassicPrefixInRemoteStorage(tp)), "phase 2 to start");
         for (BrokerServer broker : cluster.brokers().values()) {
+            assertFalse(broker.replicaManager().inklessMetadataView().isClassicPrefixInRemoteStorage(tp),
+                "phase 2 started on broker " + broker.config().nodeId() + " before the upload gate opened");
             assertEquals(TRUNCATED_LEO, broker.replicaManager().getLog(tp).get().logEndOffset(),
                 "log end offset on broker " + broker.config().nodeId());
         }
+
+        GatedRemoteStorageManager.COPY_ALLOWED.set(true);
+        waitForCondition(() -> cluster.brokers().values().stream().allMatch(b ->
+            b.replicaManager().inklessMetadataView().isClassicPrefixInRemoteStorage(tp)), "phase 2 to start");
     }
 
     private List<String> consumeFromStart(final TopicPartition tp) {
