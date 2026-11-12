@@ -408,14 +408,20 @@ class InklessClassicToDisklessSwitchTest(Test):
 
         ``InFlightPartitions`` counts only the steps up to control-plane init,
         so it reaches zero in phase 1. If the brokers consolidate, the wait
-        then also requires phase 2 on every partition of ``topic``.
+        requires phase 2 on every partition of ``topic`` instead. The leader
+        requests the flag only after control-plane init, so phase 2 implies
+        that phase 1 finished. The sealed-leader count doesn't work there: a
+        leader that takes over a consolidating partition in phase 2, for
+        example after a restart, doesn't seal it.
         """
-        self._wait_for_phase_1_complete(topic, timeout_sec)
         if self._consolidation:
+            self._wait_for_switch_config(topic, timeout_sec)
             self._wait_for_classic_prefix_in_remote_storage(
                 topic,
                 timeout_sec=phase_2_timeout_sec or self.PHASE_2_TIMEOUT_SEC,
             )
+        else:
+            self._wait_for_phase_1_complete(topic, timeout_sec)
 
     def _wait_for_phase_1_complete(self, topic=None, timeout_sec=None):
         """Wait until leaders sealed every switched partition and the init work drained."""
