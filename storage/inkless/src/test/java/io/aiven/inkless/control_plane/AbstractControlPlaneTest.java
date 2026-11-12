@@ -2110,6 +2110,32 @@ public abstract class AbstractControlPlaneTest {
             ))).containsExactly(ListOffsetsResponse.success(tidp, NO_TIMESTAMP, deletedUpTo));
         }
 
+        @Test
+        void handoffBelowLostRangeKeepsWalStartAtRemoteEnd() {
+            initSwitchedLog();
+            commitDisklessBatchAtSeal();
+            // An operator lowered the committed seal to remoteEnd. Remote storage holds only
+            // [classicLogStart, remoteEnd).
+            final long remoteEnd = 60;
+
+            assertThat(controlPlane.pruneDisklessLogs(List.of(
+                new PruneDisklessLogsRequest(tidp, remoteEnd - 1)
+            ), 0)).containsExactly(new PruneDisklessLogsResponse(
+                tidp, remoteEnd, 0, 0, PruneDisklessLogsError.NONE));
+
+            assertThat(controlPlane.getCrossTierLogStart(tidp)).hasValue(classicLogStart);
+            final FindBatchResponse inLostRange = controlPlane.findBatches(
+                List.of(new FindBatchRequest(tidp, remoteEnd, Integer.MAX_VALUE)), Integer.MAX_VALUE, 0).get(0);
+            assertThat(inLostRange.errors()).isEqualTo(Errors.NONE);
+            assertThat(inLostRange.logStartOffset()).isEqualTo(remoteEnd);
+            assertThat(inLostRange.batches()).extracting(batch -> batch.metadata().baseOffset()).containsExactly(seal);
+
+            assertThat(controlPlane.pruneDisklessLogs(List.of(
+                new PruneDisklessLogsRequest(tidp, seal + 9)
+            ), 0)).containsExactly(new PruneDisklessLogsResponse(
+                tidp, seal + 10, 1, 10, PruneDisklessLogsError.NONE));
+        }
+
         private void initSwitchedLog() {
             assertThat(controlPlane.initDisklessLog(List.of(
                 new InitDisklessLogRequest(topicId, topicName, 0, classicLogStart, seal, List.of())
