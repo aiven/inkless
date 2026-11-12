@@ -8822,6 +8822,37 @@ class ReplicaManagerInklessTest {
     }
   }
 
+  // Retention moves the log start while the remote search is queued. The search keeps the log start it read, and
+  // the epoch cache no longer has an epoch for it, so the search reads nothing.
+  @Test
+  def testFetchOffsetSpecificTimestampOnConsolidatingReplicaFailsWhenTheLogStartMovesDuringTheLookup(): Unit = {
+    val remoteLogManager = mock(classOf[RemoteLogManager])
+    var retentionDuringSearch = true
+    withConsolidatingReplica(walStartControlPlane(), Some(remoteLogManager)) { (replicaManager, log) =>
+      when(remoteLogManager.asyncOffsetRead(any(), anyLong(), anyLong(), any(), any())).thenAnswer { invocation =>
+        if (retentionDuringSearch) {
+          log.maybeIncrementLogStartOffset(100L, LogStartOffsetIncrementReason.SegmentDeletion)
+          assertEquals(OptionalInt.empty(), log.leaderEpochCache.epochForOffset(invocation.getArgument[Long](2)))
+        }
+        new AsyncOffsetReadFutureHolder[OffsetResultHolder.FileRecordsOrError](
+          CompletableFuture.completedFuture(null),
+          CompletableFuture.completedFuture(new OffsetResultHolder.FileRecordsOrError(Optional.empty(), Optional.empty())))
+      }
+      log.truncateFullyAndStartAt(900L, Optional.of(java.lang.Long.valueOf(0L)))
+      log.leaderEpochCache.assign(0, 0L)
+
+      assertEquals(Errors.OFFSET_NOT_AVAILABLE.code,
+        listOffsetsByTimestamp(replicaManager, consolidatingTp, timestamp = 11000L).errorCode)
+      assertEquals(100L, log.logStartOffset)
+
+      retentionDuringSearch = false
+      val response = listOffsetsByTimestamp(replicaManager, consolidatingTp, timestamp = 11000L)
+
+      assertEquals(Errors.NONE.code, response.errorCode)
+      assertEquals(1000L, response.offset)
+    }
+  }
+
   private val consolidatingTp = new TopicPartition("consolidating-topic", 0)
   private val consolidatingTopicId = Uuid.randomUuid()
 

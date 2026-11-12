@@ -2222,13 +2222,17 @@ class ReplicaManager(val config: KafkaConfig,
     // The remote search starts at the leader epoch of the log start. A tier-state rebuild clears the epoch cache
     // before it restores it, so until then the search reads nothing below the local log start. The truncation count
     // is read first, so a truncation that the reads below straddle changes it and the range stops being current.
+    // A queued remote search keeps the log start it read. Retention or DeleteRecords that moves the log start drops
+    // the epoch of that offset, and the search then reads nothing, so a new log start also ends the range.
     val classicSearchRange: TopicPartition => ClassicSearchRange = tp => logManager.getLog(tp) match {
       case Some(log) =>
         val truncationCount = log.truncationCount()
-        val remotePrefixUnsearchable = log.remoteLogEnabled() && log.logStartOffset < log.localLogStartOffset &&
-          log.leaderEpochCache.epochForOffset(log.logStartOffset).isEmpty
-        val end = if (remotePrefixUnsearchable) log.logStartOffset else log.logEndOffset
-        ClassicSearchRange(end, () => logManager.getLog(tp).exists(_ eq log) && log.truncationCount() == truncationCount)
+        val logStartOffset = log.logStartOffset
+        val remotePrefixUnsearchable = log.remoteLogEnabled() && logStartOffset < log.localLogStartOffset &&
+          log.leaderEpochCache.epochForOffset(logStartOffset).isEmpty
+        val end = if (remotePrefixUnsearchable) logStartOffset else log.logEndOffset
+        ClassicSearchRange(end, () => logManager.getLog(tp).exists(_ eq log) &&
+          log.truncationCount() == truncationCount && log.logStartOffset == logStartOffset)
       case None => ClassicSearchRange.Unknown
     }
 

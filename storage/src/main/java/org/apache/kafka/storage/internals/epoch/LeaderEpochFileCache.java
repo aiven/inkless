@@ -108,12 +108,21 @@ public final class LeaderEpochFileCache {
         }
     }
 
+    /**
+     * Appends the entries as one update: a reader sees none of them or all of them. A tier-state rebuild restores
+     * the cache from a remote checkpoint, and a remote read during it must not see only the first epochs.
+     */
     public void assign(List<EpochEntry> entries) {
-        entries.forEach(entry -> {
-            if (assign(entry)) {
-                log.debug("Appended new epoch entry {}. Cache now contains {} entries.", entry, epochs.size());
-            }
-        });
+        lock.writeLock().lock();
+        try {
+            entries.forEach(entry -> {
+                if (assign(entry)) {
+                    log.debug("Appended new epoch entry {}. Cache now contains {} entries.", entry, epochs.size());
+                }
+            });
+        } finally {
+            lock.writeLock().unlock();
+        }
         if (!entries.isEmpty()) writeToFile();
     }
 
