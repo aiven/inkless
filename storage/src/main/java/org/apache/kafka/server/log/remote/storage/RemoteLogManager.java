@@ -1996,12 +1996,32 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
             }
             buffer.flip();
 
+            long upperBoundOffset = remoteStorageFetchInfo.upperBoundOffset().orElse(Long.MAX_VALUE);
+            if (remoteStorageFetchInfo.upperBoundOffset().isPresent()) {
+                // The segment can hold records at or past the bound, which belong to the diskless log of a
+                // switched partition. The response keeps only the whole batches that end below the bound.
+                int validBytes = 0;
+                for (RecordBatch batch : MemoryRecords.readableRecords(buffer.duplicate()).batches()) {
+                    if (batch.lastOffset() >= upperBoundOffset) {
+                        if (validBytes == 0) {
+                            // An empty response makes the consumer fetch the same offset again, so log the cause.
+                            LOGGER.warn("Returning no records for offset {} in partition {} because batch {}-{} crosses the upper bound offset {}",
+                                    offset, tp, batch.baseOffset(), batch.lastOffset(), upperBoundOffset);
+                        }
+                        buffer.limit(validBytes);
+                        break;
+                    }
+                    validBytes += batch.sizeInBytes();
+                }
+            }
+
             startPos = startPos + enrichedRecordBatch.skippedBytes;
             FetchDataInfo fetchDataInfo = new FetchDataInfo(
                     new LogOffsetMetadata(firstBatch.baseOffset(), remoteLogSegmentMetadata.startOffset(), startPos),
                     MemoryRecords.readableRecords(buffer));
             if (includeAbortedTxns) {
-                fetchDataInfo = addAbortedTransactions(firstBatch.baseOffset(), remoteLogSegmentMetadata, fetchDataInfo, logOptional.get());
+                fetchDataInfo = addAbortedTransactions(firstBatch.baseOffset(), remoteLogSegmentMetadata, fetchDataInfo,
+                        logOptional.get(), upperBoundOffset);
             }
 
             return fetchDataInfo;
@@ -2024,14 +2044,15 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
     private FetchDataInfo addAbortedTransactions(long startOffset,
                                                  RemoteLogSegmentMetadata segmentMetadata,
                                                  FetchDataInfo fetchInfo,
-                                                 UnifiedLog log) throws RemoteStorageException {
+                                                 UnifiedLog log,
+                                                 long maxUpperBoundOffset) throws RemoteStorageException {
         int fetchSize = fetchInfo.records.sizeInBytes();
         OffsetPosition startOffsetPosition = new OffsetPosition(fetchInfo.fetchOffsetMetadata.messageOffset,
                 fetchInfo.fetchOffsetMetadata.relativePositionInSegment);
 
         OffsetIndex offsetIndex = indexCache.getIndexEntry(segmentMetadata).offsetIndex();
-        long upperBoundOffset = offsetIndex.fetchUpperBoundOffset(startOffsetPosition, fetchSize)
-                .map(OffsetPosition::offset).orElse(segmentMetadata.endOffset() + 1);
+        long upperBoundOffset = Math.min(maxUpperBoundOffset, offsetIndex.fetchUpperBoundOffset(startOffsetPosition, fetchSize)
+                .map(OffsetPosition::offset).orElse(segmentMetadata.endOffset() + 1));
 
         final Set<FetchResponseData.AbortedTransaction> abortedTransactions = new HashSet<>();
 
