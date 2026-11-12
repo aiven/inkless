@@ -4506,6 +4506,33 @@ class ReplicaManager(val config: KafkaConfig,
   }
 
   /**
+   * Advances the high watermark of a phase 1 ISR member to the committed seal once its log reaches the seal.
+   *
+   * The caller checks the proof. In phase 1 the leader admits a replica to the ISR only after it fetched at the
+   * seal through the classic fetcher, which truncates a divergent tail before it appends, and the leader requests
+   * the seal only after its high watermark reaches its frozen log end offset. So an ISR member whose log reaches
+   * the seal holds the committed prefix. In phase 2 the controller adds replicas to the ISR without checking their
+   * logs, so a replica there keeps its high watermark and reconciles through a fetch instead.
+   *
+   * The follower normally learns the high watermark from a fetch response, but the response that carries it can
+   * arrive after the follower applies the seal's leader epoch, and the fetcher drops it. The leader's fetch
+   * session then leaves the sealed partition out of every later response, because nothing in it changes. Without
+   * this step the follower keeps its stale high watermark until the next leader change and refuses
+   * `OffsetsForLeaderEpoch` and `ListOffsets` for the classic prefix.
+   */
+  private def maybeAdvanceSwitchedFollowerHighWatermarkToSeal(tp: TopicPartition,
+                                                              partition: Partition,
+                                                              seal: Long): Unit = {
+    if (seal < 0) return
+    val log = partition.localLogOrException
+    if (log.logEndOffset >= seal && log.highWatermark < seal) {
+      log.maybeUpdateHighWatermark(seal)
+      stateChangeLogger.info(s"Stale high watermark detected: advanced high watermark to seal offset $seal for " +
+        s"switched follower partition $tp")
+    }
+  }
+
+  /**
    * Reconcile a switched follower's local tail against the committed seal.
    *
    * Non-consolidating switched replicas must not retain local records at or above the seal.
@@ -4908,6 +4935,8 @@ class ReplicaManager(val config: KafkaConfig,
               // leader starts with no fetch state for this follower. One fetch at the seal records it, so
               // a follower that already stopped fetching doesn't fall out of ISR on every leader change.
               val isPhaseOne = seal >= 0 && !info.partition.classicPrefixInRemoteStorage
+              if (isPhaseOne && !isOutOfIsr)
+                maybeAdvanceSwitchedFollowerHighWatermarkToSeal(tp, partition, seal)
               // Skip during controlled shutdown: the leader will not expand ISR for a shutting-down
               // broker (isReplicaIsrEligible), and this replica is about to stop serving.
               if (seal >= 0 && !isInControlledShutdown &&

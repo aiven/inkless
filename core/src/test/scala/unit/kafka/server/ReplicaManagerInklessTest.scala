@@ -7369,7 +7369,11 @@ class ReplicaManagerInklessTest {
   }
 
   @Test
-  def testApplyDeltaStartsCatchUpFetcherForDisklessFollowerWithLaggingHwm(): Unit = {
+  def testApplyDeltaAdvancesHwmToSealForDisklessFollowerAtSealWithLaggingHwm(): Unit = {
+    // The fetch response that carries the high watermark at the seal can arrive after the follower
+    // applies the seal's leader epoch, and the fetcher drops it. The leader's fetch session then
+    // never resends the sealed partition. The committed seal proves the prefix is committed, so the
+    // follower takes the high watermark from metadata instead of waiting for a response.
     val topicName = "switched-topic"
     val topicId = Uuid.randomUuid()
     val tp = new TopicPartition(topicName, 0)
@@ -7395,7 +7399,188 @@ class ReplicaManagerInklessTest {
       val delta = disklessFollowerDelta(topicName, topicId, brokerId, leaderId)
       replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))
 
-      // A fetcher must be scheduled against the leader so that HW can advance to the seal offset.
+      assertEquals(10L, replicaManager.localLogOrException(tp).highWatermark,
+        "A follower at the seal must advance its stale high watermark to the committed seal")
+
+      // Phase 1 still schedules one fetch at the seal on a new leader epoch, so the leader records
+      // the follower's fetch state and keeps it in the ISR.
+      val leaderEndpoint = ClusterImageTest.IMAGE1.broker(leaderId).listeners().get("PLAINTEXT")
+      verify(mockFetcherManager).addFetcherForPartitions(Map(tp -> InitialFetchState(
+        topicId = Some(topicId),
+        leader = new BrokerEndPoint(leaderId, leaderEndpoint.host(), leaderEndpoint.port()),
+        currentLeaderEpoch = 0,
+        initOffset = 10L
+      )))
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testApplyDeltaAdvancesHwmToSealWhenSealIsCommittedInSeparateDeltaWithSameLeaderEpoch(): Unit = {
+    // The seal commit can arrive as its own metadata delta that keeps the leader epoch. The follower
+    // already runs its fetcher from the pending phase, so the restore must not depend on a new
+    // leader epoch or on scheduling a catch-up fetch.
+    val topicName = "switched-topic"
+    val topicId = Uuid.randomUuid()
+    val tp = new TopicPartition(topicName, 0)
+    val brokerId = 1
+    val leaderId = 2
+    val sealOffset = 10L
+
+    val mockFetcherManager = mock(classOf[ReplicaFetcherManager])
+    when(mockFetcherManager.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+
+    val replicaManager = spy(createReplicaManager(
+      List(topicName),
+      mockReplicaFetcherManager = Some(mockFetcherManager)
+    ))
+    try {
+      val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+      populateLocalLogAtLeoAndCheckpointedHwm(replicaManager, tp, log, leo = sealOffset, hw = 5L)
+
+      // The switch is pending: the leader froze its log, and the controller hasn't committed the seal.
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp))
+        .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
+      val pendingDelta = disklessFollowerDelta(topicName, topicId, brokerId, leaderId,
+        classicToDisklessStartOffset = PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
+      val pendingImage = imageFromTopics(pendingDelta.apply())
+      replicaManager.applyDelta(pendingDelta, pendingImage)
+      assertEquals(5L, replicaManager.localLogOrException(tp).highWatermark,
+        "A pending switch has no committed seal to restore the high watermark from")
+
+      clearInvocations(mockFetcherManager)
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(sealOffset)
+
+      // The controller commits the seal without a leader change, so the leader epoch stays 0.
+      val sealDelta = new TopicsDelta(pendingImage.topics())
+      val sealRecord = new PartitionChangeRecord()
+        .setTopicId(topicId)
+        .setPartitionId(tp.partition)
+      sealRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicToDisklessStartOffset(sealOffset))
+      sealDelta.replay(sealRecord)
+      val localChanges = sealDelta.localChanges(brokerId)
+      assertTrue(localChanges.followers.containsKey(tp), "The seal delta must reach the follower path")
+      assertEquals(0, localChanges.followers.get(tp).partition.leaderEpoch)
+      replicaManager.applyDelta(sealDelta, imageFromTopics(sealDelta.apply()))
+
+      assertEquals(sealOffset, replicaManager.localLogOrException(tp).highWatermark,
+        "A follower at the seal must advance its stale high watermark when the seal arrives in its own delta")
+      verify(mockFetcherManager, never()).addFetcherForPartitions(any())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testApplyDeltaKeepsHwmForDisklessFollowerBelowSeal(): Unit = {
+    val topicName = "switched-topic"
+    val topicId = Uuid.randomUuid()
+    val tp = new TopicPartition(topicName, 0)
+    val brokerId = 1
+    val leaderId = 2
+
+    val mockFetcherManager = mock(classOf[ReplicaFetcherManager])
+    when(mockFetcherManager.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+
+    val replicaManager = spy(createReplicaManager(
+      List(topicName),
+      mockReplicaFetcherManager = Some(mockFetcherManager)
+    ))
+    try {
+      // LEO=7 is below the seal at 10: the follower still misses part of the prefix, so the committed
+      // seal proves nothing about the records it doesn't hold yet.
+      val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+      populateLocalLogAtLeoAndCheckpointedHwm(replicaManager, tp, log, leo = 7L, hw = 5L)
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(10L)
+
+      val delta = disklessFollowerDelta(topicName, topicId, brokerId, leaderId)
+      replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))
+
+      assertEquals(5L, replicaManager.localLogOrException(tp).highWatermark,
+        "A follower below the seal must keep its high watermark until it replicates the prefix")
+
+      val leaderEndpoint = ClusterImageTest.IMAGE1.broker(leaderId).listeners().get("PLAINTEXT")
+      verify(mockFetcherManager).addFetcherForPartitions(Map(tp -> InitialFetchState(
+        topicId = Some(topicId),
+        leader = new BrokerEndPoint(leaderId, leaderEndpoint.host(), leaderEndpoint.port()),
+        currentLeaderEpoch = 0,
+        initOffset = 7L
+      )))
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testApplyDeltaKeepsHwmForPhaseTwoFollowerAtSealAndSchedulesCatchUpFetch(): Unit = {
+    // In phase 2 the controller adds every live replica to the ISR without checking its log, so ISR
+    // membership proves nothing about the records below the seal. The replica keeps its high
+    // watermark and the catch-up fetch reconciles its log against the leader.
+    val topicName = "switched-topic"
+    val topicId = Uuid.randomUuid()
+    val tp = new TopicPartition(topicName, 0)
+    val brokerId = 1
+    val leaderId = 2
+
+    val mockFetcherManager = mock(classOf[ReplicaFetcherManager])
+    when(mockFetcherManager.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+
+    val replicaManager = spy(createReplicaManager(
+      List(topicName),
+      mockReplicaFetcherManager = Some(mockFetcherManager)
+    ))
+    try {
+      val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+      populateLocalLogAtLeoAndCheckpointedHwm(replicaManager, tp, log, leo = 10L, hw = 5L)
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(10L)
+      when(replicaManager.inklessMetadataView().isClassicPrefixInRemoteStorage(tp)).thenReturn(true)
+
+      val delta = disklessFollowerDelta(topicName, topicId, brokerId, leaderId,
+        classicToDisklessStartOffset = 10L, classicPrefixInRemoteStorage = true)
+      replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))
+
+      assertEquals(5L, replicaManager.localLogOrException(tp).highWatermark,
+        "A phase 2 follower must keep its high watermark until a fetch validates its log")
+      val leaderEndpoint = ClusterImageTest.IMAGE1.broker(leaderId).listeners().get("PLAINTEXT")
+      verify(mockFetcherManager).addFetcherForPartitions(Map(tp -> InitialFetchState(
+        topicId = Some(topicId),
+        leader = new BrokerEndPoint(leaderId, leaderEndpoint.host(), leaderEndpoint.port()),
+        currentLeaderEpoch = 0,
+        initOffset = 10L
+      )))
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testApplyDeltaKeepsHwmForDisklessFollowerAtSealOutOfIsr(): Unit = {
+    // A replica outside the ISR may hold a divergent tail from an older leader epoch, so its log
+    // end offset alone doesn't prove that it holds the committed prefix.
+    val topicName = "switched-topic"
+    val topicId = Uuid.randomUuid()
+    val tp = new TopicPartition(topicName, 0)
+    val brokerId = 1
+    val leaderId = 2
+
+    val mockFetcherManager = mock(classOf[ReplicaFetcherManager])
+    when(mockFetcherManager.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+
+    val replicaManager = spy(createReplicaManager(
+      List(topicName),
+      mockReplicaFetcherManager = Some(mockFetcherManager)
+    ))
+    try {
+      val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+      populateLocalLogAtLeoAndCheckpointedHwm(replicaManager, tp, log, leo = 10L, hw = 5L)
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(10L)
+
+      val delta = disklessFollowerDelta(topicName, topicId, brokerId, leaderId, followerInIsr = false)
+      replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))
+
+      assertEquals(5L, replicaManager.localLogOrException(tp).highWatermark,
+        "A follower outside the ISR must keep its high watermark until a fetch validates its log")
       val leaderEndpoint = ClusterImageTest.IMAGE1.broker(leaderId).listeners().get("PLAINTEXT")
       verify(mockFetcherManager).addFetcherForPartitions(Map(tp -> InitialFetchState(
         topicId = Some(topicId),
@@ -7515,6 +7700,10 @@ class ReplicaManagerInklessTest {
       replicaManager.applyDelta(followerDelta, followerImage)
 
       assertFalse(replicaManager.getPartition(tp).asInstanceOf[HostedPartition.Online[Partition]].partition.isLeader)
+      assertEquals(sealOffset, replicaManager.localLogOrException(tp).highWatermark,
+        "A follower at the seal advances its stale high watermark when it applies the committed seal")
+      // Stage a stale high watermark again so the promotion exercises the leader-side restore on its own.
+      log.updateHighWatermark(5L)
       assertEquals(5L, replicaManager.localLogOrException(tp).highWatermark)
 
       val leaderDelta = promoteFollowerToLeaderDelta(
