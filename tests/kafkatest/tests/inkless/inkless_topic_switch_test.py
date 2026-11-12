@@ -1134,12 +1134,15 @@ class InklessClassicToDisklessSwitchTest(Test):
 
     def _rolling_restart(self, clean_shutdown=True):
         self.logger.info("Performing rolling restart of all brokers")
+        partition_0_replicas = self.kafka.replicas(self.topic, partition=0)
         for node in self.kafka.nodes:
             self._restart_broker(node, clean_shutdown=clean_shutdown)
             self._wait_for_all_partitions_have_leaders()
             # Pace the next bounce on evidence that this broker is fetching again, without
             # forcing all partitions to fully heal between every restart under degraded network.
-            self._wait_for_broker_in_isr(node, num_partitions=1)
+            # A broker outside the replicas of partition 0 can't join its ISR.
+            if node in partition_0_replicas:
+                self._wait_for_broker_in_isr(node, num_partitions=1)
 
     def _wait_for_all_partitions_have_leaders(self, topic=None, num_partitions=None, timeout_sec=120):
         if topic is None:
@@ -1626,9 +1629,14 @@ class InklessClassicToDisklessSwitchTest(Test):
         gauge is live state, not a sticky artifact of switching to diskless:
         stopping one replica raises URP, and the same replica catching back up
         clears it.
+
+        The test stays in phase 1. The URP gauge leaves out partitions that
+        consolidate, so in phase 2 the switched partition doesn't count, and
+        the replicated ``__remote_log_metadata`` topic could raise the gauge
+        in its place.
         """
         self.num_partitions = 1
-        self._create_kafka()
+        self._create_kafka(consolidation=False)
         self.kafka.start()
         self._create_classic_topic(num_partitions=1)
 
@@ -2271,6 +2279,7 @@ class InklessClassicToDisklessSwitchTest(Test):
         "rolling_restart_at_phase_2",
     ]
     PHASE_1_FAULT_DURATION_MS = 30_000
+    FLAG_REQUEST_FAULT_DURATION_MS = 10_000
 
     def _live_broker(self, exclude=()):
         for node in self.kafka.nodes:
@@ -2366,8 +2375,10 @@ class InklessClassicToDisklessSwitchTest(Test):
         as the hold ends. They overlap the ``SetClassicPrefixInRemoteStorage``
         request and the phase 2 transition:
 
-        - ``controller_failover_at_phase_2`` stops the active controller of
-          three. The first flag requests meet a controller failover.
+        - ``controller_failover_at_phase_2`` stops the active controller and
+          one more of three. The test waits until a flag request has been
+          pending for 10 s, then starts the second controller. The flag
+          requests retry until the two live controllers elect a new leader.
         - ``postgres_outage_at_phase_2`` keeps the control plane unreachable
           until the controller sets the flag on every partition. Consolidation
           from the seal then starts without Postgres.
@@ -2449,11 +2460,22 @@ class InklessClassicToDisklessSwitchTest(Test):
             self._assert_in_phase_1()
 
         if fault == "controller_failover_at_phase_2":
+            controllers = self.kafka.isolated_controller_quorum
             stopped_controller = self._active_controller_node()
-            old_leader_id = self.kafka.isolated_controller_quorum.node_id_as_isolated_controller(stopped_controller)
-            self.logger.info("Stopping active controller %d as the hold ends", old_leader_id)
-            self.kafka.isolated_controller_quorum.stop_node(stopped_controller, clean_shutdown=False)
+            old_leader_id = controllers.node_id_as_isolated_controller(stopped_controller)
+            # Stopping a second controller takes the quorum down. The flag requests fail until
+            # a new leader exists. Without that, the two remaining controllers can elect a
+            # leader before any broker finishes its upload.
+            standby = [n for n in controllers.nodes if n != stopped_controller][0]
+            self.logger.info("Stopping active controller %d and controller %d as the hold ends",
+                             old_leader_id, controllers.node_id_as_isolated_controller(standby))
+            controllers.stop_node(stopped_controller, clean_shutdown=False)
+            controllers.stop_node(standby, clean_shutdown=False)
             self.verifier.heal_dependency("object_storage")
+            self._wait_for_mid_switch_state(
+                "SendingFlagToController", min_oldest_age_ms=self.FLAG_REQUEST_FAULT_DURATION_MS,
+                timeout_sec=self.PHASE_2_TIMEOUT_SEC)
+            controllers.start_node(standby)
             self._wait_for_new_active_controller(old_leader_id)
         elif fault == "postgres_outage_at_phase_2":
             self.verifier.block_dependency("control_plane")
