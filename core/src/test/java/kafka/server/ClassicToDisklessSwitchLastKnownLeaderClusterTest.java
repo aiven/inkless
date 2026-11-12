@@ -45,6 +45,7 @@ import org.apache.kafka.common.test.TestKitNodes;
 import org.apache.kafka.coordinator.group.GroupCoordinatorConfig;
 import org.apache.kafka.image.TopicImage;
 import org.apache.kafka.metadata.InitDisklessLogFields;
+import org.apache.kafka.metadata.LeaderRecoveryState;
 import org.apache.kafka.metadata.PartitionRegistration;
 import org.apache.kafka.server.HostedPartition;
 import org.apache.kafka.server.config.ReplicationConfigs;
@@ -100,6 +101,7 @@ import io.aiven.inkless.test_utils.S3TestContainer;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Drives a partition in phase 1 of the classic-to-diskless switch into a last-known-leader election (KIP-966)
@@ -282,10 +284,7 @@ public class ClassicToDisklessSwitchLastKnownLeaderClusterTest {
         waitForSealOffset(admin, topic, CLASSIC_RECORDS);
         produce(topic, "diskless-", DISKLESS_RECORDS);
 
-        final PartitionRegistration phaseOne = registration(0, topic);
-        final int leader = phaseOne.leader;
-        log.warn("[stage=phase1] {}", phaseOne);
-        return leader;
+        return registration(0, topic).leader;
     }
 
     private void driveIntoLastKnownLeaderBelowSeal(final Admin admin, final String topic, final int leaderHint) throws Exception {
@@ -298,12 +297,11 @@ public class ClassicToDisklessSwitchLastKnownLeaderClusterTest {
         final int secondDown = followers.get(1);
 
         cluster.brokers().get(firstDown).shutdown();
-        log.warn("[stage=first-down] {}", waitForRegistration(leader, topic,
-            r -> r.isr.length == 2, "an ISR of 2 after the first follower stops"));
+        waitForRegistration(leader, topic, r -> r.isr.length == 2, "an ISR of 2 after the first follower stops");
         cluster.brokers().get(secondDown).shutdown();
-        log.warn("[stage=second-down] {}", waitForRegistration(leader, topic,
+        waitForRegistration(leader, topic,
             r -> r.leader == leader && r.isr.length == 1 && Arrays.stream(r.elr).anyMatch(id -> id == secondDown),
-            "an ISR of the leader only, with the second follower in the ELR"));
+            "an ISR of the leader only, with the second follower in the ELR");
 
         // The leader loses the tail of the classic prefix, as after a power loss.
         final UnifiedLog leaderLog = cluster.brokers().get(leader).replicaManager().getLog(tp).get();
@@ -316,14 +314,14 @@ public class ClassicToDisklessSwitchLastKnownLeaderClusterTest {
         deleteCleanShutdownFiles(secondDown);
         cluster.brokers().get(secondDown).startup();
         cluster.brokers().get(firstDown).startup();
-        log.warn("[stage=followers-back] {}", waitForRegistration(secondDown, topic,
-            r -> Arrays.equals(r.elr, new int[] {leader}), "the unclean restart to remove the follower from the ELR"));
+        waitForRegistration(secondDown, topic,
+            r -> Arrays.equals(r.elr, new int[] {leader}), "the unclean restart to remove the follower from the ELR");
         cluster.brokers().get(leader).startup();
 
         final PartitionRegistration elected = waitForRegistration(secondDown, topic,
             r -> r.leader == leader, "the last known leader to be elected");
-        log.warn("[stage=case-b] {}", elected);
         assertArrayEquals(new int[] {leader}, elected.isr);
+        assertEquals(LeaderRecoveryState.RECOVERING, elected.leaderRecoveryState);
         waitForCondition(() -> isOffline(leader, tp), "the leader to mark the partition offline");
     }
 
@@ -353,18 +351,18 @@ public class ClassicToDisklessSwitchLastKnownLeaderClusterTest {
         // `kafka-topic-switch.sh seal --offset` checks the offset against these two values before it sends the request.
         final long earliest = admin.listOffsets(Map.of(tp, OffsetSpec.earliest())).all().get(20, TimeUnit.SECONDS).get(tp).offset();
         final long latest = admin.listOffsets(Map.of(tp, OffsetSpec.latest())).all().get(20, TimeUnit.SECONDS).get(tp).offset();
-        log.warn("[stage=cli-validation] listOffsets earliest={} latest={}", earliest, latest);
+        assertTrue(earliest <= TRUNCATED_LEO && TRUNCATED_LEO <= latest,
+            "the seal command rejects " + TRUNCATED_LEO + " outside [" + earliest + ", " + latest + "]");
 
         admin.alterDisklessSwitch(topic, 0, TRUNCATED_LEO).all().get(20, TimeUnit.SECONDS);
-        waitForSealOffset(admin, topic, TRUNCATED_LEO);
-        Thread.sleep(2000);
-        log.warn("[stage=resealed] offline on the leader before the restart={}", isOffline(leader, tp));
+        waitForRegistration(leader, topic, r -> r.classicToDisklessStartOffset == TRUNCATED_LEO,
+            "the leader to apply the lower seal");
+        assertTrue(isOffline(leader, tp), "the partition came back online on the leader without a restart");
 
         cluster.brokers().get(leader).shutdown();
         cluster.brokers().get(leader).startup();
-        final TopicPartitionInfo restarted = waitForPartition(admin, topic,
+        waitForPartition(admin, topic,
             p -> p.leader() != null && p.leader().id() == leader, "the leader to return after the restart");
-        log.warn("[stage=restarted] leader={} isr={} elr={}", restarted.leader(), restarted.isr(), restarted.elr());
         waitForCondition(() -> isOnlineLeader(leader, tp), "the partition to be online on the leader");
 
         admin.repairDisklessLog(topic, 0, leader).all().get(20, TimeUnit.SECONDS);
@@ -374,8 +372,8 @@ public class ClassicToDisklessSwitchLastKnownLeaderClusterTest {
         waitForCondition(() -> cluster.brokers().values().stream().allMatch(b ->
             b.replicaManager().inklessMetadataView().isClassicPrefixInRemoteStorage(tp)), "phase 2 to start");
         for (BrokerServer broker : cluster.brokers().values()) {
-            log.warn("[stage=phase2] broker={} log={}", broker.config().nodeId(),
-                broker.replicaManager().getLog(tp).map(l -> "lso=" + l.logStartOffset() + " leo=" + l.logEndOffset()));
+            assertEquals(TRUNCATED_LEO, broker.replicaManager().getLog(tp).get().logEndOffset(),
+                "log end offset on broker " + broker.config().nodeId());
         }
     }
 
@@ -394,7 +392,6 @@ public class ClassicToDisklessSwitchLastKnownLeaderClusterTest {
                 }
             }
         }
-        log.warn("[stage=consumed] {}", consumed);
         return consumed;
     }
 
