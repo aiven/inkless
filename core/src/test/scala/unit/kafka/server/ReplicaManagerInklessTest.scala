@@ -8742,19 +8742,73 @@ class ReplicaManagerInklessTest {
   @CsvSource(Array("0, OFFSET_NOT_AVAILABLE", "900, NONE"))
   def testFetchOffsetSpecificTimestampOnConsolidatingReplicaComparesItsLogWithTheWalStart(localLogEndOffset: Long,
                                                                                          expectedError: Errors): Unit = {
-    val topicName = "consolidating-topic"
-    val topicId = Uuid.randomUuid()
-    val tp = new TopicPartition(topicName, 0)
-    val walStart = 800L
+    val controlPlane = walStartControlPlane()
+    withConsolidatingReplica(controlPlane) { (replicaManager, log) =>
+      if (localLogEndOffset > 0) log.truncateFullyAndStartAt(localLogEndOffset, Optional.empty[java.lang.Long]())
+
+      val response = listOffsetsByTimestamp(replicaManager, consolidatingTp, timestamp = 11000L)
+
+      assertEquals(expectedError.code, response.errorCode)
+      if (expectedError == Errors.NONE) assertEquals(1000L, response.offset)
+      val tidp = new TopicIdPartition(consolidatingTopicId, consolidatingTp)
+      verify(controlPlane).listOffsets(util.List.of(
+        new CpListOffsetsRequest(tidp, 11000L),
+        new CpListOffsetsRequest(tidp, ListOffsetsRequest.EARLIEST_LOCAL_TIMESTAMP)))
+    }
+  }
+
+  // A tier-state rebuild truncates the local log past the WAL start and clears the leader epoch cache before it
+  // restores the cache from remote storage. Until then the remote search has no epoch to start from and reads
+  // nothing below the local log start, so the local log doesn't count as reaching the WAL start.
+  @Test
+  def testFetchOffsetSpecificTimestampOnConsolidatingReplicaWaitsForTheEpochOfTheLogStart(): Unit = {
+    val remoteLogManager = mock(classOf[RemoteLogManager])
+    // The remote search finds nothing in both phases, so the lookup always falls back to the diskless log.
+    when(remoteLogManager.asyncOffsetRead(any(), anyLong(), anyLong(), any(), any())).thenAnswer(_ =>
+      new AsyncOffsetReadFutureHolder[OffsetResultHolder.FileRecordsOrError](
+        CompletableFuture.completedFuture(null),
+        CompletableFuture.completedFuture(new OffsetResultHolder.FileRecordsOrError(Optional.empty(), Optional.empty()))))
+    withConsolidatingReplica(walStartControlPlane(), Some(remoteLogManager)) { (replicaManager, log) =>
+      log.truncateFullyAndStartAt(900L, Optional.of(java.lang.Long.valueOf(0L)))
+      assertTrue(log.remoteLogEnabled())
+      assertEquals(0L, log.logStartOffset)
+      assertEquals(900L, log.localLogStartOffset)
+      assertEquals(OptionalInt.empty(), log.leaderEpochCache.epochForOffset(log.logStartOffset))
+
+      assertEquals(Errors.OFFSET_NOT_AVAILABLE.code,
+        listOffsetsByTimestamp(replicaManager, consolidatingTp, timestamp = 11000L).errorCode)
+
+      log.leaderEpochCache.assign(0, 0L)
+      val response = listOffsetsByTimestamp(replicaManager, consolidatingTp, timestamp = 11000L)
+
+      assertEquals(Errors.NONE.code, response.errorCode)
+      assertEquals(1000L, response.offset)
+      verify(remoteLogManager, times(2)).asyncOffsetRead(ArgumentMatchers.eq(consolidatingTp), ArgumentMatchers.eq(11000L),
+        ArgumentMatchers.eq(0L), any(), any())
+    }
+  }
+
+  private val consolidatingTp = new TopicPartition("consolidating-topic", 0)
+  private val consolidatingTopicId = Uuid.randomUuid()
+
+  // Answers a timestamp lookup with offset 1000 and the WAL start lookup with 800.
+  private def walStartControlPlane(): ControlPlane = {
     val controlPlane = mock(classOf[ControlPlane])
     when(controlPlane.listOffsets(anyList())).thenAnswer { invocation =>
       invocation.getArgument(0).asInstanceOf[util.List[CpListOffsetsRequest]].asScala.map { request =>
         if (request.timestamp == ListOffsetsRequest.EARLIEST_LOCAL_TIMESTAMP)
-          CpListOffsetsResponse.success(request.topicIdPartition, RecordBatch.NO_TIMESTAMP, walStart)
+          CpListOffsetsResponse.success(request.topicIdPartition, RecordBatch.NO_TIMESTAMP, 800L)
         else
           CpListOffsetsResponse.success(request.topicIdPartition, 11000L, 1000L)
       }.asJava
     }
+    controlPlane
+  }
+
+  // Runs `body` on a broker that hosts an empty, non-leader replica of a born-diskless consolidating topic.
+  private def withConsolidatingReplica(controlPlane: ControlPlane,
+                                       remoteLogManager: Option[RemoteLogManager] = None)
+                                      (body: (ReplicaManager, UnifiedLog) => Unit): Unit = {
     val ctorInit: MockedConstruction.MockInitializer[ConsolidationFetcherManager] = {
       case (mockCfm, _) =>
         when(mockCfm.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
@@ -8762,25 +8816,19 @@ class ReplicaManagerInklessTest {
     val consolidationCtor = mockConstruction(classOf[ConsolidationFetcherManager], ctorInit)
     try {
       val replicaManager = createReplicaManager(
-        Seq(topicName),
+        Seq(consolidatingTp.topic),
         controlPlane = Some(controlPlane),
-        topicIdMapping = Map(topicName -> topicId),
+        topicIdMapping = Map(consolidatingTp.topic -> consolidatingTopicId),
         disklessRemoteStorageConsolidationEnabled = true,
-        consolidatingDisklessTopics = Set(topicName),
+        consolidatingDisklessTopics = Set(consolidatingTp.topic),
+        defaultLogConfig = remoteLogManager.map(_ => LogTestUtils.createLogConfig(remoteLogStorageEnable = true)),
+        remoteLogManager = remoteLogManager,
       )
       try {
-        val partition = replicaManager.createPartition(tp)
+        val partition = replicaManager.createPartition(consolidatingTp)
         partition.createLogIfNotExists(isNew = true, isFutureReplica = false,
-          new LazyOffsetCheckpoints(replicaManager.highWatermarkCheckpoints.asJava), Some(topicId))
-        if (localLogEndOffset > 0) partition.localLogOrException.truncateFullyAndStartAt(localLogEndOffset, Optional.empty[java.lang.Long]())
-
-        val response = listOffsetsByTimestamp(replicaManager, tp, timestamp = 11000L)
-
-        assertEquals(expectedError.code, response.errorCode)
-        if (expectedError == Errors.NONE) assertEquals(1000L, response.offset)
-        verify(controlPlane).listOffsets(util.List.of(
-          new CpListOffsetsRequest(new TopicIdPartition(topicId, tp), 11000L),
-          new CpListOffsetsRequest(new TopicIdPartition(topicId, tp), ListOffsetsRequest.EARLIEST_LOCAL_TIMESTAMP)))
+          new LazyOffsetCheckpoints(replicaManager.highWatermarkCheckpoints.asJava), Some(consolidatingTopicId))
+        body(replicaManager, partition.localLogOrException)
       } finally {
         replicaManager.shutdown(checkpointHW = false)
       }
