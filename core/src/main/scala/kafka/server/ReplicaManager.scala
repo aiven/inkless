@@ -3460,11 +3460,20 @@ class ReplicaManager(val config: KafkaConfig,
             Optional.empty()
           )
         } else {
-          // For consume fetch requests, create a dummy FetchDataInfo with the remote storage fetch information.
-          // For the first topic-partition that needs remote data, we will use this information to read the data in another thread.
-          new FetchDataInfo(new LogOffsetMetadata(offset), MemoryRecords.EMPTY, false, Optional.empty(),
-            Optional.of(new RemoteStorageFetchInfo(adjustedMaxBytes, minOneMessage, tp.topicPartition(),
-              fetchInfo, params.isolation)))
+          val remoteStorageFetchInfoOpt = if (adjustedMaxBytes > 0) {
+            // For consume fetch requests, create a dummy FetchDataInfo with the remote storage fetch information.
+            // For the topic-partitions that need remote data, we will use this information to read the data in another thread.
+            // After an unclean leader election before the switch, a remote segment can hold discarded
+            // records past the seal. Those offsets belong to the diskless log, so the read ends at the seal.
+            // The bound applies in both phases of the switch: in phase 1, a fetch below the local log
+            // start offset also reads from remote storage.
+            val seal = _inklessMetadataView.getClassicToDisklessStartOffset(tp.topicPartition)
+            val upperBoundOffset = if (seal >= 0 && offset < seal) OptionalLong.of(seal) else OptionalLong.empty()
+            Optional.of(new RemoteStorageFetchInfo(adjustedMaxBytes, minOneMessage, tp.topicPartition(), fetchInfo, params.isolation, upperBoundOffset))
+          } else {
+            Optional.empty[RemoteStorageFetchInfo]()
+          }
+          new FetchDataInfo(new LogOffsetMetadata(offset), MemoryRecords.EMPTY, false, Optional.empty(), remoteStorageFetchInfoOpt)
         }
 
         new LogReadResult(fetchDataInfo,
