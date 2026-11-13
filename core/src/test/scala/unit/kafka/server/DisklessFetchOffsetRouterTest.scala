@@ -17,8 +17,10 @@
 package kafka.server
 
 import io.aiven.inkless.consume.FetchOffsetHandler
+import kafka.server.DisklessFetchOffsetRouter.ClassicSearchRange
 import kafka.server.metadata.InklessMetadataView
 import org.apache.kafka.common.TopicPartition
+import org.apache.kafka.common.errors.{LeaderNotAvailableException, OffsetNotAvailableException}
 import org.apache.kafka.common.message.ListOffsetsRequestData.ListOffsetsPartition
 import org.apache.kafka.common.message.ListOffsetsResponseData.ListOffsetsPartitionResponse
 import org.apache.kafka.common.protocol.Errors
@@ -50,10 +52,13 @@ class DisklessFetchOffsetRouterTest {
   // Diskless task future we hand back from job.add(...). Stays incomplete by default;
   // tests that need a result complete this future before invoking route().
   private val disklessTaskFuture: CompletableFuture[FileRecordsOrError] = new CompletableFuture[FileRecordsOrError]()
+  // WAL start future we hand back from job.addWalStart(...), incomplete by default like disklessTaskFuture.
+  private val walStartFuture: CompletableFuture[FileRecordsOrError] = new CompletableFuture[FileRecordsOrError]()
 
   private val job: FetchOffsetHandler.Job = {
     val m = mock(classOf[FetchOffsetHandler.Job])
     when(m.add(any(), any())).thenAnswer(_ => disklessTaskFuture)
+    when(m.addWalStart(any())).thenAnswer(_ => walStartFuture)
     when(m.cancelHandler()).thenReturn(new CompletableFuture[Void]())
     m
   }
@@ -69,7 +74,11 @@ class DisklessFetchOffsetRouterTest {
     disklessManagedReplicasEnabled: Boolean = true,
     disklessConsolidationEnabled: Boolean = false
   ): DisklessFetchOffsetRouter =
-    new DisklessFetchOffsetRouter(inklessMetadataView, disklessManagedReplicasEnabled, disklessConsolidationEnabled, purgatory)
+    new DisklessFetchOffsetRouter(inklessMetadataView, disklessManagedReplicasEnabled, disklessConsolidationEnabled, purgatory,
+      () => deferrals += 1)
+
+  // Timestamp lookups that the router deferred with a retriable error.
+  private var deferrals = 0
 
   private def makePartition(timestamp: Long, partitionIndex: Int): ListOffsetsPartition =
     new ListOffsetsPartition().setPartitionIndex(partitionIndex).setTimestamp(timestamp)
@@ -101,6 +110,8 @@ class DisklessFetchOffsetRouterTest {
                     version: Short = 7,
                     classicLogStartOffset: Option[Long] = None,
                     hasCompleteClassicPrefix: Boolean = true,
+                    classicSearchableEnd: TopicPartition => Long = _ => Long.MaxValue,
+                    searchRangeIsCurrent: () => Boolean = () => true,
                     classicResult: ListOffsetsPartitionStatus = defaultClassicResult,
                     newJob: () => FetchOffsetHandler.Job = () =>
                       throw new AssertionError("newJob() should not be called by this routing path")): ListOffsetsPartitionStatus = {
@@ -113,6 +124,7 @@ class DisklessFetchOffsetRouterTest {
       version = version,
       classicLogStartOffsetProvider = _ => classicLogStartOffset,
       hasCompleteClassicPrefix = (_, _) => hasCompleteClassicPrefix,
+      classicSearchRange = tpArg => ClassicSearchRange(classicSearchableEnd(tpArg), searchRangeIsCurrent),
       classicFetchOffset = (tpArg, partition, allow) => {
         classicCalls += ((tpArg, partition, allow))
         classicResult
@@ -589,6 +601,7 @@ class DisklessFetchOffsetRouterTest {
         version = 7,
         classicLogStartOffsetProvider = _ => localClassicLogStart,
         hasCompleteClassicPrefix = (_, _) => true,
+        classicSearchRange = _ => ClassicSearchRange(Long.MaxValue, () => true),
         classicFetchOffset = (tpArg, partition, allow) => {
           classicCalls += ((tpArg, partition, allow))
           defaultClassicResult
@@ -657,6 +670,291 @@ class DisklessFetchOffsetRouterTest {
     // Should go through hybrid Case 2 LATEST_TIMESTAMP path (diskless first, classic fallback)
     verify(job).add(eqTo(tp), any())
     assertTrue(status.futureHolderOpt.isPresent)
+  }
+
+  // ---------------------------------------------------------------------------
+  // Specific timestamp on a replica whose local log ends below the diskless log.
+  // ---------------------------------------------------------------------------
+
+  private val syncNoMatch: ListOffsetsPartitionStatus = resolvedStatus(makeResponse(offset = -1L))
+
+  private def consolidatingRouter(): DisklessFetchOffsetRouter = {
+    when(inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)).thenReturn(true)
+    newRouter(disklessManagedReplicasEnabled = true, disklessConsolidationEnabled = true)
+  }
+
+  private def resultOf(status: ListOffsetsPartitionStatus): FileRecordsOrError = {
+    assertTrue(status.futureHolderOpt.isPresent)
+    status.futureHolderOpt.get.taskFuture.get(1, TimeUnit.SECONDS)
+  }
+
+  private def assertPrefixNotSearchable(status: ListOffsetsPartitionStatus,
+                                        expected: Class[_ <: Exception] = classOf[OffsetNotAvailableException]): Unit = {
+    val result = resultOf(status)
+    assertTrue(result.hasException, s"expected ${expected.getSimpleName}, got $result")
+    assertEquals(expected, result.exception.get.getClass)
+    assertEquals(1, deferrals, "the router counts each deferred lookup once")
+  }
+
+  @Test
+  def switchedSpecificTimestampFailsWithoutDisklessLookupWhenLocalLogEndsBelowSeal(): Unit = {
+    // A recreated phase 2 leader: empty local log, seal at 100.
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(100L)
+
+    val status = route(newRouter(), timestamp = 123L, classicResult = syncNoMatch, classicSearchableEnd = _ => 0L)
+
+    assertPrefixNotSearchable(status)
+    verify(job, never()).add(any(), any())
+    verify(job, never()).addWalStart(any())
+  }
+
+  @Test
+  def switchedSpecificTimestampMapsBelowSealErrorToLeaderNotAvailableBeforeVersion5(): Unit = {
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(100L)
+
+    val status = route(newRouter(), timestamp = 123L, version = 4, classicResult = syncNoMatch,
+      classicSearchableEnd = _ => 0L)
+
+    assertPrefixNotSearchable(status, classOf[LeaderNotAvailableException])
+  }
+
+  @Test
+  def switchedSpecificTimestampReturnsClassicMatchWhenLocalLogEndsBelowSeal(): Unit = {
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(100L)
+    val matched = resolvedStatus(makeResponse(offset = 42L, timestamp = 123L))
+
+    val status = route(newRouter(), timestamp = 123L, classicResult = matched, classicSearchableEnd = _ => 50L)
+
+    assertSame(matched, status, "a match is in the searched range, so it stands")
+    verify(job, never()).add(any(), any())
+  }
+
+  @Test
+  def switchedSpecificTimestampFailsWhenAsyncClassicMissesBelowSeal(): Unit = {
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(100L)
+    val classicFuture = new CompletableFuture[FileRecordsOrError]()
+    val asyncClassic = ListOffsetsPartitionStatus.builder().futureHolderOpt(Optional.of(
+      new AsyncOffsetReadFutureHolder[FileRecordsOrError](new CompletableFuture[Void](), classicFuture))).build()
+
+    // The default newJob fails the test if the fallback opens a control-plane job.
+    val status = route(newRouter(), timestamp = 123L, classicResult = asyncClassic, classicSearchableEnd = _ => 0L)
+    classicFuture.complete(new FileRecordsOrError(Optional.empty(), Optional.empty()))
+
+    assertPrefixNotSearchable(status)
+  }
+
+  @Test
+  def consolidatingSpecificTimestampFailsWhenLocalLogEndsBelowWalStart(): Unit = {
+    // A reassignment target of a born-diskless topic: empty local log, WAL pruned up to 800.
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+    disklessTaskFuture.complete(offsetResult(offset = 800L, timestamp = 10800L))
+    walStartFuture.complete(offsetResult(offset = 800L))
+
+    val status = route(consolidatingRouter(), timestamp = 10100L, replicaId = followerReplicaId,
+      classicResult = syncNoMatch, classicSearchableEnd = _ => 0L)
+
+    assertPrefixNotSearchable(status)
+    verify(job).add(eqTo(tp), any())
+    verify(job).addWalStart(tp)
+    verify(job, never()).start()
+  }
+
+  @Test
+  def consolidatingSpecificTimestampReturnsDisklessResultWhenLocalLogReachesWalStart(): Unit = {
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+    val disklessHit = offsetResult(offset = 1000L, timestamp = 11000L)
+    disklessTaskFuture.complete(disklessHit)
+    walStartFuture.complete(offsetResult(offset = 800L))
+
+    val status = route(consolidatingRouter(), timestamp = 11000L, classicResult = syncNoMatch,
+      classicSearchableEnd = _ => 900L)
+
+    assertSame(disklessHit, resultOf(status))
+    assertEquals(0, deferrals)
+  }
+
+  @Test
+  def consolidatingSpecificTimestampFailsWhenTheDisklessLegAlsoMissesBelowWalStart(): Unit = {
+    // The local log didn't search [0, 800), so the diskless "no match" doesn't show that no record matches.
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+    disklessTaskFuture.complete(new FileRecordsOrError(Optional.empty(), Optional.empty()))
+    walStartFuture.complete(offsetResult(offset = 800L))
+
+    val status = route(consolidatingRouter(), timestamp = 99999L, classicResult = syncNoMatch,
+      classicSearchableEnd = _ => 0L)
+
+    assertPrefixNotSearchable(status)
+  }
+
+  @Test
+  def consolidatingSpecificTimestampReadsTheSearchRangeOnceBeforeTheClassicLookup(): Unit = {
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+    disklessTaskFuture.complete(offsetResult(offset = 1000L, timestamp = 11000L))
+    walStartFuture.complete(offsetResult(offset = 800L))
+    val events = mutable.ListBuffer.empty[String]
+
+    val status = route(consolidatingRouter(), timestamp = 11000L, classicResult = syncNoMatch,
+      classicSearchableEnd = _ => { events += s"range after ${classicCalls.size} classic calls"; 900L })
+    resultOf(status)
+
+    assertEquals(List("range after 0 classic calls"), events.toList)
+  }
+
+  @Test
+  def consolidatingSpecificTimestampFailsWhenTheSearchRangeStopsBeingCurrent(): Unit = {
+    // A rebuild or recreation runs after the range read, so the local search might have read less than the range.
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+    disklessTaskFuture.complete(offsetResult(offset = 1000L, timestamp = 11000L))
+    walStartFuture.complete(offsetResult(offset = 800L))
+
+    val status = route(consolidatingRouter(), timestamp = 11000L, classicResult = syncNoMatch,
+      classicSearchableEnd = _ => 900L, searchRangeIsCurrent = () => false)
+
+    assertPrefixNotSearchable(status)
+  }
+
+  @Test
+  def switchedSpecificTimestampFailsWhenTheSearchRangeStopsBeingCurrent(): Unit = {
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(100L)
+
+    val status = route(newRouter(), timestamp = 123L, classicResult = syncNoMatch, classicSearchableEnd = _ => 150L,
+      searchRangeIsCurrent = () => false)
+
+    assertPrefixNotSearchable(status)
+    verify(job, never()).add(any(), any())
+  }
+
+  @Test
+  def consolidatingSpecificTimestampChecksTheSearchRangeWhenTheControlPlaneAnswers(): Unit = {
+    // The range is current at routing time and stops being current before the control plane answers.
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+    var current = true
+
+    val status = route(consolidatingRouter(), timestamp = 11000L, classicResult = syncNoMatch,
+      classicSearchableEnd = _ => 900L, searchRangeIsCurrent = () => current)
+    current = false
+    disklessTaskFuture.complete(offsetResult(offset = 1000L, timestamp = 11000L))
+    walStartFuture.complete(offsetResult(offset = 800L))
+
+    assertPrefixNotSearchable(status)
+  }
+
+  @Test
+  def consolidatingSwitchedSpecificTimestampComparesWithTheSealBeforeTheFirstPrune(): Unit = {
+    // Before the first prune the WAL start of a switched partition is its classic log start, below the seal.
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(100L)
+    val disklessHit = offsetResult(offset = 100L, timestamp = 10100L)
+    disklessTaskFuture.complete(disklessHit)
+    walStartFuture.complete(offsetResult(offset = 0L))
+
+    val status = route(consolidatingRouter(), timestamp = 10100L, classicResult = syncNoMatch,
+      classicSearchableEnd = _ => 100L)
+
+    assertSame(disklessHit, resultOf(status))
+    verify(job).addWalStart(tp)
+  }
+
+  @Test
+  def consolidatingSwitchedSpecificTimestampFailsWhenThePrunePassedTheLocalLog(): Unit = {
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(100L)
+    disklessTaskFuture.complete(offsetResult(offset = 300L, timestamp = 10300L))
+    walStartFuture.complete(offsetResult(offset = 300L))
+
+    val status = route(consolidatingRouter(), timestamp = 10150L, classicResult = syncNoMatch,
+      classicSearchableEnd = _ => 200L)
+
+    assertPrefixNotSearchable(status)
+  }
+
+  @Test
+  def consolidatingSpecificTimestampForwardsADisklessErrorBeforeCheckingTheWalStart(): Unit = {
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+    val disklessError = new FileRecordsOrError(Optional.of(new RuntimeException("control plane failure")), Optional.empty())
+    disklessTaskFuture.complete(disklessError)
+    walStartFuture.complete(offsetResult(offset = 800L))
+
+    val status = route(consolidatingRouter(), timestamp = 10100L, classicResult = syncNoMatch,
+      classicSearchableEnd = _ => 0L)
+
+    assertSame(disklessError, resultOf(status))
+    assertEquals(0, deferrals)
+  }
+
+  @Test
+  def consolidatingSpecificTimestampForwardsAWalStartError(): Unit = {
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+    disklessTaskFuture.complete(offsetResult(offset = 1000L, timestamp = 11000L))
+    val walStartError = new FileRecordsOrError(Optional.of(new RuntimeException("control plane failure")), Optional.empty())
+    walStartFuture.complete(walStartError)
+
+    val status = route(consolidatingRouter(), timestamp = 11000L, classicResult = syncNoMatch,
+      classicSearchableEnd = _ => 900L)
+
+    assertSame(walStartError, resultOf(status))
+    assertEquals(0, deferrals)
+  }
+
+  @Test
+  def consolidatingSpecificTimestampAsyncFallbackReadsTheWalStartOnTheFreshJob(): Unit = {
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+    val fresh = mock(classOf[FetchOffsetHandler.Job])
+    when(fresh.add(any(), any())).thenReturn(CompletableFuture.completedFuture(offsetResult(offset = 800L, timestamp = 10800L)))
+    when(fresh.addWalStart(any())).thenReturn(CompletableFuture.completedFuture(offsetResult(offset = 800L)))
+    when(fresh.cancelHandler()).thenReturn(new CompletableFuture[Void]())
+    val classicFuture = new CompletableFuture[FileRecordsOrError]()
+    val asyncClassic = ListOffsetsPartitionStatus.builder().futureHolderOpt(Optional.of(
+      new AsyncOffsetReadFutureHolder[FileRecordsOrError](new CompletableFuture[Void](), classicFuture))).build()
+
+    val status = route(consolidatingRouter(), timestamp = 10100L, classicResult = asyncClassic,
+      classicSearchableEnd = _ => 0L, newJob = () => fresh)
+    classicFuture.complete(new FileRecordsOrError(Optional.empty(), Optional.empty()))
+
+    assertPrefixNotSearchable(status)
+    val order = inOrder(fresh)
+    order.verify(fresh).add(eqTo(tp), any())
+    order.verify(fresh).addWalStart(tp)
+    order.verify(fresh).start()
+    verify(job, never()).add(any(), any())
+  }
+
+  @Test
+  def consolidatingSwitchedSpecificTimestampSkipsTheWalStartCheckInPhase1(): Unit = {
+    // In phase 1 the local log stays at the seal, and a DeleteRecords past the seal moved the WAL start to 300.
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(100L)
+    when(inklessMetadataView.isClassicPrefixWaitingForUpload(tp)).thenReturn(true)
+    val disklessHit = offsetResult(offset = 300L, timestamp = 10300L)
+    disklessTaskFuture.complete(disklessHit)
+
+    val status = route(consolidatingRouter(), timestamp = 10150L, classicResult = syncNoMatch,
+      classicSearchableEnd = _ => 100L)
+
+    assertSame(disklessHit, resultOf(status))
+    verify(job, never()).addWalStart(any())
+    assertEquals(0, deferrals)
+  }
+
+  @Test
+  def consolidatingSwitchedSpecificTimestampKeepsTheSealCheckInPhase1(): Unit = {
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(100L)
+    when(inklessMetadataView.isClassicPrefixWaitingForUpload(tp)).thenReturn(true)
+
+    val status = route(consolidatingRouter(), timestamp = 10150L, classicResult = syncNoMatch,
+      classicSearchableEnd = _ => 0L)
+
+    assertPrefixNotSearchable(status)
+    verify(job, never()).add(any(), any())
+  }
+
+  @Test
+  def consolidatingSpecificTimestampFailsWhenTheWalStartIsNegative(): Unit = {
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+    disklessTaskFuture.complete(offsetResult(offset = 1000L, timestamp = 11000L))
+    walStartFuture.complete(offsetResult(offset = -1L))
+
+    val status = route(consolidatingRouter(), timestamp = 11000L, classicResult = syncNoMatch,
+      classicSearchableEnd = _ => 900L)
+
+    assertPrefixNotSearchable(status)
   }
 
 }

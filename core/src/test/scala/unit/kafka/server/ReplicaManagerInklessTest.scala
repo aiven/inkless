@@ -6113,6 +6113,8 @@ class ReplicaManagerInklessTest {
     try {
     when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
       .thenReturn(100L)
+    // The classic lookup is stubbed; the router still reads the end of the local log, which reaches the seal.
+    givenLocalLogEndingAt(replicaManager, disklessTopicPartition, 100L)
 
     // Classic returns no match (empty result, no error).
     val emptyResultHolder = new OffsetResultHolder(Optional.empty[FileRecords.TimestampAndOffset]())
@@ -6245,6 +6247,8 @@ class ReplicaManagerInklessTest {
     try {
     when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
       .thenReturn(100L)
+    // The classic lookup is stubbed; the router still reads the end of the local log, which reaches the seal.
+    givenLocalLogEndingAt(replicaManager, disklessTopicPartition, 100L)
 
     // Classic returns a holder pointing at a pre-completed async remote-storage lookup.
     val resultHolder = new OffsetResultHolder(
@@ -6328,6 +6332,8 @@ class ReplicaManagerInklessTest {
     try {
     when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
       .thenReturn(100L)
+    // The classic lookup is stubbed; the router still reads the end of the local log, which reaches the seal.
+    givenLocalLogEndingAt(replicaManager, disklessTopicPartition, 100L)
 
     val resultHolder = new OffsetResultHolder(
       Optional.empty[FileRecords.TimestampAndOffset](),
@@ -6771,6 +6777,8 @@ class ReplicaManagerInklessTest {
     try {
     when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
       .thenReturn(100L)
+    // The classic lookup is stubbed; the router still reads the end of the local log, which reaches the seal.
+    givenLocalLogEndingAt(replicaManager, disklessTopicPartition, 100L)
 
     val classicRemoteTaskFuture =
       CompletableFuture.completedFuture[OffsetResultHolder.FileRecordsOrError](classicRemoteHit)
@@ -8689,6 +8697,12 @@ class ReplicaManagerInklessTest {
           assertEquals(0L, currentLog.highWatermark)
           assertEquals(-1L, currentLog.highestOffsetInRemoteStorage)
           assertEquals(util.List.of(new EpochEntry(leaderEpoch, 0L)), currentLog.leaderEpochCache.epochEntries)
+          // The classic prefix is only in the remote tier now, so a lookup of a classic timestamp can't fall
+          // through to the diskless log at the seal.
+          val deferralsBefore = yammerMeterCount(deferredListOffsetsRateMeter)
+          val timestampLookup = listOffsetsByTimestamp(replicaManager, tp, timestamp = 0L, currentLeaderEpoch = leaderEpoch)
+          assertEquals(Errors.OFFSET_NOT_AVAILABLE.code, timestampLookup.errorCode)
+          assertEquals(deferralsBefore + 1L, yammerMeterCount(deferredListOffsetsRateMeter))
           val remoteLogManagerCalls = inOrder(mockRemoteLogManager)
           remoteLogManagerCalls.verify(mockRemoteLogManager).stopPartitions(
             ArgumentMatchers.eq(util.Set.of(new StopPartition(tp, false, false, false))), any())
@@ -8721,6 +8735,202 @@ class ReplicaManagerInklessTest {
     } finally {
       consolidationCtor.close()
     }
+  }
+
+  // A reassignment target of a born-diskless consolidating topic starts with an empty log while the WAL is
+  // pruned up to 800. Until consolidation rebuilds the log, a timestamp lookup can't fall through to the first
+  // retained diskless batch: that would skip the records in the remote tier below it.
+  @ParameterizedTest(name = "testFetchOffsetSpecificTimestampOnConsolidatingReplicaComparesItsLogWithTheWalStart with localLogEndOffset: {0}")
+  @CsvSource(Array("0, OFFSET_NOT_AVAILABLE", "900, NONE"))
+  def testFetchOffsetSpecificTimestampOnConsolidatingReplicaComparesItsLogWithTheWalStart(localLogEndOffset: Long,
+                                                                                         expectedError: Errors): Unit = {
+    val controlPlane = walStartControlPlane()
+    withConsolidatingReplica(controlPlane) { (replicaManager, log) =>
+      if (localLogEndOffset > 0) log.truncateFullyAndStartAt(localLogEndOffset, Optional.empty[java.lang.Long]())
+      val deferralsBefore = yammerMeterCount(deferredListOffsetsRateMeter)
+
+      val response = listOffsetsByTimestamp(replicaManager, consolidatingTp, timestamp = 11000L)
+
+      assertEquals(expectedError.code, response.errorCode)
+      val expectedDeferrals = if (expectedError == Errors.NONE) 0L else 1L
+      assertEquals(deferralsBefore + expectedDeferrals, yammerMeterCount(deferredListOffsetsRateMeter))
+      if (expectedError == Errors.NONE) assertEquals(1000L, response.offset)
+      val tidp = new TopicIdPartition(consolidatingTopicId, consolidatingTp)
+      verify(controlPlane).listOffsets(util.List.of(
+        new CpListOffsetsRequest(tidp, 11000L),
+        new CpListOffsetsRequest(tidp, ListOffsetsRequest.EARLIEST_LOCAL_TIMESTAMP)))
+    }
+  }
+
+  // A tier-state rebuild truncates the local log past the WAL start and clears the leader epoch cache before it
+  // restores the cache from remote storage. Until then the remote search has no epoch to start from and reads
+  // nothing below the local log start, so the local log doesn't count as reaching the WAL start.
+  @Test
+  def testFetchOffsetSpecificTimestampOnConsolidatingReplicaWaitsForTheEpochOfTheLogStart(): Unit = {
+    val remoteLogManager = mock(classOf[RemoteLogManager])
+    // The remote search finds nothing in both phases, so the lookup always falls back to the diskless log.
+    when(remoteLogManager.asyncOffsetRead(any(), anyLong(), anyLong(), any(), any())).thenAnswer(_ =>
+      new AsyncOffsetReadFutureHolder[OffsetResultHolder.FileRecordsOrError](
+        CompletableFuture.completedFuture(null),
+        CompletableFuture.completedFuture(new OffsetResultHolder.FileRecordsOrError(Optional.empty(), Optional.empty()))))
+    withConsolidatingReplica(walStartControlPlane(), Some(remoteLogManager)) { (replicaManager, log) =>
+      log.truncateFullyAndStartAt(900L, Optional.of(java.lang.Long.valueOf(0L)))
+      assertTrue(log.remoteLogEnabled())
+      assertEquals(0L, log.logStartOffset)
+      assertEquals(900L, log.localLogStartOffset)
+      assertEquals(OptionalInt.empty(), log.leaderEpochCache.epochForOffset(log.logStartOffset))
+
+      assertEquals(Errors.OFFSET_NOT_AVAILABLE.code,
+        listOffsetsByTimestamp(replicaManager, consolidatingTp, timestamp = 11000L).errorCode)
+
+      log.leaderEpochCache.assign(0, 0L)
+      val response = listOffsetsByTimestamp(replicaManager, consolidatingTp, timestamp = 11000L)
+
+      assertEquals(Errors.NONE.code, response.errorCode)
+      assertEquals(1000L, response.offset)
+      verify(remoteLogManager, times(2)).asyncOffsetRead(ArgumentMatchers.eq(consolidatingTp), ArgumentMatchers.eq(11000L),
+        ArgumentMatchers.eq(0L), any(), any())
+    }
+  }
+
+  // A tier-state rebuild runs while the remote search reads the log: it truncates the log, which clears the leader
+  // epoch cache, and restores the cache before the control plane answers. Both before and after the lookup the
+  // log looks searchable up to 900, past the WAL start, but the search read nothing.
+  @Test
+  def testFetchOffsetSpecificTimestampOnConsolidatingReplicaFailsWhenTheLogTruncatesDuringTheLookup(): Unit = {
+    val remoteLogManager = mock(classOf[RemoteLogManager])
+    var rebuildDuringSearch = true
+    withConsolidatingReplica(walStartControlPlane(), Some(remoteLogManager)) { (replicaManager, log) =>
+      def rebuildRemotePrefix(): Unit = {
+        log.truncateFullyAndStartAt(900L, Optional.of(java.lang.Long.valueOf(0L)))
+        log.leaderEpochCache.assign(0, 0L)
+      }
+      when(remoteLogManager.asyncOffsetRead(any(), anyLong(), anyLong(), any(), any())).thenAnswer { _ =>
+        if (rebuildDuringSearch) rebuildRemotePrefix()
+        new AsyncOffsetReadFutureHolder[OffsetResultHolder.FileRecordsOrError](
+          CompletableFuture.completedFuture(null),
+          CompletableFuture.completedFuture(new OffsetResultHolder.FileRecordsOrError(Optional.empty(), Optional.empty())))
+      }
+      rebuildRemotePrefix()
+      val truncationsBefore = log.truncationCount()
+
+      assertEquals(Errors.OFFSET_NOT_AVAILABLE.code,
+        listOffsetsByTimestamp(replicaManager, consolidatingTp, timestamp = 11000L).errorCode)
+      assertEquals(truncationsBefore + 1, log.truncationCount())
+      assertSame(log, replicaManager.logManager.getLog(consolidatingTp).get)
+
+      rebuildDuringSearch = false
+      val response = listOffsetsByTimestamp(replicaManager, consolidatingTp, timestamp = 11000L)
+
+      assertEquals(Errors.NONE.code, response.errorCode)
+      assertEquals(1000L, response.offset)
+    }
+  }
+
+  // Retention moves the log start while the remote search is queued. The search keeps the log start it read, and
+  // the epoch cache no longer has an epoch for it, so the search reads nothing.
+  @Test
+  def testFetchOffsetSpecificTimestampOnConsolidatingReplicaFailsWhenTheLogStartMovesDuringTheLookup(): Unit = {
+    val remoteLogManager = mock(classOf[RemoteLogManager])
+    var retentionDuringSearch = true
+    withConsolidatingReplica(walStartControlPlane(), Some(remoteLogManager)) { (replicaManager, log) =>
+      when(remoteLogManager.asyncOffsetRead(any(), anyLong(), anyLong(), any(), any())).thenAnswer { invocation =>
+        if (retentionDuringSearch) {
+          log.maybeIncrementLogStartOffset(100L, LogStartOffsetIncrementReason.SegmentDeletion)
+          assertEquals(OptionalInt.empty(), log.leaderEpochCache.epochForOffset(invocation.getArgument[Long](2)))
+        }
+        new AsyncOffsetReadFutureHolder[OffsetResultHolder.FileRecordsOrError](
+          CompletableFuture.completedFuture(null),
+          CompletableFuture.completedFuture(new OffsetResultHolder.FileRecordsOrError(Optional.empty(), Optional.empty())))
+      }
+      log.truncateFullyAndStartAt(900L, Optional.of(java.lang.Long.valueOf(0L)))
+      log.leaderEpochCache.assign(0, 0L)
+
+      assertEquals(Errors.OFFSET_NOT_AVAILABLE.code,
+        listOffsetsByTimestamp(replicaManager, consolidatingTp, timestamp = 11000L).errorCode)
+      assertEquals(100L, log.logStartOffset)
+
+      retentionDuringSearch = false
+      val response = listOffsetsByTimestamp(replicaManager, consolidatingTp, timestamp = 11000L)
+
+      assertEquals(Errors.NONE.code, response.errorCode)
+      assertEquals(1000L, response.offset)
+    }
+  }
+
+  private val deferredListOffsetsRateMeter = "ConsolidationDeferredListOffsetsRate"
+
+  private val consolidatingTp = new TopicPartition("consolidating-topic", 0)
+  private val consolidatingTopicId = Uuid.randomUuid()
+
+  // Answers a timestamp lookup with offset 1000 and the WAL start lookup with 800.
+  private def walStartControlPlane(): ControlPlane = {
+    val controlPlane = mock(classOf[ControlPlane])
+    when(controlPlane.listOffsets(anyList())).thenAnswer { invocation =>
+      invocation.getArgument(0).asInstanceOf[util.List[CpListOffsetsRequest]].asScala.map { request =>
+        if (request.timestamp == ListOffsetsRequest.EARLIEST_LOCAL_TIMESTAMP)
+          CpListOffsetsResponse.success(request.topicIdPartition, RecordBatch.NO_TIMESTAMP, 800L)
+        else
+          CpListOffsetsResponse.success(request.topicIdPartition, 11000L, 1000L)
+      }.asJava
+    }
+    controlPlane
+  }
+
+  // Runs `body` on a broker that hosts an empty, non-leader replica of a born-diskless consolidating topic.
+  private def withConsolidatingReplica(controlPlane: ControlPlane,
+                                       remoteLogManager: Option[RemoteLogManager] = None)
+                                      (body: (ReplicaManager, UnifiedLog) => Unit): Unit = {
+    val ctorInit: MockedConstruction.MockInitializer[ConsolidationFetcherManager] = {
+      case (mockCfm, _) =>
+        when(mockCfm.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    }
+    val consolidationCtor = mockConstruction(classOf[ConsolidationFetcherManager], ctorInit)
+    try {
+      val replicaManager = createReplicaManager(
+        Seq(consolidatingTp.topic),
+        controlPlane = Some(controlPlane),
+        topicIdMapping = Map(consolidatingTp.topic -> consolidatingTopicId),
+        disklessRemoteStorageConsolidationEnabled = true,
+        consolidatingDisklessTopics = Set(consolidatingTp.topic),
+        defaultLogConfig = remoteLogManager.map(_ => LogTestUtils.createLogConfig(remoteLogStorageEnable = true)),
+        remoteLogManager = remoteLogManager,
+      )
+      try {
+        val partition = replicaManager.createPartition(consolidatingTp)
+        partition.createLogIfNotExists(isNew = true, isFutureReplica = false,
+          new LazyOffsetCheckpoints(replicaManager.highWatermarkCheckpoints.asJava), Some(consolidatingTopicId))
+        body(replicaManager, partition.localLogOrException)
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
+    } finally {
+      consolidationCtor.close()
+    }
+  }
+
+  private def givenLocalLogEndingAt(replicaManager: ReplicaManager, tp: TopicIdPartition, logEndOffset: Long): Unit =
+    replicaManager.logManager.getOrCreateLog(tp.topicPartition, isNew = true, topicId = Optional.of(tp.topicId))
+      .truncateFullyAndStartAt(logEndOffset, Optional.empty[java.lang.Long]())
+
+  private def listOffsetsByTimestamp(replicaManager: ReplicaManager,
+                                     tp: TopicPartition,
+                                     timestamp: Long,
+                                     currentLeaderEpoch: Int = ListOffsetsResponse.UNKNOWN_EPOCH): ListOffsetsPartitionResponse = {
+    val topics = Seq(new ListOffsetsTopic()
+      .setName(tp.topic)
+      .setPartitions(util.List.of(new ListOffsetsPartition()
+        .setPartitionIndex(tp.partition)
+        .setTimestamp(timestamp)
+        .setCurrentLeaderEpoch(currentLeaderEpoch))))
+    @volatile var responseTopics: util.Collection[ListOffsetsTopicResponse] = null
+    replicaManager.fetchOffset(topics, Set.empty, IsolationLevel.READ_UNCOMMITTED,
+      ListOffsetsRequest.CONSUMER_REPLICA_ID, "client", 0, 7.toShort,
+      (e, p) => new ListOffsetsPartitionResponse().setPartitionIndex(p.partitionIndex).setErrorCode(e.code)
+        .setOffset(ListOffsetsResponse.UNKNOWN_OFFSET),
+      (r: util.Collection[ListOffsetsTopicResponse]) => responseTopics = r)
+    waitUntilTrue(() => responseTopics != null, "ListOffsets didn't complete")
+    responseTopics.asScala.head.partitions.get(0)
   }
 
   // This replica and its future log end in epoch 1, but the classic prefix ends in epoch 0. A missing directory
