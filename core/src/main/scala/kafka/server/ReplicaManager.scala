@@ -26,8 +26,9 @@ import io.aiven.inkless.produce.AppendHandler
 import io.aiven.inkless.consolidation.{ConsolidatedDisklessLogPruner, ConsolidationFetcherManager, ConsolidationMetrics, ConsolidationReconciler, DelayedConsolidationFetch}
 import kafka.cluster.Partition
 import kafka.log.LogManager
+import kafka.server.DisklessFetchOffsetRouter.ClassicSearchRange
 import kafka.server.QuotaFactory.QuotaManagers
-import kafka.server.ReplicaManager.{AtMinIsrPartitionCountMetricName, ConsolidationFetchBytesInPerSecMetricName, ConsolidationHighWatermarkLagFetchRateMetricName, ConsolidationHighWatermarkLagPartitionCountMetricName, ConsolidationLocalBytesPerSecMetricName, ConsolidationSupplementBytesPerSecMetricName, ConsolidationSupplementRateMetricName, FailedIsrUpdatesPerSecMetricName, IsrExpandsPerSecMetricName, IsrShrinksPerSecMetricName, LeaderCountMetricName, OfflineReplicaCountMetricName, PartitionCountMetricName, PartitionsWithLateTransactionsCountMetricName, ProducerIdCountMetricName, ReassigningPartitionsMetricName, SealedPartitionsCountMetricName, DisklessSwitchedReplicasOutsideIsrCountMetricName, UnderMinIsrPartitionCountMetricName, UnderReplicatedPartitionsMetricName, DisklessSwitchedPrefixLagMetricName, DisklessSwitchedPrefixMissingFetchRateMetricName, ConsolidationDeferredPrefixFetchRateMetricName, PrefixDeferralLogGapMs, createLogReadResult, isListOffsetsTimestampUnsupported}
+import kafka.server.ReplicaManager.{AtMinIsrPartitionCountMetricName, ConsolidationFetchBytesInPerSecMetricName, ConsolidationHighWatermarkLagFetchRateMetricName, ConsolidationHighWatermarkLagPartitionCountMetricName, ConsolidationLocalBytesPerSecMetricName, ConsolidationSupplementBytesPerSecMetricName, ConsolidationSupplementRateMetricName, FailedIsrUpdatesPerSecMetricName, IsrExpandsPerSecMetricName, IsrShrinksPerSecMetricName, LeaderCountMetricName, OfflineReplicaCountMetricName, PartitionCountMetricName, PartitionsWithLateTransactionsCountMetricName, ProducerIdCountMetricName, ReassigningPartitionsMetricName, SealedPartitionsCountMetricName, DisklessSwitchedReplicasOutsideIsrCountMetricName, UnderMinIsrPartitionCountMetricName, UnderReplicatedPartitionsMetricName, DisklessSwitchedPrefixLagMetricName, DisklessSwitchedPrefixMissingFetchRateMetricName, ConsolidationDeferredPrefixFetchRateMetricName, ConsolidationDeferredListOffsetsRateMetricName, PrefixDeferralLogGapMs, createLogReadResult, isListOffsetsTimestampUnsupported}
 import kafka.server.metadata.InklessMetadataView
 import kafka.server.share.DelayedShareFetch
 import kafka.utils._
@@ -132,6 +133,7 @@ object ReplicaManager {
   private val DisklessSwitchedPrefixMissingFetchRateMetricName =
     "DisklessSwitchedPrefixMissingFetchRate"
   private val ConsolidationDeferredPrefixFetchRateMetricName = "ConsolidationDeferredPrefixFetchRate"
+  private val ConsolidationDeferredListOffsetsRateMetricName = "ConsolidationDeferredListOffsetsRate"
 
   // Far above the consumer retry backoff, so a quiet period has no consumer waiting.
   private val PrefixDeferralLogGapMs = 60000L
@@ -162,6 +164,7 @@ object ReplicaManager {
     ConsolidationLocalBytesPerSecMetricName,
     ConsolidationHighWatermarkLagFetchRateMetricName,
     ConsolidationDeferredPrefixFetchRateMetricName,
+    ConsolidationDeferredListOffsetsRateMetricName,
     DisklessSwitchedPrefixMissingFetchRateMetricName
   )
 
@@ -306,7 +309,8 @@ class ReplicaManager(val config: KafkaConfig,
     _inklessMetadataView,
     config.disklessManagedReplicasEnabled,
     config.disklessRemoteStorageConsolidationEnabled,
-    delayedRemoteListOffsetsPurgatory
+    delayedRemoteListOffsetsPurgatory,
+    () => consolidationDeferredListOffsetsRate.mark()
   )
   private val inklessDeleteRecordsInterceptor: Option[DeleteRecordsInterceptor] = inklessSharedState.map(new DeleteRecordsInterceptor(_))
   private val inklessRetentionEnforcer: Option[RetentionEnforcer] =
@@ -472,6 +476,8 @@ class ReplicaManager(val config: KafkaConfig,
   metricsGroup.newGauge(DisklessSwitchedPrefixLagMetricName, () => disklessSwitchedPrefixLag)
   private val consolidationDeferredPrefixFetchRate: Meter =
     metricsGroup.newMeter(ConsolidationDeferredPrefixFetchRateMetricName, "fetches", TimeUnit.SECONDS)
+  private val consolidationDeferredListOffsetsRate: Meter =
+    metricsGroup.newMeter(ConsolidationDeferredListOffsetsRateMetricName, "requests", TimeUnit.SECONDS)
   private val lastPrefixDeferralLogMs = new AtomicLong(0L)
   metricsGroup.newGauge(PartitionsWithLateTransactionsCountMetricName, () => lateTransactionsCount)
   metricsGroup.newGauge(ProducerIdCountMetricName, () => producerIdCount)
@@ -2218,6 +2224,22 @@ class ReplicaManager(val config: KafkaConfig,
     val classicLogStart: TopicPartition => Option[Long] = tp => logManager.getLog(tp).map(_.logStartOffset)
     val hasCompleteClassicPrefix: (TopicPartition, Long) => Boolean =
       (tp, classicToDisklessStartOffset) => logManager.getLog(tp).exists(_.highWatermark >= classicToDisklessStartOffset)
+    // The remote search starts at the leader epoch of the log start. A tier-state rebuild clears the epoch cache
+    // before it restores it, so until then the search reads nothing below the local log start. The truncation count
+    // is read first, so a truncation that the reads below straddle changes it and the range stops being current.
+    // A queued remote search keeps the log start it read. Retention or DeleteRecords that moves the log start drops
+    // the epoch of that offset, and the search then reads nothing, so a new log start also ends the range.
+    val classicSearchRange: TopicPartition => ClassicSearchRange = tp => logManager.getLog(tp) match {
+      case Some(log) =>
+        val truncationCount = log.truncationCount()
+        val logStartOffset = log.logStartOffset
+        val remotePrefixUnsearchable = log.remoteLogEnabled() && logStartOffset < log.localLogStartOffset &&
+          log.leaderEpochCache.epochForOffset(logStartOffset).isEmpty
+        val end = if (remotePrefixUnsearchable) logStartOffset else log.logEndOffset
+        ClassicSearchRange(end, () => logManager.getLog(tp).exists(_ eq log) &&
+          log.truncationCount() == truncationCount && log.logStartOffset == logStartOffset)
+      case None => ClassicSearchRange.Unknown
+    }
 
     topics.foreach { topic =>
       topic.partitions.asScala.foreach { partition =>
@@ -2233,7 +2255,8 @@ class ReplicaManager(val config: KafkaConfig,
         } else if (maybeFetchOffsetJob.exists(_.mustHandle(topic.name))) {
           statusByPartition += topicPartition ->
             disklessFetchOffsetRouter.route(maybeFetchOffsetJob.get, () => inklessFetchOffsetHandler.get.createJob(),
-              topicPartition, partition, replicaId, version, classicLogStart, hasCompleteClassicPrefix, classicFetch)
+              topicPartition, partition, replicaId, version, classicLogStart, hasCompleteClassicPrefix, classicSearchRange,
+              classicFetch)
         } else {
           statusByPartition += topicPartition -> classicFetch(topicPartition, partition, false)
         }

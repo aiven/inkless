@@ -28,6 +28,8 @@ import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.Test
 
 import java.io.File
+import java.util.concurrent.{ConcurrentHashMap, CountDownLatch}
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.{Collections, Optional, OptionalInt}
 import scala.jdk.CollectionConverters._
 
@@ -666,4 +668,43 @@ class LeaderEpochFileCacheTest {
 
     assertEquals(List(new EpochEntry(3, 8)).asJava, checkpoint.read())
   }
+
+  // A tier-state rebuild restores the cache from a remote checkpoint while remote reads run, so a reader must see
+  // none of the restored entries or all of them.
+  @Test
+  def shouldMakeAListOfAssignedEntriesVisibleAllAtOnce(): Unit = {
+    val entries = (0 until 2000).map(epoch => new EpochEntry(epoch, epoch * 10L)).asJava
+    val sizesSeen = ConcurrentHashMap.newKeySet[Integer]()
+    val readerStarted = new CountDownLatch(1)
+    val assignsDone = new AtomicBoolean(false)
+    val reader = new Thread(() => {
+      readerStarted.countDown()
+      while (!assignsDone.get) sizesSeen.add(cache.epochEntries.size)
+    })
+    reader.start()
+    readerStarted.await()
+    try {
+      (0 until 20).foreach { _ =>
+        cache.clearAndFlush()
+        cache.assign(entries)
+      }
+    } finally {
+      assignsDone.set(true)
+      reader.join()
+    }
+
+    assertEquals(entries, cache.epochEntries)
+    assertTrue(sizesSeen.asScala.forall(size => size == 0 || size == entries.size), s"Reader saw sizes $sizesSeen")
+  }
+
+  @Test
+  def shouldAssignNoneOfAListWithAnInvalidEntry(): Unit = {
+    cache.assign(1, 5)
+
+    assertThrows(classOf[IllegalArgumentException],
+      () => cache.assign(List(new EpochEntry(2, 10), new EpochEntry(-1, 20)).asJava))
+
+    assertEquals(List(new EpochEntry(1, 5)).asJava, cache.epochEntries)
+  }
+
 }

@@ -38,11 +38,9 @@ import java.io.IOException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
@@ -64,6 +62,7 @@ import io.aiven.inkless.control_plane.ListOffsetsRequest;
 import io.aiven.inkless.control_plane.ListOffsetsResponse;
 import io.aiven.inkless.control_plane.MetadataView;
 
+import static org.apache.kafka.common.requests.ListOffsetsRequest.EARLIEST_LOCAL_TIMESTAMP;
 import static org.apache.kafka.common.requests.ListOffsetsRequest.EARLIEST_TIMESTAMP;
 
 public class FetchOffsetHandler implements Closeable {
@@ -142,6 +141,7 @@ public class FetchOffsetHandler implements Closeable {
         private final CompletableFuture<Void> cancelHandler = new CompletableFuture<>();
         private final Map<TopicPartition, ListOffsetsRequestData.ListOffsetsPartition> requests = new HashMap<>();
         private final Map<TopicPartition, CompletableFuture<OffsetResultHolder.FileRecordsOrError>> futures = new HashMap<>();
+        private final Map<TopicPartition, CompletableFuture<OffsetResultHolder.FileRecordsOrError>> walStartFutures = new HashMap<>();
 
         private final Time time;
         private final InklessFetchOffsetMetrics metrics;
@@ -177,16 +177,30 @@ public class FetchOffsetHandler implements Closeable {
             return result;
         }
 
+        /**
+         * Adds a lookup of the diskless WAL start of the partition, the offset that `EARLIEST_LOCAL_TIMESTAMP`
+         * returns. The lookup goes in the same control-plane call as the other lookups of the job, and the control
+         * plane answers it after them, so the WAL start is at or past the one that a timestamp lookup of the same
+         * partition saw.
+         */
+        public CompletableFuture<OffsetResultHolder.FileRecordsOrError> addWalStart(final TopicPartition topicPartition) {
+            final CompletableFuture<OffsetResultHolder.FileRecordsOrError> result = new CompletableFuture<>();
+            walStartFutures.put(topicPartition, result);
+            return result;
+        }
+
         public void start() {
             this.startTime = TimeUtils.durationMeasurementNow(time);
 
-            if (requests.isEmpty()) {
+            if (requests.isEmpty() && walStartFutures.isEmpty()) {
                 return;
             }
 
             final Map<TopicIdPartition, ListOffsetsRequestData.ListOffsetsPartition> requestsEnriched;
+            final Map<TopicIdPartition, CompletableFuture<OffsetResultHolder.FileRecordsOrError>> walStartsEnriched;
             try {
                 requestsEnriched = TopicIdEnricher.enrich(metadata, requests);
+                walStartsEnriched = TopicIdEnricher.enrich(metadata, walStartFutures);
             } catch (final TopicIdEnricher.TopicIdNotFoundException e) {
                 // This should not happen during normal execution, non-Diskless topics won't get here.
                 LOGGER.error("Cannot find UUID for topic {}", e.topicName);
@@ -200,7 +214,7 @@ public class FetchOffsetHandler implements Closeable {
 
             final Future<?> submitted;
             try {
-                submitted = executor.submit(() -> queryControlPlane(requestsEnriched));
+                submitted = executor.submit(() -> queryControlPlane(requestsEnriched, walStartsEnriched));
             } catch (final RejectedExecutionException e) {
                 metrics.fetchOffsetRejected();
                 completeFuturesWithError(new TimeoutException("Fetch offset thread pool queue is full", e));
@@ -216,26 +230,33 @@ public class FetchOffsetHandler implements Closeable {
             });
         }
 
-        private void queryControlPlane(final Map<TopicIdPartition, ListOffsetsRequestData.ListOffsetsPartition> requestsEnriched) {
-            final List<ListOffsetsRequest> controlPlaneRequests = new ArrayList<>();
-            // Partitions whose EARLIEST result came from the control plane and should be cached for future reads.
-            final Set<TopicPartition> cacheableEarliest = new HashSet<>();
+        private void queryControlPlane(
+            final Map<TopicIdPartition, ListOffsetsRequestData.ListOffsetsPartition> requestsEnriched,
+            final Map<TopicIdPartition, CompletableFuture<OffsetResultHolder.FileRecordsOrError>> walStartsEnriched
+        ) {
+            // Lookups in request order: every control plane answers in that order, and a partition can appear twice.
+            final List<PendingLookup> lookups = new ArrayList<>();
 
             for (final var entry : requestsEnriched.entrySet()) {
                 final TopicIdPartition topicIdPartition = entry.getKey();
                 final long timestamp = entry.getValue().timestamp();
-                if (isCrossTierEarliest(topicIdPartition, timestamp)) {
+                final CompletableFuture<OffsetResultHolder.FileRecordsOrError> future = futures.get(topicIdPartition.topicPartition());
+                final boolean crossTierEarliest = isCrossTierEarliest(topicIdPartition, timestamp);
+                if (crossTierEarliest) {
                     final Long cached = crossTierLogStartCache.get(topicIdPartition);
                     if (cached != null) {
-                        completeEarliestFromCache(topicIdPartition.topicPartition(), cached);
+                        completeEarliestFromCache(future, cached);
                         continue;
                     }
-                    cacheableEarliest.add(topicIdPartition.topicPartition());
                 }
-                controlPlaneRequests.add(new ListOffsetsRequest(topicIdPartition, timestamp));
+                lookups.add(new PendingLookup(new ListOffsetsRequest(topicIdPartition, timestamp), future, crossTierEarliest));
+            }
+            // After the timestamp lookups, so a WAL start never predates the timestamp answer of its partition.
+            for (final var entry : walStartsEnriched.entrySet()) {
+                lookups.add(new PendingLookup(new ListOffsetsRequest(entry.getKey(), EARLIEST_LOCAL_TIMESTAMP), entry.getValue(), false));
             }
 
-            if (controlPlaneRequests.isEmpty()) {
+            if (lookups.isEmpty()) {
                 // Every request was served from the cache.
                 metrics.fetchOffsetCompleted(startTime);
                 return;
@@ -243,7 +264,7 @@ public class FetchOffsetHandler implements Closeable {
 
             final List<ListOffsetsResponse> controlPlaneResponses;
             try {
-                controlPlaneResponses = controlPlane.listOffsets(controlPlaneRequests);
+                controlPlaneResponses = controlPlane.listOffsets(lookups.stream().map(PendingLookup::request).toList());
             } catch (final ControlPlaneUnavailableException unavailableException) {
                 // KAFKA_STORAGE_ERROR is retriable, unlike the UNKNOWN_SERVER_ERROR the raw
                 // exception would map to below.
@@ -257,21 +278,39 @@ public class FetchOffsetHandler implements Closeable {
                 metrics.fetchOffsetFailed();
                 return;
             }
+            if (controlPlaneResponses.size() != lookups.size()) {
+                completeFuturesWithError(new IllegalStateException(String.format(
+                    "The control plane returned %d list offsets responses for %d requests",
+                    controlPlaneResponses.size(), lookups.size())));
+                metrics.fetchOffsetFailed();
+                return;
+            }
+            for (int i = 0; i < lookups.size(); i++) {
+                final TopicIdPartition requested = lookups.get(i).request().topicIdPartition();
+                final TopicIdPartition answered = controlPlaneResponses.get(i).topicIdPartition();
+                if (!requested.equals(answered)) {
+                    completeFuturesWithError(new IllegalStateException(String.format(
+                        "The control plane answered for %s at position %d of the list offsets requests, which is for %s",
+                        answered, i, requested)));
+                    metrics.fetchOffsetFailed();
+                    return;
+                }
+            }
 
-            for (final var response : controlPlaneResponses) {
-                final TopicPartition topicPartition = response.topicIdPartition().topicPartition();
-                final var future = futures.get(topicPartition);
+            for (int i = 0; i < lookups.size(); i++) {
+                final PendingLookup lookup = lookups.get(i);
+                final ListOffsetsResponse response = controlPlaneResponses.get(i);
                 final ApiException exception = response.errors().exception();
                 if (exception == null) {
-                    if (cacheableEarliest.contains(topicPartition)) {
+                    if (lookup.cacheCrossTierEarliest()) {
                         crossTierLogStartCache.put(response.topicIdPartition(), response.offset());
                     }
-                    future.complete(new OffsetResultHolder.FileRecordsOrError(
+                    lookup.future().complete(new OffsetResultHolder.FileRecordsOrError(
                         Optional.empty(),
                         Optional.of(new FileRecords.TimestampAndOffset(response.timestamp(), response.offset(), Optional.of(LeaderAndIsr.INITIAL_LEADER_EPOCH)))
                     ));
                 } else {
-                    future.complete(new OffsetResultHolder.FileRecordsOrError(
+                    lookup.future().complete(new OffsetResultHolder.FileRecordsOrError(
                         Optional.of(exception),
                         Optional.empty()
                     ));
@@ -282,12 +321,20 @@ public class FetchOffsetHandler implements Closeable {
 
         private void completeFuturesWithError(final Exception exception) {
             for (final var future : futures.values()) {
-                if (!future.isDone()) {
-                    future.complete(new OffsetResultHolder.FileRecordsOrError(
-                        Optional.of(exception),
-                        Optional.empty()
-                    ));
-                }
+                completeWithError(future, exception);
+            }
+            for (final var future : walStartFutures.values()) {
+                completeWithError(future, exception);
+            }
+        }
+
+        private static void completeWithError(final CompletableFuture<OffsetResultHolder.FileRecordsOrError> future,
+                                              final Exception exception) {
+            if (!future.isDone()) {
+                future.complete(new OffsetResultHolder.FileRecordsOrError(
+                    Optional.of(exception),
+                    Optional.empty()
+                ));
             }
         }
 
@@ -295,11 +342,17 @@ public class FetchOffsetHandler implements Closeable {
             return timestamp == EARLIEST_TIMESTAMP && metadata.isConsolidatingDisklessTopic(topicIdPartition.topic());
         }
 
-        private void completeEarliestFromCache(final TopicPartition topicPartition, final long offset) {
-            futures.get(topicPartition).complete(new OffsetResultHolder.FileRecordsOrError(
+        private static void completeEarliestFromCache(final CompletableFuture<OffsetResultHolder.FileRecordsOrError> future,
+                                                      final long offset) {
+            future.complete(new OffsetResultHolder.FileRecordsOrError(
                 Optional.empty(),
                 Optional.of(new FileRecords.TimestampAndOffset(RecordBatch.NO_TIMESTAMP, offset, Optional.of(LeaderAndIsr.INITIAL_LEADER_EPOCH)))
             ));
+        }
+
+        private record PendingLookup(ListOffsetsRequest request,
+                                     CompletableFuture<OffsetResultHolder.FileRecordsOrError> future,
+                                     boolean cacheCrossTierEarliest) {
         }
     }
 }

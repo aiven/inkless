@@ -108,12 +108,22 @@ public final class LeaderEpochFileCache {
         }
     }
 
+    /**
+     * Appends the entries as one update: a reader sees none of them or all of them. A tier-state rebuild restores
+     * the cache from a remote checkpoint, and a remote read during it must not see only the first epochs.
+     */
     public void assign(List<EpochEntry> entries) {
-        entries.forEach(entry -> {
-            if (assign(entry)) {
-                log.debug("Appended new epoch entry {}. Cache now contains {} entries.", entry, epochs.size());
-            }
-        });
+        entries.forEach(LeaderEpochFileCache::validate);
+        lock.writeLock().lock();
+        try {
+            entries.forEach(entry -> {
+                if (assign(entry)) {
+                    log.debug("Appended new epoch entry {}. Cache now contains {} entries.", entry, epochs.size());
+                }
+            });
+        } finally {
+            lock.writeLock().unlock();
+        }
         if (!entries.isEmpty()) writeToFile();
     }
 
@@ -121,10 +131,14 @@ public final class LeaderEpochFileCache {
         return latestEntry().map(epochEntry -> entry.epoch() != epochEntry.epoch() || entry.startOffset() < epochEntry.startOffset()).orElse(true);
     }
 
-    private boolean assign(EpochEntry entry) {
+    private static void validate(EpochEntry entry) {
         if (entry.epoch() < 0 || entry.startOffset() < 0) {
             throw new IllegalArgumentException("Received invalid partition leader epoch entry " + entry);
         }
+    }
+
+    private boolean assign(EpochEntry entry) {
+        validate(entry);
 
         // Check whether the append is needed before acquiring the write lock
         // in order to avoid contention with readers in the common case

@@ -69,6 +69,7 @@ core/src/main/java/kafka/server/TierStateMachine.java     @aiven/inkless @apache
 metadata/src/main/java/org/apache/kafka/controller/ReplicationControlManager.java @aiven/inkless @apache/kafka  # diskless placement, election, and classic-to-diskless switch commits
 metadata/src/main/java/org/apache/kafka/controller/PartitionChangeBuilder.java @aiven/inkless @apache/kafka  # classic-to-diskless switch flag commit
 storage/src/main/java/org/apache/kafka/storage/internals/log/UnifiedLog.java @aiven/inkless @apache/kafka  # forced deletion of the local classic prefix; truncation count that fences remote offset updates
+storage/src/main/java/org/apache/kafka/storage/internals/epoch/LeaderEpochFileCache.java @aiven/inkless @apache/kafka  # a restored list of epoch entries becomes visible to readers all at once
 core/src/main/scala/kafka/server/ReplicaAlterLogDirsThread.scala @aiven/inkless @apache/kafka  # future log rolls at the seal; promotion waits for classic prefix deletion
 storage/src/main/java/org/apache/kafka/server/log/remote/storage/RemoteLogManager.java @aiven/inkless @apache/kafka  # remote read throws LeaderEpochNotAvailableException when the epoch cache has no epoch; remote offset updates skip a log that truncated during the task; epoch cleanup keeps consolidating segments from the cross-tier log start; remote read ends at the upper bound offset
 storage/src/main/java/org/apache/kafka/storage/internals/log/RemoteStorageFetchInfo.java @aiven/inkless @apache/kafka  # upper bound offset that ends a tiered read at the classic-to-diskless seal
