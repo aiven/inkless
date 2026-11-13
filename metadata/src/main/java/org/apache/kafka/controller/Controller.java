@@ -22,8 +22,8 @@ import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.message.AllocateProducerIdsRequestData;
 import org.apache.kafka.common.message.AllocateProducerIdsResponseData;
-import org.apache.kafka.common.message.AlterDisklessSwitchRequestData;
-import org.apache.kafka.common.message.AlterDisklessSwitchResponseData;
+import org.apache.kafka.common.message.RearmDisklessSwitchRequestData;
+import org.apache.kafka.common.message.RearmDisklessSwitchResponseData;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsResponseData;
 import org.apache.kafka.common.message.AlterPartitionRequestData;
@@ -461,13 +461,13 @@ public interface Controller extends AclMutator, AutoCloseable {
      * the switch and reverts the partition to classic, and {@code -2} re-arms the switch as pending.
      *
      * @param context       The controller request context.
-     * @param request       The AlterDisklessSwitch request data.
+     * @param request       The RearmDisklessSwitch request data.
      *
      * @return              A future yielding the response with the top-level error code.
      */
-    CompletableFuture<AlterDisklessSwitchResponseData> alterDisklessSwitch(
+    CompletableFuture<RearmDisklessSwitchResponseData> rearmDisklessSwitch(
         ControllerRequestContext context,
-        AlterDisklessSwitchRequestData request
+        RearmDisklessSwitchRequestData request
     );
 
     /**

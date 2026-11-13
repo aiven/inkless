@@ -17,26 +17,13 @@
 
 package org.apache.kafka.clients.admin;
 
-import org.apache.kafka.common.KafkaFuture;
 import org.apache.kafka.common.annotation.InterfaceStability;
 
 /**
- * The result of the {@link Admin#repairDisklessLog(String, int, int, RepairDisklessLogOptions)} call.
+ * Options for {@link Admin#rearmDisklessSwitch(String, int, long, RearmDisklessSwitchOptions)}.
  *
  * The API of this class is evolving, see {@link Admin} for details.
  */
 @InterfaceStability.Unstable
-public class RepairDisklessLogResult {
-    private final KafkaFuture<Void> future;
-
-    RepairDisklessLogResult(final KafkaFuture<Void> future) {
-        this.future = future;
-    }
-
-    /**
-     * Return a future which succeeds if the repair is successful.
-     */
-    public KafkaFuture<Void> all() {
-        return future;
-    }
+public class RearmDisklessSwitchOptions extends AbstractOptions<RearmDisklessSwitchOptions> {
 }

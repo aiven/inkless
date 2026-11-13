@@ -25,7 +25,6 @@ import org.apache.kafka.clients.admin.AlterConfigOp;
 import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.clients.admin.CreateTopicsResult;
 import org.apache.kafka.clients.admin.NewTopic;
-import org.apache.kafka.clients.admin.OffsetSpec;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -39,6 +38,7 @@ import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.common.errors.InvalidConfigurationException;
+import org.apache.kafka.common.errors.InvalidRequestException;
 import org.apache.kafka.common.message.DescribeTopicPartitionsResponseData;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
@@ -542,44 +542,24 @@ public class InklessTopicTypeSwitcherClusterTest {
     }
 
     @Test
-    public void testAlterDisklessSwitchOverridesSealOffset() throws Exception {
-        final String topic = "switch-seal-override-" + UUID.randomUUID().toString().substring(0, 8);
+    public void testRearmDisklessSwitchRejectsCommittedSwitch() throws Exception {
+        final String topic = "switch-rearm-committed-" + UUID.randomUUID().toString().substring(0, 8);
 
         try (Admin admin = AdminClient.create(baseClientConfigs())) {
-            // Create a classic topic; partition 0 starts out un-switched (-1).
             admin.createTopics(List.of(
                 new NewTopic(topic, 1, (short) 3)
                     .configs(Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "false"))
             )).all().get(30, TimeUnit.SECONDS);
-            // createTopics returns once the controller commits the topic, but metadata propagation
-            // to brokers is asynchronous. Wait for the topic to be visible before polling the seal
-            // offset so readSealOffset doesn't mask a genuinely missing topic as a transient delay.
             TopicMetadataProbe.awaitVisible(admin, topic);
-            waitForSealOffset(admin, topic, 0,
-                offset -> offset == PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET);
 
-            // Produce some records so the partition has a non-empty log; a concrete seal must point at
-            // or below the log end offset, otherwise the broker marks the partition offline.
-            final TopicPartition tp = new TopicPartition(topic, 0);
-            try (Producer<byte[], byte[]> producer = new KafkaProducer<>(producerConfigs())) {
-                for (int i = 0; i < 10; i++) {
-                    producer.send(new ProducerRecord<>(topic, 0, null,
-                        ("value-" + i).getBytes(StandardCharsets.UTF_8))).get(10, TimeUnit.SECONDS);
-                }
-            }
-            final long endOffset = admin.listOffsets(Map.of(tp, OffsetSpec.latest()))
-                .all().get(20, TimeUnit.SECONDS).get(tp).offset();
-            log.warn("[stage=produced] topic={} endOffset={}", topic, endOffset);
-
-            // Switch to diskless
             alterTopicConfigWithIncrementalAlterConfigs(
                 admin, topic, Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true"));
-            waitForSealOffset(admin, topic, 0, offset -> offset != PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET);
+            final long sealOffset = waitForSealOffset(admin, topic, 0, offset -> offset >= 0);
 
-            // Force a concrete seal at the end offset via the operator admin API.
-            admin.alterDisklessSwitch(topic, 0, endOffset).all().get(20, TimeUnit.SECONDS);
-            waitForSealOffset(admin, topic, 0, offset -> offset == endOffset);
-            log.warn("[stage=sealed] topic={} forced seal offset={}", topic, endOffset);
+            final ExecutionException ex = assertThrows(ExecutionException.class, () ->
+                admin.rearmDisklessSwitch(topic, 0).all().get(20, TimeUnit.SECONDS));
+            assertInstanceOf(InvalidRequestException.class, ex.getCause());
+            assertEquals(sealOffset, readSealOffset(admin, topic, 0));
         }
     }
 

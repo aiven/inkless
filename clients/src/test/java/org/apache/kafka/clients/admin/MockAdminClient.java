@@ -1266,12 +1266,7 @@ public class MockAdminClient extends AdminClient {
     }
 
     @Override
-    public AlterDisklessSwitchResult alterDisklessSwitch(String topic, int partition, long sealOffset, AlterDisklessSwitchOptions options) {
-        throw new UnsupportedOperationException("Not implemented yet");
-    }
-
-    @Override
-    public RepairDisklessLogResult repairDisklessLog(String topic, int partition, int brokerId, RepairDisklessLogOptions options) {
+    public RearmDisklessSwitchResult rearmDisklessSwitch(String topic, int partition, RearmDisklessSwitchOptions options) {
         throw new UnsupportedOperationException("Not implemented yet");
     }
 

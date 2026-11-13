@@ -356,73 +356,32 @@ public interface Admin extends AutoCloseable {
     DescribeTopicPartitionsResult describeTopicPartitions(Collection<String> topics, DescribeTopicsOptions options);
 
     /**
-     * Override the classic-to-diskless switch state of a single partition. This is an operator
-     * tool that writes the {@code classicToDisklessStartOffset} directly on the controller without
-     * requiring the caller to be the partition leader.
+     * Re-arm the pending classic-to-diskless switch of a single partition. This is an operator tool:
+     * the controller bumps the leader epoch, so the leader seals again and re-runs the switch.
      *
-     * This is a convenience method for {@link #alterDisklessSwitch(String, int, long, AlterDisklessSwitchOptions)}
-     * with default options. The same rules apply: once the partition's classic prefix is in remote
-     * storage, the controller rejects every seal offset.
-     *
-     * @param topic       The topic name.
-     * @param partition   The partition index.
-     * @param sealOffset  The seal offset to commit: {@code >= 0} forces (re-)sealing at that offset,
-     *                    {@code -1} aborts the switch and reverts the partition to classic, and
-     *                    {@code -2} re-arms the switch as pending.
-     * @return The AlterDisklessSwitchResult.
-     */
-    default AlterDisklessSwitchResult alterDisklessSwitch(String topic, int partition, long sealOffset) {
-        return alterDisklessSwitch(topic, partition, sealOffset, new AlterDisklessSwitchOptions());
-    }
-
-    /**
-     * Override the classic-to-diskless switch state of a single partition. This is an operator
-     * tool that writes the {@code classicToDisklessStartOffset} directly on the controller without
-     * requiring the caller to be the partition leader.
-     *
-     * Once the partition's classic prefix is in remote storage ({@code classicPrefixInRemoteStorage} is
-     * set), the controller rejects every seal offset and the result fails with
-     * {@code InvalidRequestException}.
-     *
-     * @param topic       The topic name.
-     * @param partition   The partition index.
-     * @param sealOffset  The seal offset to commit: {@code >= 0} forces (re-)sealing at that offset,
-     *                    {@code -1} aborts the switch and reverts the partition to classic, and
-     *                    {@code -2} re-arms the switch as pending.
-     * @param options     The options to use.
-     * @return The AlterDisklessSwitchResult.
-     */
-    AlterDisklessSwitchResult alterDisklessSwitch(String topic, int partition, long sealOffset, AlterDisklessSwitchOptions options);
-
-    /**
-     * Reconcile the control-plane diskless log entry of a single partition with the seal committed in
-     * KRaft. This is an operator tool; the request must be sent to the partition leader, which owns the
-     * control-plane connection, so the caller supplies its broker id.
-     *
-     * This is a convenience method for {@link #repairDisklessLog(String, int, int, RepairDisklessLogOptions)}
+     * This is a convenience method for {@link #rearmDisklessSwitch(String, int, RearmDisklessSwitchOptions)}
      * with default options.
      *
-     * @param topic     The topic name.
-     * @param partition The partition index.
-     * @param brokerId  The id of the partition leader broker to send the request to.
-     * @return The RepairDisklessLogResult.
+     * @param topic       The topic name.
+     * @param partition   The partition index.
+     * @return The RearmDisklessSwitchResult.
      */
-    default RepairDisklessLogResult repairDisklessLog(String topic, int partition, int brokerId) {
-        return repairDisklessLog(topic, partition, brokerId, new RepairDisklessLogOptions());
+    default RearmDisklessSwitchResult rearmDisklessSwitch(String topic, int partition) {
+        return rearmDisklessSwitch(topic, partition, new RearmDisklessSwitchOptions());
     }
 
     /**
-     * Reconcile the control-plane diskless log entry of a single partition with the seal committed in
-     * KRaft. This is an operator tool; the request must be sent to the partition leader, which owns the
-     * control-plane connection, so the caller supplies its broker id.
+     * Re-arm the pending classic-to-diskless switch of a single partition. This is an operator tool:
+     * the controller bumps the leader epoch, so the leader seals again and re-runs the switch.
      *
-     * @param topic     The topic name.
-     * @param partition The partition index.
-     * @param brokerId  The id of the partition leader broker to send the request to.
-     * @param options   The options to use.
-     * @return The RepairDisklessLogResult.
+     * If the switch of the partition isn't pending, the result fails with {@code InvalidRequestException}.
+     *
+     * @param topic       The topic name.
+     * @param partition   The partition index.
+     * @param options     The options to use.
+     * @return The RearmDisklessSwitchResult.
      */
-    RepairDisklessLogResult repairDisklessLog(String topic, int partition, int brokerId, RepairDisklessLogOptions options);
+    RearmDisklessSwitchResult rearmDisklessSwitch(String topic, int partition, RearmDisklessSwitchOptions options);
 
     /**
      * Get information about the nodes in the cluster, using the default options.

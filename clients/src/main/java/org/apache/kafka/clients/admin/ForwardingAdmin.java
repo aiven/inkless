@@ -84,13 +84,8 @@ public class ForwardingAdmin implements Admin {
     }
 
     @Override
-    public AlterDisklessSwitchResult alterDisklessSwitch(String topic, int partition, long sealOffset, AlterDisklessSwitchOptions options) {
-        return delegate.alterDisklessSwitch(topic, partition, sealOffset, options);
-    }
-
-    @Override
-    public RepairDisklessLogResult repairDisklessLog(String topic, int partition, int brokerId, RepairDisklessLogOptions options) {
-        return delegate.repairDisklessLog(topic, partition, brokerId, options);
+    public RearmDisklessSwitchResult rearmDisklessSwitch(String topic, int partition, RearmDisklessSwitchOptions options) {
+        return delegate.rearmDisklessSwitch(topic, partition, options);
     }
 
     @Override

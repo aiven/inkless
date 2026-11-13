@@ -49,8 +49,8 @@ import org.apache.kafka.common.message.AllocateProducerIdsRequestData;
 import org.apache.kafka.common.message.AllocateProducerIdsResponseData;
 import org.apache.kafka.common.message.AlterClientQuotasResponseData;
 import org.apache.kafka.common.message.AlterConfigsResponseData;
-import org.apache.kafka.common.message.AlterDisklessSwitchRequestData;
-import org.apache.kafka.common.message.AlterDisklessSwitchResponseData;
+import org.apache.kafka.common.message.RearmDisklessSwitchRequestData;
+import org.apache.kafka.common.message.RearmDisklessSwitchResponseData;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsResponseData;
 import org.apache.kafka.common.message.AlterPartitionRequestData;
@@ -222,8 +222,6 @@ import org.apache.kafka.common.message.RemoveRaftVoterRequestData;
 import org.apache.kafka.common.message.RemoveRaftVoterResponseData;
 import org.apache.kafka.common.message.RenewDelegationTokenRequestData;
 import org.apache.kafka.common.message.RenewDelegationTokenResponseData;
-import org.apache.kafka.common.message.RepairDisklessLogRequestData;
-import org.apache.kafka.common.message.RepairDisklessLogResponseData;
 import org.apache.kafka.common.message.SaslAuthenticateRequestData;
 import org.apache.kafka.common.message.SaslAuthenticateResponseData;
 import org.apache.kafka.common.message.SaslHandshakeRequestData;
@@ -1084,8 +1082,7 @@ public class RequestResponseTest {
             case ALTER_SHARE_GROUP_OFFSETS: return createAlterShareGroupOffsetsRequest(version);
             case DELETE_SHARE_GROUP_OFFSETS: return createDeleteShareGroupOffsetsRequest(version);
             case INIT_DISKLESS_LOG: return createInitDisklessLogRequest(version);
-            case ALTER_DISKLESS_SWITCH: return createAlterDisklessSwitchRequest(version);
-            case REPAIR_DISKLESS_LOG: return createRepairDisklessLogRequest(version);
+            case REARM_DISKLESS_SWITCH: return createRearmDisklessSwitchRequest(version);
             case SET_CLASSIC_PREFIX_IN_REMOTE_STORAGE: return createSetClassicPrefixInRemoteStorageRequest(version);
             default: throw new IllegalArgumentException("Unknown API key " + apikey);
         }
@@ -1183,8 +1180,7 @@ public class RequestResponseTest {
             case ALTER_SHARE_GROUP_OFFSETS: return createAlterShareGroupOffsetsResponse();
             case DELETE_SHARE_GROUP_OFFSETS: return createDeleteShareGroupOffsetsResponse();
             case INIT_DISKLESS_LOG: return createInitDisklessLogResponse();
-            case ALTER_DISKLESS_SWITCH: return createAlterDisklessSwitchResponse();
-            case REPAIR_DISKLESS_LOG: return createRepairDisklessLogResponse();
+            case REARM_DISKLESS_SWITCH: return createRearmDisklessSwitchResponse();
             case SET_CLASSIC_PREFIX_IN_REMOTE_STORAGE: return createSetClassicPrefixInRemoteStorageResponse();
             default: throw new IllegalArgumentException("Unknown API key " + apikey);
         }
@@ -1320,29 +1316,15 @@ public class RequestResponseTest {
         return new InitDisklessLogResponse(data);
     }
 
-    private AlterDisklessSwitchRequest createAlterDisklessSwitchRequest(short version) {
-        AlterDisklessSwitchRequestData data = new AlterDisklessSwitchRequestData()
-                .setTopicName("foo")
-                .setPartitionIndex(0)
-                .setSealOffset(100L);
-        return new AlterDisklessSwitchRequest.Builder(data).build(version);
-    }
-
-    private AlterDisklessSwitchResponse createAlterDisklessSwitchResponse() {
-        return new AlterDisklessSwitchResponse(new AlterDisklessSwitchResponseData()
-                .setThrottleTimeMs(123)
-                .setErrorCode(Errors.NONE.code()));
-    }
-
-    private RepairDisklessLogRequest createRepairDisklessLogRequest(short version) {
-        RepairDisklessLogRequestData data = new RepairDisklessLogRequestData()
+    private RearmDisklessSwitchRequest createRearmDisklessSwitchRequest(short version) {
+        RearmDisklessSwitchRequestData data = new RearmDisklessSwitchRequestData()
                 .setTopicName("foo")
                 .setPartitionIndex(0);
-        return new RepairDisklessLogRequest.Builder(data).build(version);
+        return new RearmDisklessSwitchRequest.Builder(data).build(version);
     }
 
-    private RepairDisklessLogResponse createRepairDisklessLogResponse() {
-        return new RepairDisklessLogResponse(new RepairDisklessLogResponseData()
+    private RearmDisklessSwitchResponse createRearmDisklessSwitchResponse() {
+        return new RearmDisklessSwitchResponse(new RearmDisklessSwitchResponseData()
                 .setThrottleTimeMs(123)
                 .setErrorCode(Errors.NONE.code()));
     }

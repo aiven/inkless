@@ -17,19 +17,17 @@
 package org.apache.kafka.tools;
 
 import org.apache.kafka.clients.admin.Admin;
-import org.apache.kafka.clients.admin.AlterDisklessSwitchOptions;
-import org.apache.kafka.clients.admin.AlterDisklessSwitchResult;
+import org.apache.kafka.clients.admin.RearmDisklessSwitchOptions;
+import org.apache.kafka.clients.admin.RearmDisklessSwitchResult;
 import org.apache.kafka.clients.admin.DescribeTopicPartitionsResult;
 import org.apache.kafka.clients.admin.DescribeTopicsOptions;
 import org.apache.kafka.clients.admin.ListOffsetsResult;
 import org.apache.kafka.clients.admin.OffsetSpec;
-import org.apache.kafka.clients.admin.RepairDisklessLogResult;
 import org.apache.kafka.common.KafkaFuture;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.message.DescribeTopicPartitionsResponseData;
 import org.apache.kafka.common.message.DescribeTopicPartitionsResponseData.DescribeTopicPartitionsResponsePartition;
 import org.apache.kafka.common.message.DescribeTopicPartitionsResponseData.DescribeTopicPartitionsResponseTopic;
-import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.metadata.InitDisklessLogFields;
 import org.apache.kafka.metadata.InitDisklessLogFields.ProducerStateEntry;
 
@@ -37,6 +35,8 @@ import net.sourceforge.argparse4j.inf.ArgumentParserException;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentMatchers;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -46,14 +46,11 @@ import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -228,300 +225,47 @@ public class TopicSwitchCommandTest {
     }
 
     @Test
-    public void testSealCommitsExplicitOffset() throws Exception {
-        mockDescribeSeal(0, 120L);
-        mockLogRange(0, 10, 150);
-        mockAlterDisklessSwitch();
+    public void testRearmSendsRearmRequest() throws Exception {
+        mockRearmDisklessSwitch();
 
-        String output = runSealCommand(0, Optional.of(100L), false);
+        String output = runRearmCommand(0);
 
-        verify(adminClient).alterDisklessSwitch(eq(TOPIC), eq(0), eq(100L), any(AlterDisklessSwitchOptions.class));
-        assertTrue(output.contains("within classic log range [10, 150]"));
-        assertTrue(output.contains("Set test-topic-0 classicToDisklessStartOffset to 100"));
-    }
-
-    @Test
-    public void testSealRejectsExplicitOffsetAboveEndOffset() throws Exception {
-        mockDescribeSeal(0, -2L);
-        mockLogRange(0, 0, 90);
-
-        RuntimeException ex = assertThrows(RuntimeException.class,
-            () -> runSealCommand(0, Optional.of(100L), false));
-        assertTrue(ex.getMessage().contains("outside the classic log range [0, 90]"));
-        verify(adminClient, never()).alterDisklessSwitch(any(), anyInt(), anyLong(), any());
-    }
-
-    @Test
-    public void testSealRejectsExplicitOffsetBelowStartOffset() throws Exception {
-        mockDescribeSeal(0, -2L);
-        mockLogRange(0, 50, 150);
-
-        RuntimeException ex = assertThrows(RuntimeException.class,
-            () -> runSealCommand(0, Optional.of(20L), false));
-        assertTrue(ex.getMessage().contains("outside the classic log range [50, 150]"));
-        verify(adminClient, never()).alterDisklessSwitch(any(), anyInt(), anyLong(), any());
-    }
-
-    @Test
-    public void testSealDefaultsToEndOffsetWhenPending() throws Exception {
-        // Pending switch (offset -2): default seals at the current end offset.
-        mockDescribeSeal(0, -2L);
-        mockLogRange(0, 0, 150);
-        mockAlterDisklessSwitch();
-
-        String output = runSealCommand(0, Optional.empty(), false);
-
-        verify(adminClient).alterDisklessSwitch(eq(TOPIC), eq(0), eq(150L), any(AlterDisklessSwitchOptions.class));
-        assertTrue(output.contains("Set test-topic-0 classicToDisklessStartOffset to 150"));
-    }
-
-    @Test
-    public void testSealDefaultRejectedWhenAlreadyCommitted() throws Exception {
-        // Already committed (offset 100): defaulting would use the diskless end offset, so require --offset.
-        mockDescribeSeal(0, 100L);
-
-        RuntimeException ex = assertThrows(RuntimeException.class,
-            () -> runSealCommand(0, Optional.empty(), false));
-        assertTrue(ex.getMessage().contains("already has a committed seal offset (100)"));
-        verify(adminClient, never()).alterDisklessSwitch(any(), anyInt(), anyLong(), any());
-    }
-
-    @Test
-    public void testSealDryRunDoesNotCommit() throws Exception {
-        mockDescribeSeal(0, 120L);
-        mockLogRange(0, 0, 150);
-
-        String output = runSealCommand(0, Optional.of(100L), true);
-
-        verify(adminClient, never()).alterDisklessSwitch(any(), anyInt(), anyLong(), any());
-        assertTrue(output.contains("[dry-run]"));
-        assertTrue(output.contains("Would set test-topic-0 classicToDisklessStartOffset to 100"));
-    }
-
-    @Test
-    public void testSealRejectsExplicitOffsetAboveCommittedSeal() throws Exception {
-        mockDescribeSeal(0, 100L);
-
-        RuntimeException ex = assertThrows(RuntimeException.class,
-            () -> runSealCommand(0, Optional.of(120L), false));
-        assertTrue(ex.getMessage().contains("exceeds the committed seal offset (100)"), ex.getMessage());
-        verify(adminClient, never()).alterDisklessSwitch(any(), anyInt(), anyLong(), any());
-    }
-
-    @Test
-    public void testSealDryRunRejectsExplicitOffsetAboveCommittedSeal() throws Exception {
-        mockDescribeSeal(0, 100L);
-
-        RuntimeException ex = assertThrows(RuntimeException.class,
-            () -> runSealCommand(0, Optional.of(120L), true));
-        assertTrue(ex.getMessage().contains("exceeds the committed seal offset (100)"), ex.getMessage());
-        verify(adminClient, never()).alterDisklessSwitch(any(), anyInt(), anyLong(), any());
-    }
-
-    @Test
-    public void testSealCommitsExplicitOffsetEqualToCommittedSeal() throws Exception {
-        mockDescribeSeal(0, 100L);
-        mockLogRange(0, 0, 150);
-        mockAlterDisklessSwitch();
-
-        runSealCommand(0, Optional.of(100L), false);
-
-        verify(adminClient).alterDisklessSwitch(eq(TOPIC), eq(0), eq(100L), any(AlterDisklessSwitchOptions.class));
-    }
-
-    @Test
-    public void testSealRejectsExplicitOffsetWhenClassicPrefixInRemoteStorage() throws Exception {
-        mockDescribeSeal(0, 100L, true);
-
-        RuntimeException ex = assertThrows(RuntimeException.class,
-            () -> runSealCommand(0, Optional.of(90L), false));
-        assertTrue(ex.getMessage().contains("classic prefix in remote storage"), ex.getMessage());
-        verify(adminClient, never()).alterDisklessSwitch(any(), anyInt(), anyLong(), any());
-    }
-
-    @Test
-    public void testSealDryRunRejectsWhenClassicPrefixInRemoteStorage() throws Exception {
-        mockDescribeSeal(0, 100L, true);
-
-        RuntimeException ex = assertThrows(RuntimeException.class,
-            () -> runSealCommand(0, Optional.of(90L), true));
-        assertTrue(ex.getMessage().contains("classic prefix in remote storage"), ex.getMessage());
-        verify(adminClient, never()).alterDisklessSwitch(any(), anyInt(), anyLong(), any());
-    }
-
-    @Test
-    public void testSealDefaultRejectsWhenClassicPrefixInRemoteStorage() throws Exception {
-        mockDescribeSeal(0, 100L, true);
-
-        RuntimeException ex = assertThrows(RuntimeException.class,
-            () -> runSealCommand(0, Optional.empty(), false));
-        assertTrue(ex.getMessage().contains("classic prefix in remote storage"), ex.getMessage());
-        verify(adminClient, never()).alterDisklessSwitch(any(), anyInt(), anyLong(), any());
-    }
-
-    @Test
-    public void testSealAbortDoesNotCheckEndOffset() throws Exception {
-        mockAlterDisklessSwitch();
-
-        String output = runSealCommand(0, Optional.of(-1L), false);
-
-        verify(adminClient).alterDisklessSwitch(eq(TOPIC), eq(0), eq(-1L), any(AlterDisklessSwitchOptions.class));
-        assertTrue(output.contains("-1 (abort switch, revert to classic)"));
-        assertFalse(output.contains("end offset"));
-        // Controllers don't serve DescribeTopicPartitions, so the abort must work with --bootstrap-controller.
+        verify(adminClient).rearmDisklessSwitch(eq(TOPIC), eq(0), any(RearmDisklessSwitchOptions.class));
+        assertTrue(output.contains("Re-armed the switch of test-topic-0."), output);
+        // Controllers don't serve DescribeTopicPartitions, so rearm must work with --bootstrap-controller.
         verify(adminClient, never()).describeTopicPartitions(any(), any(DescribeTopicsOptions.class));
     }
 
     @Test
-    public void testSealReArm() throws Exception {
-        mockAlterDisklessSwitch();
-
-        String output = runSealCommand(0, Optional.of(-2L), false);
-
-        verify(adminClient).alterDisklessSwitch(eq(TOPIC), eq(0), eq(-2L), any(AlterDisklessSwitchOptions.class));
-        assertTrue(output.contains("-2 (re-arm switch)"));
-        verify(adminClient, never()).describeTopicPartitions(any(), any(DescribeTopicsOptions.class));
+    public void testRearmAcceptsBootstrapController() throws Exception {
+        TopicSwitchCommand.argumentParser()
+            .parseArgs(new String[]{"rearm", "--bootstrap-controller", "localhost:9093", "--topic", TOPIC, "--partition", "0"});
     }
 
     @Test
-    public void testSealRejectsInvalidOffset() {
-        RuntimeException ex = assertThrows(RuntimeException.class,
-            () -> runSealCommand(0, Optional.of(-3L), false));
-        assertTrue(ex.getMessage().contains("Invalid seal offset -3"));
-    }
-
-    @Test
-    public void testRepairSinglePartition() throws Exception {
-        mockDescribe(List.of(buildPartition(0, 3, 5, 100L, 7)));
-        mockRepairDisklessLog();
-
-        String output = runRepairCommand(Optional.of(0));
-
-        verify(adminClient).repairDisklessLog(eq(TOPIC), eq(0), eq(3));
-        assertTrue(output.contains("Repaired test-topic-0 control-plane diskless log at seal offset 100 (leader 3)"));
-    }
-
-    @Test
-    public void testRepairAllPartitionsSkipsUnswitched() throws Exception {
-        // Partition 0 committed (seal 100), partition 1 not switched (-1).
-        mockDescribe(List.of(buildPartition(0, 3, 5, 100L, 7), buildPartition(1, 4, 6, -1L, -1)));
-        mockRepairDisklessLog();
-
-        String output = runRepairCommand(Optional.empty());
-
-        verify(adminClient).repairDisklessLog(eq(TOPIC), eq(0), eq(3));
-        verify(adminClient, never()).repairDisklessLog(eq(TOPIC), eq(1), anyInt());
-        assertTrue(output.contains("Skipping test-topic-1: not switched"));
-        assertTrue(output.contains("Repaired 1 partition(s)"));
-    }
-
-    @Test
-    public void testRepairRejectsUnknownPartition() throws Exception {
-        mockDescribe(List.of(buildPartition(0, 3, 5, 100L, 7)));
-
-        RuntimeException ex = assertThrows(RuntimeException.class,
-            () -> runRepairCommand(Optional.of(5)));
-        assertTrue(ex.getMessage().contains("Partition not found: test-topic-5"));
-        verify(adminClient, never()).repairDisklessLog(any(), anyInt(), anyInt());
-    }
-
-    @Test
-    public void testRepairFailsOnTopicError() throws Exception {
-        DescribeTopicPartitionsResponseData responseData = buildResponseData(List.of(buildPartition(0, 3, 5, 100L, 7)));
-        responseData.topics().find(TOPIC).setErrorCode(Errors.TOPIC_AUTHORIZATION_FAILED.code());
-        when(adminClient.describeTopicPartitions(ArgumentMatchers.any(), any(DescribeTopicsOptions.class)))
-            .thenReturn(new DescribeTopicPartitionsResult(KafkaFuture.completedFuture(responseData)));
-
-        RuntimeException ex = assertThrows(RuntimeException.class,
-            () -> runRepairCommand(Optional.of(0)));
-        assertTrue(ex.getMessage().contains("Error describing topic " + TOPIC));
-        verify(adminClient, never()).repairDisklessLog(any(), anyInt(), anyInt());
-    }
-
-    @Test
-    public void testRepairSkipsPartitionWithoutLeader() throws Exception {
-        mockDescribe(List.of(buildPartition(0, -1, 5, 100L, 7)));
-
-        String output = runRepairCommand(Optional.of(0));
-
-        verify(adminClient, never()).repairDisklessLog(any(), anyInt(), anyInt());
-        assertTrue(output.contains("Skipping test-topic-0: no current leader"));
-    }
-
-    @Test
-    public void testRepairRejectsBootstrapController() {
+    public void testRearmRequiresPartition() {
         assertThrows(ArgumentParserException.class, () -> TopicSwitchCommand.argumentParser()
-            .parseArgs(new String[]{"repair", "--bootstrap-controller", "localhost:9093", "--topic", TOPIC}));
+            .parseArgs(new String[]{"rearm", "--bootstrap-server", "localhost:9092", "--topic", TOPIC}));
     }
 
-    @Test
-    public void testRepairAcceptsBootstrapServer() throws Exception {
-        TopicSwitchCommand.argumentParser()
-            .parseArgs(new String[]{"repair", "--bootstrap-server", "localhost:9092", "--topic", TOPIC});
+    @ParameterizedTest
+    @ValueSource(strings = {"seal", "repair"})
+    public void testRemovedCommandsAreRejected(String command) {
+        assertThrows(ArgumentParserException.class, () -> TopicSwitchCommand.argumentParser()
+            .parseArgs(new String[]{command, "--bootstrap-server", "localhost:9092", "--topic", TOPIC, "--partition", "0"}));
     }
 
-    @Test
-    public void testSealAcceptsBootstrapController() throws Exception {
-        TopicSwitchCommand.argumentParser()
-            .parseArgs(new String[]{"seal", "--bootstrap-controller", "localhost:9093", "--topic", TOPIC, "--partition", "0"});
-    }
-
-    private void mockLogRange(int partition, long startOffset, long endOffset) {
-        when(adminClient.listOffsets(anyMap()))
-            .thenAnswer(invocation -> {
-                Map<TopicPartition, OffsetSpec> request = invocation.getArgument(0);
-                boolean isLatest = request.values().stream().anyMatch(s -> s instanceof OffsetSpec.LatestSpec);
-                long offset = isLatest ? endOffset : startOffset;
-                TopicPartition tp = new TopicPartition(TOPIC, partition);
-                Map<TopicPartition, KafkaFuture<ListOffsetsResult.ListOffsetsResultInfo>> futures = Map.of(
-                    tp, KafkaFuture.completedFuture(
-                        new ListOffsetsResult.ListOffsetsResultInfo(offset, -1, Optional.empty())));
-                return new ListOffsetsResult(futures);
-            });
-    }
-
-    // Mocks describeTopicPartitions so the seal command can read the current committed offset.
-    private void mockDescribeSeal(int partition, long classicToDisklessStartOffset) {
-        mockDescribeSeal(partition, classicToDisklessStartOffset, false);
-    }
-
-    private void mockDescribeSeal(int partition, long classicToDisklessStartOffset, boolean classicPrefixInRemoteStorage) {
-        DescribeTopicPartitionsResponseData responseData = buildResponseData(List.of(
-            buildPartition(partition, 1, 0, classicToDisklessStartOffset, -1, classicPrefixInRemoteStorage)));
-        when(adminClient.describeTopicPartitions(ArgumentMatchers.any(), any(DescribeTopicsOptions.class)))
-            .thenReturn(new DescribeTopicPartitionsResult(KafkaFuture.completedFuture(responseData)));
-    }
-
-    private void mockAlterDisklessSwitch() {
-        AlterDisklessSwitchResult result = mock(AlterDisklessSwitchResult.class);
+    private void mockRearmDisklessSwitch() {
+        RearmDisklessSwitchResult result = mock(RearmDisklessSwitchResult.class);
         when(result.all()).thenReturn(KafkaFuture.completedFuture(null));
-        when(adminClient.alterDisklessSwitch(any(), anyInt(), anyLong(), any(AlterDisklessSwitchOptions.class)))
+        when(adminClient.rearmDisklessSwitch(any(), anyInt(), any(RearmDisklessSwitchOptions.class)))
             .thenReturn(result);
     }
 
-    private void mockDescribe(List<DescribeTopicPartitionsResponsePartition> partitions) {
-        DescribeTopicPartitionsResponseData responseData = buildResponseData(partitions);
-        when(adminClient.describeTopicPartitions(ArgumentMatchers.any(), any(DescribeTopicsOptions.class)))
-            .thenReturn(new DescribeTopicPartitionsResult(KafkaFuture.completedFuture(responseData)));
-    }
-
-    private void mockRepairDisklessLog() {
-        RepairDisklessLogResult result = mock(RepairDisklessLogResult.class);
-        when(result.all()).thenReturn(KafkaFuture.completedFuture(null));
-        when(adminClient.repairDisklessLog(any(), anyInt(), anyInt())).thenReturn(result);
-    }
-
-    private String runSealCommand(int partition, Optional<Long> offset, boolean dryRun) throws Exception {
+    private String runRearmCommand(int partition) throws Exception {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         PrintStream stream = new PrintStream(out, false, StandardCharsets.UTF_8);
-        TopicSwitchCommand.sealCommand(stream, adminClient, TOPIC, partition, offset, false, dryRun);
-        return out.toString(StandardCharsets.UTF_8);
-    }
-
-    private String runRepairCommand(Optional<Integer> partition) throws Exception {
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        PrintStream stream = new PrintStream(out, false, StandardCharsets.UTF_8);
-        TopicSwitchCommand.repairCommand(stream, adminClient, TOPIC, partition);
+        TopicSwitchCommand.rearmCommand(stream, adminClient, TOPIC, partition);
         return out.toString(StandardCharsets.UTF_8);
     }
 

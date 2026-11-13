@@ -17,7 +17,7 @@
 
 package org.apache.kafka.common.requests;
 
-import org.apache.kafka.common.message.RepairDisklessLogResponseData;
+import org.apache.kafka.common.message.RearmDisklessSwitchResponseData;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.protocol.Readable;
@@ -25,16 +25,16 @@ import org.apache.kafka.common.protocol.Readable;
 import java.util.EnumMap;
 import java.util.Map;
 
-public class RepairDisklessLogResponse extends AbstractResponse {
-    private final RepairDisklessLogResponseData data;
+public class RearmDisklessSwitchResponse extends AbstractResponse {
+    private final RearmDisklessSwitchResponseData data;
 
-    public RepairDisklessLogResponse(RepairDisklessLogResponseData data) {
-        super(ApiKeys.REPAIR_DISKLESS_LOG);
+    public RearmDisklessSwitchResponse(RearmDisklessSwitchResponseData data) {
+        super(ApiKeys.REARM_DISKLESS_SWITCH);
         this.data = data;
     }
 
     @Override
-    public RepairDisklessLogResponseData data() {
+    public RearmDisklessSwitchResponseData data() {
         return data;
     }
 
@@ -57,8 +57,8 @@ public class RepairDisklessLogResponse extends AbstractResponse {
         return errorCounts;
     }
 
-    public static RepairDisklessLogResponse parse(Readable readable, short version) {
-        return new RepairDisklessLogResponse(new RepairDisklessLogResponseData(readable, version));
+    public static RearmDisklessSwitchResponse parse(Readable readable, short version) {
+        return new RearmDisklessSwitchResponse(new RearmDisklessSwitchResponseData(readable, version));
     }
 
     @Override

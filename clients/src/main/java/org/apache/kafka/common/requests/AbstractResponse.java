@@ -293,10 +293,8 @@ public abstract class AbstractResponse implements AbstractRequestResponse {
                 return DeleteShareGroupOffsetsResponse.parse(readable, version);
             case INIT_DISKLESS_LOG:
                 return InitDisklessLogResponse.parse(readable, version);
-            case ALTER_DISKLESS_SWITCH:
-                return AlterDisklessSwitchResponse.parse(readable, version);
-            case REPAIR_DISKLESS_LOG:
-                return RepairDisklessLogResponse.parse(readable, version);
+            case REARM_DISKLESS_SWITCH:
+                return RearmDisklessSwitchResponse.parse(readable, version);
             case SET_CLASSIC_PREFIX_IN_REMOTE_STORAGE:
                 return SetClassicPrefixInRemoteStorageResponse.parse(readable, version);
             default:

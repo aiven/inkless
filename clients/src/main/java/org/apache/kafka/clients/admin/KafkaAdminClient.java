@@ -109,7 +109,7 @@ import org.apache.kafka.common.errors.UnsupportedSaslMechanismException;
 import org.apache.kafka.common.errors.UnsupportedVersionException;
 import org.apache.kafka.common.internals.KafkaFutureImpl;
 import org.apache.kafka.common.message.AddRaftVoterRequestData;
-import org.apache.kafka.common.message.AlterDisklessSwitchRequestData;
+import org.apache.kafka.common.message.RearmDisklessSwitchRequestData;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestData.ReassignableTopic;
 import org.apache.kafka.common.message.AlterReplicaLogDirsRequestData;
@@ -168,7 +168,6 @@ import org.apache.kafka.common.message.ListPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.MetadataRequestData;
 import org.apache.kafka.common.message.RemoveRaftVoterRequestData;
 import org.apache.kafka.common.message.RenewDelegationTokenRequestData;
-import org.apache.kafka.common.message.RepairDisklessLogRequestData;
 import org.apache.kafka.common.message.UnregisterBrokerRequestData;
 import org.apache.kafka.common.message.UpdateFeaturesRequestData;
 import org.apache.kafka.common.message.UpdateFeaturesResponseData.UpdatableFeatureResult;
@@ -189,8 +188,8 @@ import org.apache.kafka.common.requests.AddRaftVoterRequest;
 import org.apache.kafka.common.requests.AddRaftVoterResponse;
 import org.apache.kafka.common.requests.AlterClientQuotasRequest;
 import org.apache.kafka.common.requests.AlterClientQuotasResponse;
-import org.apache.kafka.common.requests.AlterDisklessSwitchRequest;
-import org.apache.kafka.common.requests.AlterDisklessSwitchResponse;
+import org.apache.kafka.common.requests.RearmDisklessSwitchRequest;
+import org.apache.kafka.common.requests.RearmDisklessSwitchResponse;
 import org.apache.kafka.common.requests.AlterPartitionReassignmentsRequest;
 import org.apache.kafka.common.requests.AlterPartitionReassignmentsResponse;
 import org.apache.kafka.common.requests.AlterReplicaLogDirsRequest;
@@ -251,8 +250,6 @@ import org.apache.kafka.common.requests.RemoveRaftVoterRequest;
 import org.apache.kafka.common.requests.RemoveRaftVoterResponse;
 import org.apache.kafka.common.requests.RenewDelegationTokenRequest;
 import org.apache.kafka.common.requests.RenewDelegationTokenResponse;
-import org.apache.kafka.common.requests.RepairDisklessLogRequest;
-import org.apache.kafka.common.requests.RepairDisklessLogResponse;
 import org.apache.kafka.common.requests.UnregisterBrokerRequest;
 import org.apache.kafka.common.requests.UnregisterBrokerResponse;
 import org.apache.kafka.common.requests.UpdateFeaturesRequest;
@@ -4907,63 +4904,23 @@ public class KafkaAdminClient extends AdminClient {
     }
 
     @Override
-    public AlterDisklessSwitchResult alterDisklessSwitch(String topic, int partition, long sealOffset,
-                                                         AlterDisklessSwitchOptions options) {
+    public RearmDisklessSwitchResult rearmDisklessSwitch(String topic, int partition, RearmDisklessSwitchOptions options) {
         final KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
         final long now = time.milliseconds();
-        final Call call = new Call("alterDisklessSwitch", calcDeadlineMs(now, options.timeoutMs()),
+        final Call call = new Call("rearmDisklessSwitch", calcDeadlineMs(now, options.timeoutMs()),
             new LeastLoadedBrokerOrActiveKController()) {
 
             @Override
-            AlterDisklessSwitchRequest.Builder createRequest(int timeoutMs) {
-                AlterDisklessSwitchRequestData data = new AlterDisklessSwitchRequestData()
-                    .setTopicName(topic)
-                    .setPartitionIndex(partition)
-                    .setSealOffset(sealOffset)
-                    .setClearProducerStates(options.clearProducerStates());
-                return new AlterDisklessSwitchRequest.Builder(data);
-            }
-
-            @Override
-            void handleResponse(AbstractResponse abstractResponse) {
-                final AlterDisklessSwitchResponse response = (AlterDisklessSwitchResponse) abstractResponse;
-                Errors error = Errors.forCode(response.data().errorCode());
-                if (error == Errors.NONE) {
-                    future.complete(null);
-                } else {
-                    future.completeExceptionally(error.exception(response.data().errorMessage()));
-                }
-            }
-
-            @Override
-            void handleFailure(Throwable throwable) {
-                future.completeExceptionally(throwable);
-            }
-        };
-        runnable.call(call, now);
-        return new AlterDisklessSwitchResult(future);
-    }
-
-    @Override
-    public RepairDisklessLogResult repairDisklessLog(String topic, int partition, int brokerId,
-                                                     RepairDisklessLogOptions options) {
-        final KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
-        final long now = time.milliseconds();
-        // The control-plane write happens on the partition leader, so send directly to that broker.
-        final Call call = new Call("repairDisklessLog", calcDeadlineMs(now, options.timeoutMs()),
-            new ConstantNodeIdProvider(brokerId)) {
-
-            @Override
-            RepairDisklessLogRequest.Builder createRequest(int timeoutMs) {
-                RepairDisklessLogRequestData data = new RepairDisklessLogRequestData()
+            RearmDisklessSwitchRequest.Builder createRequest(int timeoutMs) {
+                RearmDisklessSwitchRequestData data = new RearmDisklessSwitchRequestData()
                     .setTopicName(topic)
                     .setPartitionIndex(partition);
-                return new RepairDisklessLogRequest.Builder(data);
+                return new RearmDisklessSwitchRequest.Builder(data);
             }
 
             @Override
             void handleResponse(AbstractResponse abstractResponse) {
-                final RepairDisklessLogResponse response = (RepairDisklessLogResponse) abstractResponse;
+                final RearmDisklessSwitchResponse response = (RearmDisklessSwitchResponse) abstractResponse;
                 Errors error = Errors.forCode(response.data().errorCode());
                 if (error == Errors.NONE) {
                     future.complete(null);
@@ -4978,7 +4935,7 @@ public class KafkaAdminClient extends AdminClient {
             }
         };
         runnable.call(call, now);
-        return new RepairDisklessLogResult(future);
+        return new RearmDisklessSwitchResult(future);
     }
 
     @Override

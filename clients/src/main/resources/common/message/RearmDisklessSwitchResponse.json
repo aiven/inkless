@@ -16,7 +16,7 @@
 {
   "apiKey": 501,
   "type": "response",
-  "name": "AlterDisklessSwitchResponse",
+  "name": "RearmDisklessSwitchResponse",
   "validVersions": "0",
   "flexibleVersions": "0+",
   "fields": [
