@@ -42,6 +42,7 @@ import org.mockito.quality.Strictness;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
@@ -296,6 +297,32 @@ class FetchOffsetHandlerTest {
         runnableCaptor.getValue().run();
 
         for (final var future : List.of(timestampLookup, walStart)) {
+            assertThat(future.get().exception()).containsInstanceOf(IllegalStateException.class);
+        }
+    }
+
+    @Test
+    void responseForAnotherPartitionFailsEveryLookup() throws ExecutionException, InterruptedException {
+        when(metadataView.getTopicId(TOPIC_0)).thenReturn(TOPIC_ID_0);
+        when(metadataView.getTopicId(TOPIC_1)).thenReturn(TOPIC_ID_1);
+        // The responses come back in the reverse order of the requests.
+        when(controlPlane.listOffsets(any())).thenAnswer(invocation -> {
+            final List<ListOffsetsRequest> requests = new ArrayList<>(invocation.<List<ListOffsetsRequest>>getArgument(0));
+            Collections.reverse(requests);
+            return requests.stream()
+                .map(r -> ListOffsetsResponse.success(r.topicIdPartition(), 5, 1000))
+                .toList();
+        });
+
+        final FetchOffsetHandler.Job job = new FetchOffsetHandler.Job(metadataView, controlPlane, crossTierLogStartCache, executor, time, metrics);
+        final var lookup0 = job.add(T0P0, new ListOffsetsRequestData.ListOffsetsPartition().setPartitionIndex(0).setTimestamp(5));
+        final var lookup1 = job.add(T1P1, new ListOffsetsRequestData.ListOffsetsPartition().setPartitionIndex(1).setTimestamp(5));
+
+        job.start();
+        verify(executor).submit(runnableCaptor.capture());
+        runnableCaptor.getValue().run();
+
+        for (final var future : List.of(lookup0, lookup1)) {
             assertThat(future.get().exception()).containsInstanceOf(IllegalStateException.class);
         }
     }

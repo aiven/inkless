@@ -696,4 +696,15 @@ class LeaderEpochFileCacheTest {
     assertEquals(entries, cache.epochEntries)
     assertTrue(sizesSeen.asScala.forall(size => size == 0 || size == entries.size), s"Reader saw sizes $sizesSeen")
   }
+
+  @Test
+  def shouldAssignNoneOfAListWithAnInvalidEntry(): Unit = {
+    cache.assign(1, 5)
+
+    assertThrows(classOf[IllegalArgumentException],
+      () => cache.assign(List(new EpochEntry(2, 10), new EpochEntry(-1, 20)).asJava))
+
+    assertEquals(List(new EpochEntry(1, 5)).asJava, cache.epochEntries)
+  }
+
 }

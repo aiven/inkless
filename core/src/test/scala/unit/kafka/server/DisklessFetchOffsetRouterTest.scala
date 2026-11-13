@@ -909,4 +909,43 @@ class DisklessFetchOffsetRouterTest {
     verify(job, never()).add(any(), any())
   }
 
+  @Test
+  def consolidatingSwitchedSpecificTimestampSkipsTheWalStartCheckInPhase1(): Unit = {
+    // In phase 1 the local log stays at the seal, and a DeleteRecords past the seal moved the WAL start to 300.
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(100L)
+    when(inklessMetadataView.isClassicPrefixWaitingForUpload(tp)).thenReturn(true)
+    val disklessHit = offsetResult(offset = 300L, timestamp = 10300L)
+    disklessTaskFuture.complete(disklessHit)
+
+    val status = route(consolidatingRouter(), timestamp = 10150L, classicResult = syncNoMatch,
+      classicSearchableEnd = _ => 100L)
+
+    assertSame(disklessHit, resultOf(status))
+    verify(job, never()).addWalStart(any())
+  }
+
+  @Test
+  def consolidatingSwitchedSpecificTimestampKeepsTheSealCheckInPhase1(): Unit = {
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(100L)
+    when(inklessMetadataView.isClassicPrefixWaitingForUpload(tp)).thenReturn(true)
+
+    val status = route(consolidatingRouter(), timestamp = 10150L, classicResult = syncNoMatch,
+      classicSearchableEnd = _ => 0L)
+
+    assertPrefixNotSearchable(status)
+    verify(job, never()).add(any(), any())
+  }
+
+  @Test
+  def consolidatingSpecificTimestampFailsWhenTheWalStartIsNegative(): Unit = {
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+    disklessTaskFuture.complete(offsetResult(offset = 1000L, timestamp = 11000L))
+    walStartFuture.complete(offsetResult(offset = -1L))
+
+    val status = route(consolidatingRouter(), timestamp = 11000L, classicResult = syncNoMatch,
+      classicSearchableEnd = _ => 900L)
+
+    assertPrefixNotSearchable(status)
+  }
+
 }

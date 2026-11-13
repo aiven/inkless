@@ -166,12 +166,17 @@ class DisklessFetchOffsetRouter(
           // The router reads the range before the search, and the search reads no more than that range. A rebuild
           // or recreation after the read can cut the log back. The guard then treats the range as unknown.
           val searchRange = classicSearchRange(topicPartition)
+          // In phase 1 of the switch the broker doesn't consolidate, and the pruner can't move the WAL start past the
+          // seal, which the seal check covers. A DeleteRecords past the seal moves the WAL start over deleted offsets, and
+          // the WAL start check would fail every local miss until phase 2.
+          val consolidationActive =
+            isConsolidatingPartition && !inklessMetadataView.isClassicPrefixWaitingForUpload(topicPartition)
           def searchableEnd(): Long = if (searchRange.isCurrent()) searchRange.end else ClassicSearchRange.UnknownEnd
           def checkedDisklessLookup(onJob: () => FetchOffsetHandler.Job, startNow: Boolean): Lookup = {
             lazy val endBelowSeal = Some(searchableEnd()).filter(_ < classicToDisklessStartOffset)
             if (hasCommittedSwitchOffset && endBelowSeal.isDefined)
               failedLookup(prefixNotSearchable(topicPartition, endBelowSeal.get, classicToDisklessStartOffset, version))
-            else if (isConsolidatingPartition)
+            else if (consolidationActive)
               disklessLookupCheckingWalStart(onJob(), topicPartition, partition, startNow, classicToDisklessStartOffset,
                 () => searchableEnd(), version)
             else
@@ -362,9 +367,9 @@ private[server] object DisklessFetchOffsetRouter {
       if (result.hasException) result
       else if (walStartResult.hasException) walStartResult
       else {
-        // An unknown WAL start fails the check: the local log might end before the diskless log.
-        val disklessStart = walStartResult.timestampAndOffset.toScala
-          .fold(Long.MaxValue)(walStartOffset => math.max(walStartOffset.offset, classicToDisklessStartOffset))
+        // A missing or negative WAL start fails the check: the local log might end before the diskless log.
+        val disklessStart = walStartResult.timestampAndOffset.toScala.map(_.offset).filter(_ >= 0L)
+          .fold(Long.MaxValue)(walStartOffset => math.max(walStartOffset, classicToDisklessStartOffset))
         val end = searchableEnd()
         if (end < disklessStart) prefixNotSearchable(tp, end, disklessStart, version)
         else result

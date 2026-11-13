@@ -285,6 +285,17 @@ public class FetchOffsetHandler implements Closeable {
                 metrics.fetchOffsetFailed();
                 return;
             }
+            for (int i = 0; i < lookups.size(); i++) {
+                final TopicIdPartition requested = lookups.get(i).request().topicIdPartition();
+                final TopicIdPartition answered = controlPlaneResponses.get(i).topicIdPartition();
+                if (!requested.equals(answered)) {
+                    completeFuturesWithError(new IllegalStateException(String.format(
+                        "The control plane answered for %s at position %d of the list offsets requests, which is for %s",
+                        answered, i, requested)));
+                    metrics.fetchOffsetFailed();
+                    return;
+                }
+            }
 
             for (int i = 0; i < lookups.size(); i++) {
                 final PendingLookup lookup = lookups.get(i);
