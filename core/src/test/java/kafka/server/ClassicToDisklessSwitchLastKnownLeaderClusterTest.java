@@ -62,9 +62,10 @@ import org.apache.kafka.storage.internals.log.UnifiedLog;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInfo;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.testcontainers.junit.jupiter.Container;
@@ -105,8 +106,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Drives a partition in phase 1 of the classic-to-diskless switch into a last-known-leader election (KIP-966)
- * whose leader lost the tail of the classic prefix, then recovers it with a downward re-seal.
+ * Drives a partition in phase 1 of the classic-to-diskless switch into a last-known-leader election (KIP-966),
+ * with and without a leader that lost the tail of the classic prefix.
  */
 @Testcontainers
 public class ClassicToDisklessSwitchLastKnownLeaderClusterTest {
@@ -257,17 +258,34 @@ public class ClassicToDisklessSwitchLastKnownLeaderClusterTest {
         cluster.close();
     }
 
-    @Test
-    public void testReSealRecoversLastKnownLeaderBelowSeal() throws Exception {
+    /**
+     * With {@code loseTail}, the last known leader returns with a log that ends below the seal and an operator
+     * re-seals at its log end offset. Without it, the leader holds the whole classic prefix and the switch goes on.
+     */
+    @ParameterizedTest(name = "loseTail={0}")
+    @ValueSource(booleans = {true, false})
+    public void testLastKnownLeaderElectionInPhaseOne(final boolean loseTail) throws Exception {
         final String topic = "switch-elr-" + UUID.randomUUID().toString().substring(0, 8);
         final TopicPartition tp = new TopicPartition(topic, 0);
+        final long seal;
 
         try (Admin admin = AdminClient.create(clientConfigs())) {
             final int leader = startPhaseOne(admin, topic);
-            driveIntoLastKnownLeaderBelowSeal(admin, topic, leader);
-            reSealAndRecover(admin, topic, leader);
+            driveIntoLastKnownLeader(admin, topic, leader, loseTail);
+            if (loseTail) {
+                reSeal(admin, topic, leader);
+                seal = TRUNCATED_LEO;
+            } else {
+                waitForCondition(() -> isOnlineLeader(leader, tp), "the partition to stay online on the leader");
+                waitForRegistration(leader, topic,
+                    r -> r.leader == leader && r.leaderRecoveryState == LeaderRecoveryState.RECOVERED,
+                    "the leader to finish recovery");
+                seal = CLASSIC_RECORDS;
+            }
+            finishSwitch(admin, topic, seal);
         }
-        assertEquals(expectedRecords(), consumeFromStart(tp));
+        final List<String> expected = expectedRecords(seal);
+        assertEquals(expected, consumeFromStart(tp, expected.size()));
     }
 
     /** Returns the leader of the partition once the switch is in phase 1 with diskless records past the seal. */
@@ -288,7 +306,8 @@ public class ClassicToDisklessSwitchLastKnownLeaderClusterTest {
         return registration(0, topic).leader;
     }
 
-    private void driveIntoLastKnownLeaderBelowSeal(final Admin admin, final String topic, final int leaderHint) throws Exception {
+    private void driveIntoLastKnownLeader(final Admin admin, final String topic, final int leaderHint,
+                                          final boolean loseTail) throws Exception {
         final TopicPartition tp = new TopicPartition(topic, 0);
         final PartitionRegistration before = registration(leaderHint, topic);
         final int leader = before.leader;
@@ -304,10 +323,12 @@ public class ClassicToDisklessSwitchLastKnownLeaderClusterTest {
             r -> r.leader == leader && r.isr.length == 1 && Arrays.stream(r.elr).anyMatch(id -> id == secondDown),
             "an ISR of the leader only, with the second follower in the ELR");
 
-        // The leader loses the tail of the classic prefix, as after a power loss.
-        final UnifiedLog leaderLog = cluster.brokers().get(leader).replicaManager().getLog(tp).get();
-        leaderLog.truncateTo(TRUNCATED_LEO);
-        assertEquals(TRUNCATED_LEO, leaderLog.logEndOffset());
+        if (loseTail) {
+            // The leader loses the tail of the classic prefix, as after a power loss.
+            final UnifiedLog leaderLog = cluster.brokers().get(leader).replicaManager().getLog(tp).get();
+            leaderLog.truncateTo(TRUNCATED_LEO);
+            assertEquals(TRUNCATED_LEO, leaderLog.logEndOffset());
+        }
         cluster.brokers().get(leader).shutdown();
 
         // Without the marker, the controller sees an unclean shutdown and removes the replica from the ELR.
@@ -321,9 +342,13 @@ public class ClassicToDisklessSwitchLastKnownLeaderClusterTest {
 
         final PartitionRegistration elected = waitForRegistration(secondDown, topic,
             r -> r.leader == leader, "the last known leader to be elected");
-        assertArrayEquals(new int[] {leader}, elected.isr);
-        assertEquals(LeaderRecoveryState.RECOVERING, elected.leaderRecoveryState);
-        waitForCondition(() -> isOffline(leader, tp), "the leader to mark the partition offline");
+        if (loseTail) {
+            // An offline partition doesn't send `AlterPartition`, so the election's ISR and recovery state remain.
+            // With the whole prefix, the leader can clear both before this check reads the registration.
+            assertArrayEquals(new int[] {leader}, elected.isr);
+            assertEquals(LeaderRecoveryState.RECOVERING, elected.leaderRecoveryState);
+            waitForCondition(() -> isOffline(leader, tp), "the leader to mark the partition offline");
+        }
     }
 
     private PartitionRegistration registration(final int brokerId, final String topic) {
@@ -346,7 +371,7 @@ public class ClassicToDisklessSwitchLastKnownLeaderClusterTest {
         throw new AssertionError("Timed out waiting for " + description + "; last observed=" + last);
     }
 
-    private void reSealAndRecover(final Admin admin, final String topic, final int leader) throws Exception {
+    private void reSeal(final Admin admin, final String topic, final int leader) throws Exception {
         final TopicPartition tp = new TopicPartition(topic, 0);
 
         // `kafka-topic-switch.sh seal --offset` checks the offset against these two values before it sends the request.
@@ -367,13 +392,17 @@ public class ClassicToDisklessSwitchLastKnownLeaderClusterTest {
         waitForCondition(() -> isOnlineLeader(leader, tp), "the partition to be online on the leader");
 
         admin.repairDisklessLog(topic, 0, leader).all().get(20, TimeUnit.SECONDS);
+    }
+
+    private void finishSwitch(final Admin admin, final String topic, final long seal) throws Exception {
+        final TopicPartition tp = new TopicPartition(topic, 0);
 
         // Phase 2 consolidates from the seal and moves the log end offsets past it, so the check runs in phase 1.
         waitForPartition(admin, topic, p -> p.isr().size() == 3, "the ISR to recover");
         for (BrokerServer broker : cluster.brokers().values()) {
             assertFalse(broker.replicaManager().inklessMetadataView().isClassicPrefixInRemoteStorage(tp),
                 "phase 2 started on broker " + broker.config().nodeId() + " before the upload gate opened");
-            assertEquals(TRUNCATED_LEO, broker.replicaManager().getLog(tp).get().logEndOffset(),
+            assertEquals(seal, broker.replicaManager().getLog(tp).get().logEndOffset(),
                 "log end offset on broker " + broker.config().nodeId());
         }
 
@@ -382,7 +411,7 @@ public class ClassicToDisklessSwitchLastKnownLeaderClusterTest {
             b.replicaManager().inklessMetadataView().isClassicPrefixInRemoteStorage(tp)), "phase 2 to start");
     }
 
-    private List<String> consumeFromStart(final TopicPartition tp) {
+    private List<String> consumeFromStart(final TopicPartition tp, final int count) {
         final Map<String, Object> configs = clientConfigs();
         configs.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "none");
         configs.put(ConsumerConfig.GROUP_ID_CONFIG, "elr-group-" + UUID.randomUUID());
@@ -391,7 +420,7 @@ public class ClassicToDisklessSwitchLastKnownLeaderClusterTest {
             consumer.assign(List.of(tp));
             consumer.seek(tp, 0);
             final long deadline = System.currentTimeMillis() + Duration.ofSeconds(60).toMillis();
-            while (System.currentTimeMillis() < deadline && consumed.size() < expectedRecords().size()) {
+            while (System.currentTimeMillis() < deadline && consumed.size() < count) {
                 for (ConsumerRecord<byte[], byte[]> record : consumer.poll(Duration.ofSeconds(1))) {
                     consumed.add(record.offset() + "=" + new String(record.value(), StandardCharsets.UTF_8));
                 }
@@ -400,9 +429,9 @@ public class ClassicToDisklessSwitchLastKnownLeaderClusterTest {
         return consumed;
     }
 
-    private static List<String> expectedRecords() {
+    private static List<String> expectedRecords(final long seal) {
         final List<String> expected = new ArrayList<>();
-        for (int i = 0; i < TRUNCATED_LEO; i++) {
+        for (int i = 0; i < seal; i++) {
             expected.add(i + "=classic-" + i);
         }
         for (int i = 0; i < DISKLESS_RECORDS; i++) {

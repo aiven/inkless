@@ -223,7 +223,7 @@ These guards also apply if the cluster default enables unclean leader election, 
 
 ### Last-known-leader election
 
-If you enable the `eligible.leader.replicas.version` feature, the controller tracks eligible leader replicas (ELR) as described in KIP-966. KIP-966 adds a last-known-leader election, and the phase 1 guards don't block it. The controller runs this election for every election type, not only `UNCLEAN`, and `unclean.leader.election.enable` doesn't control it.
+The `eligible.leader.replicas.version` feature is on by default at 4.1 and later. With it on, the controller tracks eligible leader replicas (ELR) as described in KIP-966. KIP-966 adds a last-known-leader election, and the phase 1 guards don't block it. The controller runs this election for every election type, not only `UNCLEAN`, and `unclean.leader.election.enable` doesn't control it.
 
 The controller elects the last known leader when all of the following hold:
 
