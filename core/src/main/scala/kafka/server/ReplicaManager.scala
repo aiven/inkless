@@ -4194,6 +4194,8 @@ class ReplicaManager(val config: KafkaConfig,
    *  - Its last record below the seal has the epoch that the phase 1 leader recorded with
    *    `classicPrefixInRemoteStorage`. Each epoch has one leader, so its history below the seal is the committed one.
    *  - Its records past the seal, if any, are consolidated diskless records.
+   *  - If its log end offset is at or past the seal, it has no undecided transaction from below the seal. Sealing
+   *    aborts them, but an operator who lowers the seal can cut a transaction off from its marker.
    *  - Its highest offset in remote storage is below its log end offset.
    *  - Its future log, if any, ends in the epoch that the current log has at the same offset, or ends at or below
    *    the start of the current log.
@@ -4254,6 +4256,9 @@ class ReplicaManager(val config: KafkaConfig,
             s"leader epoch $lastClassicLeaderEpoch")
         } else if (log.logEndOffset > seal && !hasConsolidatedDisklessSuffixFromSeal(tp, log, seal)) {
           Some(s"its records from the seal $seal to ${log.logEndOffset} aren't consolidated diskless records")
+        } else if (log.logEndOffset >= seal && log.producerStateManager.firstUndecidedOffset.orElse(seal) < seal) {
+          Some(s"its transaction from ${log.producerStateManager.firstUndecidedOffset.getAsLong} has no marker below " +
+            s"the seal $seal")
         } else if (log.highestOffsetInRemoteStorage >= log.logEndOffset) {
           Some(s"its highest offset in remote storage ${log.highestOffsetInRemoteStorage} isn't below its log end " +
             s"offset ${log.logEndOffset}")
@@ -4329,8 +4334,9 @@ class ReplicaManager(val config: KafkaConfig,
                   val reason =
                     if (consolidationEnabledFor(tp.topic) && log.remoteLogEnabled())
                       "the classic-to-diskless switch is in phase 1, and only a leader that holds the whole " +
-                        "classic prefix can request the classicPrefixInRemoteStorage flag. Move leadership to a " +
-                        "replica that holds the prefix"
+                        "classic prefix can request the classicPrefixInRemoteStorage flag. Elect a replica that " +
+                        "holds the prefix with `kafka-topic-switch.sh elect`, or start phase 2 from remote storage " +
+                        "with `kafka-topic-switch.sh start-phase-2`"
                     else
                       "the prefix is not recoverable from remote storage (no consolidation or remote storage on " +
                         "this broker)"

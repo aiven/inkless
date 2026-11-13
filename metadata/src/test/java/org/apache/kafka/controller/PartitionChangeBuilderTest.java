@@ -482,7 +482,11 @@ public class PartitionChangeBuilderTest {
     }
 
     private static PartitionChangeRecord buildClassicPrefixFlagRecord(PartitionChangeBuilder builder, int lastClassicLeaderEpoch) {
-        Optional<ApiMessageAndVersion> built = builder.setClassicPrefixInRemoteStorage(lastClassicLeaderEpoch).build();
+        return buildAndDecode(builder.setClassicPrefixInRemoteStorage(lastClassicLeaderEpoch));
+    }
+
+    private static PartitionChangeRecord buildAndDecode(PartitionChangeBuilder builder) {
+        Optional<ApiMessageAndVersion> built = builder.build();
         assertTrue(built.isPresent());
         PartitionChangeRecord record = (PartitionChangeRecord) built.get().message();
         short version = built.get().version();
@@ -576,10 +580,8 @@ public class PartitionChangeBuilderTest {
         assertEquals(2, merged.leader);
     }
 
-    @ParameterizedTest
-    @MethodSource("partitionChangeRecordVersions")
-    public void testClassicPrefixFlagReplacesDisklessLeaderEpochAndKeepsSeal(short version) {
-        PartitionRegistration sealed = new PartitionRegistration.Builder().
+    private static PartitionRegistration sealedFoo() {
+        return new PartitionRegistration.Builder().
             setReplicas(FOO.replicas).
             setDirectories(FOO.directories).
             setIsr(FOO.isr).
@@ -590,7 +592,10 @@ public class PartitionChangeBuilderTest {
             setClassicToDisklessStartOffset(1000L).
             setDisklessLeaderEpoch(90).
             build();
-        PartitionChangeBuilder builder = new PartitionChangeBuilder(sealed,
+    }
+
+    private static PartitionChangeBuilder createSealedFooBuilder(PartitionRegistration sealed, short version) {
+        return new PartitionChangeBuilder(sealed,
                 FOO_ID,
                 0,
                 r -> r != 3,
@@ -598,14 +603,34 @@ public class PartitionChangeBuilderTest {
                 2,
                 isElrEnabled(version)).
                 setDefaultDirProvider(DEFAULT_DIR_PROVIDER);
+    }
 
-        PartitionChangeRecord record = buildClassicPrefixFlagRecord(builder);
+    @ParameterizedTest
+    @MethodSource("partitionChangeRecordVersions")
+    public void testClassicPrefixFlagReplacesDisklessLeaderEpochAndKeepsSeal(short version) {
+        PartitionRegistration sealed = sealedFoo();
+
+        PartitionChangeRecord record = buildClassicPrefixFlagRecord(createSealedFooBuilder(sealed, version));
 
         assertEquals(0, countTag(record, InitDisklessLogFields.CLASSIC_TO_DISKLESS_START_OFFSET_TAG));
         assertEquals(0, countTag(record, InitDisklessLogFields.PRODUCER_STATES_TAG));
         PartitionRegistration merged = assertClassicPrefixFlagCommit(sealed, record);
         assertEquals(1000L, merged.classicToDisklessStartOffset);
         assertEquals(sealed.leaderEpoch + 1, merged.disklessLeaderEpoch);
+    }
+
+    @ParameterizedTest
+    @MethodSource("partitionChangeRecordVersions")
+    public void testClassicPrefixFlagWritesLoweredSeal(short version) {
+        PartitionRegistration sealed = sealedFoo();
+
+        PartitionChangeRecord record = buildAndDecode(createSealedFooBuilder(sealed, version)
+            .setClassicPrefixInRemoteStorage(600L, LAST_CLASSIC_LEADER_EPOCH));
+
+        assertEquals(1, countTag(record, InitDisklessLogFields.CLASSIC_TO_DISKLESS_START_OFFSET_TAG));
+        PartitionRegistration merged = assertClassicPrefixFlagCommit(sealed, record);
+        assertEquals(600L, merged.classicToDisklessStartOffset);
+        assertEquals(LAST_CLASSIC_LEADER_EPOCH, merged.lastClassicLeaderEpoch);
     }
 
     @ParameterizedTest

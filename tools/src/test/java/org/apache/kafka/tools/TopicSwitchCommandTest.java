@@ -55,10 +55,12 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -466,6 +468,108 @@ public class TopicSwitchCommandTest {
             .parseArgs(new String[]{"seal", "--bootstrap-controller", "localhost:9093", "--topic", TOPIC, "--partition", "0"});
     }
 
+    @Test
+    public void testElectSendsLeaderIdAtCommittedSeal() throws Exception {
+        mockDescribeSeal(0, 100L);
+        mockAlterDisklessSwitch();
+
+        String output = runElectCommand(2, false);
+
+        verify(adminClient).alterDisklessSwitch(eq(TOPIC), eq(0), eq(100L),
+            argThat(options -> options.leaderId() == 2 && !options.classicPrefixInRemoteStorage()));
+        assertTrue(output.contains("Elected broker 2 as the leader of test-topic-0 at seal 100"), output);
+    }
+
+    @Test
+    public void testElectDryRunDoesNotCommit() throws Exception {
+        mockDescribeSeal(0, 100L);
+
+        String output = runElectCommand(2, true);
+
+        verify(adminClient, never()).alterDisklessSwitch(any(), anyInt(), anyLong(), any());
+        assertTrue(output.contains("[dry-run] Would elect broker 2"), output);
+    }
+
+    @Test
+    public void testElectRejectsNegativeReplica() {
+        for (boolean dryRun : List.of(true, false)) {
+            RuntimeException ex = assertThrows(RuntimeException.class, () -> runElectCommand(-1, dryRun));
+            assertTrue(ex.getMessage().contains("Invalid replica -1"), ex.getMessage());
+        }
+        verifyNoInteractions(adminClient);
+    }
+
+    @Test
+    public void testRecoveryRejectsPendingSeal() throws Exception {
+        mockDescribeSeal(0, -2L);
+
+        assertRejectedOutsidePhaseOne();
+    }
+
+    @Test
+    public void testRecoveryRejectsPhaseTwo() throws Exception {
+        mockDescribeSeal(0, 100L, true);
+
+        assertRejectedOutsidePhaseOne();
+    }
+
+    private void assertRejectedOutsidePhaseOne() {
+        RuntimeException electException = assertThrows(RuntimeException.class, () -> runElectCommand(2, false));
+        assertTrue(electException.getMessage().contains("isn't in phase 1"), electException.getMessage());
+        RuntimeException startException = assertThrows(RuntimeException.class,
+            () -> runStartPhaseTwoCommand(60L, 4, false));
+        assertTrue(startException.getMessage().contains("isn't in phase 1"), startException.getMessage());
+        verify(adminClient, never()).alterDisklessSwitch(any(), anyInt(), anyLong(), any());
+    }
+
+    @Test
+    public void testStartPhaseTwoAtLowerSeal() throws Exception {
+        mockDescribeSeal(0, 100L);
+        mockAlterDisklessSwitch();
+
+        String output = runStartPhaseTwoCommand(60L, 4, false);
+
+        verify(adminClient).alterDisklessSwitch(eq(TOPIC), eq(0), eq(60L), argThat(options ->
+            options.classicPrefixInRemoteStorage() && options.lastClassicLeaderEpoch() == 4 && options.leaderId() == -1));
+        assertTrue(output.contains("Started phase 2 for test-topic-0 at seal 60 with lastClassicLeaderEpoch 4, "
+            + "losing the records in [60, 100)"), output);
+        assertTrue(output.contains("Run the repair command"), output);
+    }
+
+    @Test
+    public void testStartPhaseTwoAtCommittedSealLosesNothing() throws Exception {
+        mockDescribeSeal(0, 100L);
+        mockAlterDisklessSwitch();
+
+        String output = runStartPhaseTwoCommand(100L, 4, false);
+
+        verify(adminClient).alterDisklessSwitch(eq(TOPIC), eq(0), eq(100L), any(AlterDisklessSwitchOptions.class));
+        assertFalse(output.contains("losing"), output);
+        assertFalse(output.contains("repair"), output);
+    }
+
+    @Test
+    public void testStartPhaseTwoRejectsOffsetOutsideCommittedPrefix() throws Exception {
+        mockDescribeSeal(0, 100L);
+
+        for (long offset : List.of(-1L, 101L)) {
+            RuntimeException ex = assertThrows(RuntimeException.class,
+                () -> runStartPhaseTwoCommand(offset, 4, true));
+            assertTrue(ex.getMessage().contains("it must be between 0 and the committed seal 100"), ex.getMessage());
+        }
+        verify(adminClient, never()).alterDisklessSwitch(any(), anyInt(), anyLong(), any());
+    }
+
+    @Test
+    public void testRecoveryCommandsRequireBootstrapServer() throws Exception {
+        TopicSwitchCommand.argumentParser().parseArgs(new String[]{"elect", "--bootstrap-server", "localhost:9092",
+            "--topic", TOPIC, "--partition", "0", "--replica", "2"});
+        TopicSwitchCommand.argumentParser().parseArgs(new String[]{"start-phase-2", "--bootstrap-server",
+            "localhost:9092", "--topic", TOPIC, "--partition", "0", "--offset", "60", "--last-classic-leader-epoch", "4"});
+        assertThrows(ArgumentParserException.class, () -> TopicSwitchCommand.argumentParser().parseArgs(new String[]{
+            "elect", "--bootstrap-controller", "localhost:9093", "--topic", TOPIC, "--partition", "0", "--replica", "2"}));
+    }
+
     private void mockLogRange(int partition, long startOffset, long endOffset) {
         when(adminClient.listOffsets(anyMap()))
             .thenAnswer(invocation -> {
@@ -522,6 +626,20 @@ public class TopicSwitchCommandTest {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         PrintStream stream = new PrintStream(out, false, StandardCharsets.UTF_8);
         TopicSwitchCommand.repairCommand(stream, adminClient, TOPIC, partition);
+        return out.toString(StandardCharsets.UTF_8);
+    }
+
+    private String runElectCommand(int replica, boolean dryRun) throws Exception {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        PrintStream stream = new PrintStream(out, false, StandardCharsets.UTF_8);
+        TopicSwitchCommand.electCommand(stream, adminClient, TOPIC, 0, replica, dryRun);
+        return out.toString(StandardCharsets.UTF_8);
+    }
+
+    private String runStartPhaseTwoCommand(long offset, int lastClassicLeaderEpoch, boolean dryRun) throws Exception {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        PrintStream stream = new PrintStream(out, false, StandardCharsets.UTF_8);
+        TopicSwitchCommand.startPhaseTwoCommand(stream, adminClient, TOPIC, 0, offset, lastClassicLeaderEpoch, dryRun);
         return out.toString(StandardCharsets.UTF_8);
     }
 
