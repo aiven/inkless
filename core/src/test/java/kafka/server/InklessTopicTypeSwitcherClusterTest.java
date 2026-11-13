@@ -542,8 +542,8 @@ public class InklessTopicTypeSwitcherClusterTest {
     }
 
     @Test
-    public void testAlterDisklessSwitchRejectsOperatorSeal() throws Exception {
-        final String topic = "switch-seal-override-" + UUID.randomUUID().toString().substring(0, 8);
+    public void testRearmDisklessSwitchRejectsCommittedSwitch() throws Exception {
+        final String topic = "switch-rearm-committed-" + UUID.randomUUID().toString().substring(0, 8);
 
         try (Admin admin = AdminClient.create(baseClientConfigs())) {
             admin.createTopics(List.of(
@@ -554,14 +554,12 @@ public class InklessTopicTypeSwitcherClusterTest {
 
             alterTopicConfigWithIncrementalAlterConfigs(
                 admin, topic, Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true"));
-            waitForSealOffset(admin, topic, 0, offset -> offset != PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET);
+            final long sealOffset = waitForSealOffset(admin, topic, 0, offset -> offset >= 0);
 
-            // Whether the switch is still pending or already committed, the controller accepts only a re-arm.
-            for (long sealOffset : List.of(0L, PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)) {
-                final ExecutionException ex = assertThrows(ExecutionException.class, () ->
-                    admin.alterDisklessSwitch(topic, 0, sealOffset).all().get(20, TimeUnit.SECONDS));
-                assertInstanceOf(InvalidRequestException.class, ex.getCause());
-            }
+            final ExecutionException ex = assertThrows(ExecutionException.class, () ->
+                admin.rearmDisklessSwitch(topic, 0).all().get(20, TimeUnit.SECONDS));
+            assertInstanceOf(InvalidRequestException.class, ex.getCause());
+            assertEquals(sealOffset, readSealOffset(admin, topic, 0));
         }
     }
 

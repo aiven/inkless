@@ -15,19 +15,16 @@
 
 {
   "apiKey": 501,
-  "type": "request",
-  "listeners": ["broker", "controller"],
-  "name": "AlterDisklessSwitchRequest",
+  "type": "response",
+  "name": "RearmDisklessSwitchResponse",
   "validVersions": "0",
   "flexibleVersions": "0+",
   "fields": [
-    { "name": "TopicName", "type": "string", "versions": "0+", "entityType": "topicName",
-      "about": "The name of the topic whose classic-to-diskless switch state is being altered." },
-    { "name": "PartitionIndex", "type": "int32", "versions": "0+",
-      "about": "The partition index." },
-    { "name": "SealOffset", "type": "int64", "versions": "0+",
-      "about": "The classic-to-diskless start offset to commit. The controller accepts only -2, which re-arms a pending switch." },
-    { "name": "ClearProducerStates", "type": "bool", "versions": "0+", "default": "false",
-      "about": "Unused. The controller rejects the request if this field is true." }
+    { "name": "ThrottleTimeMs", "type": "int32", "versions": "0+",
+      "about": "The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota." },
+    { "name": "ErrorCode", "type": "int16", "versions": "0+",
+      "about": "The error code, or 0 if there was no error." },
+    { "name": "ErrorMessage", "type": "string", "versions": "0+", "nullableVersions": "0+",
+      "about": "The error message, or null if there was no error." }
   ]
 }

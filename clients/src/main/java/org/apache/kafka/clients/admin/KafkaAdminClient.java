@@ -109,7 +109,7 @@ import org.apache.kafka.common.errors.UnsupportedSaslMechanismException;
 import org.apache.kafka.common.errors.UnsupportedVersionException;
 import org.apache.kafka.common.internals.KafkaFutureImpl;
 import org.apache.kafka.common.message.AddRaftVoterRequestData;
-import org.apache.kafka.common.message.AlterDisklessSwitchRequestData;
+import org.apache.kafka.common.message.RearmDisklessSwitchRequestData;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestData.ReassignableTopic;
 import org.apache.kafka.common.message.AlterReplicaLogDirsRequestData;
@@ -188,8 +188,8 @@ import org.apache.kafka.common.requests.AddRaftVoterRequest;
 import org.apache.kafka.common.requests.AddRaftVoterResponse;
 import org.apache.kafka.common.requests.AlterClientQuotasRequest;
 import org.apache.kafka.common.requests.AlterClientQuotasResponse;
-import org.apache.kafka.common.requests.AlterDisklessSwitchRequest;
-import org.apache.kafka.common.requests.AlterDisklessSwitchResponse;
+import org.apache.kafka.common.requests.RearmDisklessSwitchRequest;
+import org.apache.kafka.common.requests.RearmDisklessSwitchResponse;
 import org.apache.kafka.common.requests.AlterPartitionReassignmentsRequest;
 import org.apache.kafka.common.requests.AlterPartitionReassignmentsResponse;
 import org.apache.kafka.common.requests.AlterReplicaLogDirsRequest;
@@ -4904,25 +4904,23 @@ public class KafkaAdminClient extends AdminClient {
     }
 
     @Override
-    public AlterDisklessSwitchResult alterDisklessSwitch(String topic, int partition, long sealOffset,
-                                                         AlterDisklessSwitchOptions options) {
+    public RearmDisklessSwitchResult rearmDisklessSwitch(String topic, int partition, RearmDisklessSwitchOptions options) {
         final KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
         final long now = time.milliseconds();
-        final Call call = new Call("alterDisklessSwitch", calcDeadlineMs(now, options.timeoutMs()),
+        final Call call = new Call("rearmDisklessSwitch", calcDeadlineMs(now, options.timeoutMs()),
             new LeastLoadedBrokerOrActiveKController()) {
 
             @Override
-            AlterDisklessSwitchRequest.Builder createRequest(int timeoutMs) {
-                AlterDisklessSwitchRequestData data = new AlterDisklessSwitchRequestData()
+            RearmDisklessSwitchRequest.Builder createRequest(int timeoutMs) {
+                RearmDisklessSwitchRequestData data = new RearmDisklessSwitchRequestData()
                     .setTopicName(topic)
-                    .setPartitionIndex(partition)
-                    .setSealOffset(sealOffset);
-                return new AlterDisklessSwitchRequest.Builder(data);
+                    .setPartitionIndex(partition);
+                return new RearmDisklessSwitchRequest.Builder(data);
             }
 
             @Override
             void handleResponse(AbstractResponse abstractResponse) {
-                final AlterDisklessSwitchResponse response = (AlterDisklessSwitchResponse) abstractResponse;
+                final RearmDisklessSwitchResponse response = (RearmDisklessSwitchResponse) abstractResponse;
                 Errors error = Errors.forCode(response.data().errorCode());
                 if (error == Errors.NONE) {
                     future.complete(null);
@@ -4937,7 +4935,7 @@ public class KafkaAdminClient extends AdminClient {
             }
         };
         runnable.call(call, now);
-        return new AlterDisklessSwitchResult(future);
+        return new RearmDisklessSwitchResult(future);
     }
 
     @Override

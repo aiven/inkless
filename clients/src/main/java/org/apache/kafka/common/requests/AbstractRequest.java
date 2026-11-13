@@ -356,8 +356,8 @@ public abstract class AbstractRequest implements AbstractRequestResponse {
                 return DeleteShareGroupOffsetsRequest.parse(readable, apiVersion);
             case INIT_DISKLESS_LOG:
                 return InitDisklessLogRequest.parse(readable, apiVersion);
-            case ALTER_DISKLESS_SWITCH:
-                return AlterDisklessSwitchRequest.parse(readable, apiVersion);
+            case REARM_DISKLESS_SWITCH:
+                return RearmDisklessSwitchRequest.parse(readable, apiVersion);
             case SET_CLASSIC_PREFIX_IN_REMOTE_STORAGE:
                 return SetClassicPrefixInRemoteStorageRequest.parse(readable, apiVersion);
             default:

@@ -359,32 +359,29 @@ public interface Admin extends AutoCloseable {
      * Re-arm the pending classic-to-diskless switch of a single partition. This is an operator tool:
      * the controller bumps the leader epoch, so the leader seals again and re-runs the switch.
      *
-     * This is a convenience method for {@link #alterDisklessSwitch(String, int, long, AlterDisklessSwitchOptions)}
+     * This is a convenience method for {@link #rearmDisklessSwitch(String, int, RearmDisklessSwitchOptions)}
      * with default options.
      *
      * @param topic       The topic name.
      * @param partition   The partition index.
-     * @param sealOffset  Must be {@code -2}. The controller rejects every other value.
-     * @return The AlterDisklessSwitchResult.
+     * @return The RearmDisklessSwitchResult.
      */
-    default AlterDisklessSwitchResult alterDisklessSwitch(String topic, int partition, long sealOffset) {
-        return alterDisklessSwitch(topic, partition, sealOffset, new AlterDisklessSwitchOptions());
+    default RearmDisklessSwitchResult rearmDisklessSwitch(String topic, int partition) {
+        return rearmDisklessSwitch(topic, partition, new RearmDisklessSwitchOptions());
     }
 
     /**
      * Re-arm the pending classic-to-diskless switch of a single partition. This is an operator tool:
      * the controller bumps the leader epoch, so the leader seals again and re-runs the switch.
      *
-     * If the seal offset isn't {@code -2}, or the switch of the partition isn't pending, the result
-     * fails with {@code InvalidRequestException}.
+     * If the switch of the partition isn't pending, the result fails with {@code InvalidRequestException}.
      *
      * @param topic       The topic name.
      * @param partition   The partition index.
-     * @param sealOffset  Must be {@code -2}. The controller rejects every other value.
      * @param options     The options to use.
-     * @return The AlterDisklessSwitchResult.
+     * @return The RearmDisklessSwitchResult.
      */
-    AlterDisklessSwitchResult alterDisklessSwitch(String topic, int partition, long sealOffset, AlterDisklessSwitchOptions options);
+    RearmDisklessSwitchResult rearmDisklessSwitch(String topic, int partition, RearmDisklessSwitchOptions options);
 
     /**
      * Get information about the nodes in the cluster, using the default options.

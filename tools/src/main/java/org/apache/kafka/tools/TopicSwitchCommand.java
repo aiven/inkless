@@ -18,7 +18,7 @@
 package org.apache.kafka.tools;
 
 import org.apache.kafka.clients.admin.Admin;
-import org.apache.kafka.clients.admin.AlterDisklessSwitchOptions;
+import org.apache.kafka.clients.admin.RearmDisklessSwitchOptions;
 import org.apache.kafka.clients.admin.DescribeTopicPartitionsResult;
 import org.apache.kafka.clients.admin.DescribeTopicsOptions;
 import org.apache.kafka.clients.admin.ListOffsetsResult;
@@ -208,8 +208,7 @@ public abstract class TopicSwitchCommand {
     }
 
     static void rearmCommand(PrintStream stream, Admin adminClient, String topic, int partition) throws Exception {
-        adminClient.alterDisklessSwitch(topic, partition, PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING,
-            new AlterDisklessSwitchOptions()).all().get();
+        adminClient.rearmDisklessSwitch(topic, partition, new RearmDisklessSwitchOptions()).all().get();
         stream.printf("Re-armed the switch of %s-%d.%n", topic, partition);
     }
 

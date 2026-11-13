@@ -28,8 +28,8 @@ import org.apache.kafka.common.errors.InvalidRequestException;
 import org.apache.kafka.common.errors.StaleBrokerEpochException;
 import org.apache.kafka.common.errors.UnknownTopicOrPartitionException;
 import org.apache.kafka.common.internals.Topic;
-import org.apache.kafka.common.message.AlterDisklessSwitchRequestData;
-import org.apache.kafka.common.message.AlterDisklessSwitchResponseData;
+import org.apache.kafka.common.message.RearmDisklessSwitchRequestData;
+import org.apache.kafka.common.message.RearmDisklessSwitchResponseData;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestData.ReassignablePartition;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestData.ReassignableTopic;
@@ -6484,14 +6484,14 @@ public class ReplicationControlManagerInklessTest {
     }
 
     @Test
-    public void testAlterDisklessSwitchReArms() {
+    public void testRearmDisklessSwitchBumpsLeaderEpoch() {
         ReplicationControlTestContext ctx = disklessSwitchTestContext();
         ReplicationControlManager replicationControl = ctx.replicationControl;
         Uuid topicId = createSwitchingTestTopic(ctx);
         int leaderEpochBefore = replicationControl.getPartition(topicId, 0).leaderEpoch;
 
-        ControllerResult<AlterDisklessSwitchResponseData> result = replicationControl.alterDisklessSwitch(
-            reArmRequest("foo", 0));
+        ControllerResult<RearmDisklessSwitchResponseData> result = replicationControl.rearmDisklessSwitch(
+            rearmRequest("foo", 0));
         assertEquals((short) 0, result.response().errorCode());
         ctx.replay(result.records());
 
@@ -6502,12 +6502,12 @@ public class ReplicationControlManagerInklessTest {
     }
 
     @Test
-    public void testAlterDisklessSwitchReArmRecordSurvivesSerialization() {
+    public void testRearmDisklessSwitchRecordSurvivesSerialization() {
         ReplicationControlTestContext ctx = disklessSwitchTestContext();
         createSwitchingTestTopic(ctx);
 
         PartitionChangeRecord record = (PartitionChangeRecord) ctx.replicationControl
-            .alterDisklessSwitch(reArmRequest("foo", 0)).records().get(0).message();
+            .rearmDisklessSwitch(rearmRequest("foo", 0)).records().get(0).message();
         PartitionChangeRecord roundTripped = new PartitionChangeRecord(
             MessageUtil.toByteBufferAccessor(record, (short) 0), (short) 0);
 
@@ -6516,31 +6516,8 @@ public class ReplicationControlManagerInklessTest {
             InitDisklessLogFields.decodeClassicToDisklessStartOffset(roundTripped.unknownTaggedFields()));
     }
 
-    @ParameterizedTest
-    @ValueSource(longs = {-3L, -1L, 0L, 100L})
-    public void testAlterDisklessSwitchRejectsSealOffsetsOtherThanReArm(long sealOffset) {
-        ReplicationControlTestContext ctx = disklessSwitchTestContext();
-        ReplicationControlManager replicationControl = ctx.replicationControl;
-        Uuid topicId = createSwitchingTestTopic(ctx);
-
-        assertThrows(InvalidRequestException.class, () ->
-            replicationControl.alterDisklessSwitch(new AlterDisklessSwitchRequestData()
-                .setTopicName("foo").setPartitionIndex(0).setSealOffset(sealOffset)));
-        assertEquals(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING,
-            replicationControl.getPartition(topicId, 0).classicToDisklessStartOffset);
-    }
-
     @Test
-    public void testAlterDisklessSwitchRejectsClearProducerStates() {
-        ReplicationControlTestContext ctx = disklessSwitchTestContext();
-        createSwitchingTestTopic(ctx);
-
-        assertThrows(InvalidRequestException.class, () ->
-            ctx.replicationControl.alterDisklessSwitch(reArmRequest("foo", 0).setClearProducerStates(true)));
-    }
-
-    @Test
-    public void testAlterDisklessSwitchRejectsCommittedSeal() {
+    public void testRearmDisklessSwitchRejectsCommittedSeal() {
         ReplicationControlTestContext ctx = disklessSwitchTestContext();
         Uuid topicId = createSwitchingTestTopic(ctx);
         PartitionChangeRecord sealRecord = new PartitionChangeRecord().setTopicId(topicId).setPartitionId(0);
@@ -6548,12 +6525,12 @@ public class ReplicationControlManagerInklessTest {
         ctx.replay(List.of(new ApiMessageAndVersion(sealRecord, (short) 0)));
 
         assertThrows(InvalidRequestException.class, () ->
-            ctx.replicationControl.alterDisklessSwitch(reArmRequest("foo", 0)));
+            ctx.replicationControl.rearmDisklessSwitch(rearmRequest("foo", 0)));
         assertEquals(100L, ctx.replicationControl.getPartition(topicId, 0).classicToDisklessStartOffset);
     }
 
     @Test
-    public void testAlterDisklessSwitchRejectsClassicTopics() {
+    public void testRearmDisklessSwitchRejectsClassicTopics() {
         ReplicationControlTestContext ctx = disklessSwitchTestContext();
         ReplicationControlManager replicationControl = ctx.replicationControl;
         ctx.registerBrokers(0, 1, 2);
@@ -6561,11 +6538,11 @@ public class ReplicationControlManagerInklessTest {
         ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}});
 
         assertThrows(InvalidRequestException.class, () ->
-            replicationControl.alterDisklessSwitch(reArmRequest("foo", 0)));
+            replicationControl.rearmDisklessSwitch(rearmRequest("foo", 0)));
     }
 
     @Test
-    public void testAlterDisklessSwitchRejectsPartitionNotInSwitch() {
+    public void testRearmDisklessSwitchRejectsPartitionNotInSwitch() {
         ReplicationControlTestContext ctx = disklessSwitchTestContext();
         ReplicationControlManager replicationControl = ctx.replicationControl;
         ctx.registerBrokers(0, 1, 2);
@@ -6582,33 +6559,32 @@ public class ReplicationControlManagerInklessTest {
             anonymousContextFor(ApiKeys.CREATE_TOPICS), request, Set.of("foo")).records());
 
         assertThrows(InvalidRequestException.class, () ->
-            replicationControl.alterDisklessSwitch(reArmRequest("foo", 0)));
+            replicationControl.rearmDisklessSwitch(rearmRequest("foo", 0)));
     }
 
     @Test
-    public void testAlterDisklessSwitchRejectsUnknownTopic() {
+    public void testRearmDisklessSwitchRejectsUnknownTopic() {
         ReplicationControlTestContext ctx = disklessSwitchTestContext();
         ReplicationControlManager replicationControl = ctx.replicationControl;
 
         assertThrows(UnknownTopicOrPartitionException.class, () ->
-            replicationControl.alterDisklessSwitch(reArmRequest("nonexistent", 0)));
+            replicationControl.rearmDisklessSwitch(rearmRequest("nonexistent", 0)));
     }
 
     @Test
-    public void testAlterDisklessSwitchRejectsUnknownPartition() {
+    public void testRearmDisklessSwitchRejectsUnknownPartition() {
         ReplicationControlTestContext ctx = disklessSwitchTestContext();
         ReplicationControlManager replicationControl = ctx.replicationControl;
         createSwitchingTestTopic(ctx);
 
         assertThrows(UnknownTopicOrPartitionException.class, () ->
-            replicationControl.alterDisklessSwitch(reArmRequest("foo", 5)));
+            replicationControl.rearmDisklessSwitch(rearmRequest("foo", 5)));
     }
 
-    private static AlterDisklessSwitchRequestData reArmRequest(String topic, int partition) {
-        return new AlterDisklessSwitchRequestData()
+    private static RearmDisklessSwitchRequestData rearmRequest(String topic, int partition) {
+        return new RearmDisklessSwitchRequestData()
             .setTopicName(topic)
-            .setPartitionIndex(partition)
-            .setSealOffset(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING);
+            .setPartitionIndex(partition);
     }
 
     private static ReplicationControlTestContext disklessSwitchTestContext() {

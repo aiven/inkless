@@ -21,15 +21,15 @@ import org.apache.kafka.common.KafkaFuture;
 import org.apache.kafka.common.annotation.InterfaceStability;
 
 /**
- * The result of the {@link Admin#alterDisklessSwitch(String, int, long, AlterDisklessSwitchOptions)} call.
+ * The result of the {@link Admin#rearmDisklessSwitch(String, int, long, RearmDisklessSwitchOptions)} call.
  *
  * The API of this class is evolving, see {@link Admin} for details.
  */
 @InterfaceStability.Unstable
-public class AlterDisklessSwitchResult {
+public class RearmDisklessSwitchResult {
     private final KafkaFuture<Void> future;
 
-    AlterDisklessSwitchResult(final KafkaFuture<Void> future) {
+    RearmDisklessSwitchResult(final KafkaFuture<Void> future) {
         this.future = future;
     }
 

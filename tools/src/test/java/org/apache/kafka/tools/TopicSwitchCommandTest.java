@@ -17,8 +17,8 @@
 package org.apache.kafka.tools;
 
 import org.apache.kafka.clients.admin.Admin;
-import org.apache.kafka.clients.admin.AlterDisklessSwitchOptions;
-import org.apache.kafka.clients.admin.AlterDisklessSwitchResult;
+import org.apache.kafka.clients.admin.RearmDisklessSwitchOptions;
+import org.apache.kafka.clients.admin.RearmDisklessSwitchResult;
 import org.apache.kafka.clients.admin.DescribeTopicPartitionsResult;
 import org.apache.kafka.clients.admin.DescribeTopicsOptions;
 import org.apache.kafka.clients.admin.ListOffsetsResult;
@@ -30,7 +30,6 @@ import org.apache.kafka.common.message.DescribeTopicPartitionsResponseData.Descr
 import org.apache.kafka.common.message.DescribeTopicPartitionsResponseData.DescribeTopicPartitionsResponseTopic;
 import org.apache.kafka.metadata.InitDisklessLogFields;
 import org.apache.kafka.metadata.InitDisklessLogFields.ProducerStateEntry;
-import org.apache.kafka.metadata.PartitionRegistration;
 
 import net.sourceforge.argparse4j.inf.ArgumentParserException;
 
@@ -52,7 +51,6 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -227,13 +225,12 @@ public class TopicSwitchCommandTest {
     }
 
     @Test
-    public void testRearmSendsReArmOffset() throws Exception {
-        mockAlterDisklessSwitch();
+    public void testRearmSendsRearmRequest() throws Exception {
+        mockRearmDisklessSwitch();
 
         String output = runRearmCommand(0);
 
-        verify(adminClient).alterDisklessSwitch(eq(TOPIC), eq(0),
-            eq(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING), any(AlterDisklessSwitchOptions.class));
+        verify(adminClient).rearmDisklessSwitch(eq(TOPIC), eq(0), any(RearmDisklessSwitchOptions.class));
         assertTrue(output.contains("Re-armed the switch of test-topic-0."), output);
         // Controllers don't serve DescribeTopicPartitions, so rearm must work with --bootstrap-controller.
         verify(adminClient, never()).describeTopicPartitions(any(), any(DescribeTopicsOptions.class));
@@ -258,10 +255,10 @@ public class TopicSwitchCommandTest {
             .parseArgs(new String[]{command, "--bootstrap-server", "localhost:9092", "--topic", TOPIC, "--partition", "0"}));
     }
 
-    private void mockAlterDisklessSwitch() {
-        AlterDisklessSwitchResult result = mock(AlterDisklessSwitchResult.class);
+    private void mockRearmDisklessSwitch() {
+        RearmDisklessSwitchResult result = mock(RearmDisklessSwitchResult.class);
         when(result.all()).thenReturn(KafkaFuture.completedFuture(null));
-        when(adminClient.alterDisklessSwitch(any(), anyInt(), anyLong(), any(AlterDisklessSwitchOptions.class)))
+        when(adminClient.rearmDisklessSwitch(any(), anyInt(), any(RearmDisklessSwitchOptions.class)))
             .thenReturn(result);
     }
 

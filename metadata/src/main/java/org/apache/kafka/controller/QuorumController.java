@@ -30,8 +30,8 @@ import org.apache.kafka.common.errors.StaleBrokerEpochException;
 import org.apache.kafka.common.errors.UnknownTopicOrPartitionException;
 import org.apache.kafka.common.message.AllocateProducerIdsRequestData;
 import org.apache.kafka.common.message.AllocateProducerIdsResponseData;
-import org.apache.kafka.common.message.AlterDisklessSwitchRequestData;
-import org.apache.kafka.common.message.AlterDisklessSwitchResponseData;
+import org.apache.kafka.common.message.RearmDisklessSwitchRequestData;
+import org.apache.kafka.common.message.RearmDisklessSwitchResponseData;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsResponseData;
 import org.apache.kafka.common.message.AlterPartitionRequestData;
@@ -1848,12 +1848,12 @@ public final class QuorumController implements Controller {
     }
 
     @Override
-    public CompletableFuture<AlterDisklessSwitchResponseData> alterDisklessSwitch(
+    public CompletableFuture<RearmDisklessSwitchResponseData> rearmDisklessSwitch(
         ControllerRequestContext context,
-        AlterDisklessSwitchRequestData request
+        RearmDisklessSwitchRequestData request
     ) {
-        return appendWriteEvent("alterDisklessSwitch", context.deadlineNs(),
-            () -> replicationControl.alterDisklessSwitch(request));
+        return appendWriteEvent("rearmDisklessSwitch", context.deadlineNs(),
+            () -> replicationControl.rearmDisklessSwitch(request));
     }
 
     @Override

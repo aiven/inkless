@@ -31,8 +31,8 @@ import org.apache.kafka.clients.admin.AlterConfigsOptions;
 import org.apache.kafka.clients.admin.AlterConfigsResult;
 import org.apache.kafka.clients.admin.AlterConsumerGroupOffsetsOptions;
 import org.apache.kafka.clients.admin.AlterConsumerGroupOffsetsResult;
-import org.apache.kafka.clients.admin.AlterDisklessSwitchOptions;
-import org.apache.kafka.clients.admin.AlterDisklessSwitchResult;
+import org.apache.kafka.clients.admin.RearmDisklessSwitchOptions;
+import org.apache.kafka.clients.admin.RearmDisklessSwitchResult;
 import org.apache.kafka.clients.admin.AlterPartitionReassignmentsOptions;
 import org.apache.kafka.clients.admin.AlterPartitionReassignmentsResult;
 import org.apache.kafka.clients.admin.AlterReplicaLogDirsOptions;
@@ -407,8 +407,8 @@ public class TestingMetricsInterceptingAdminClient extends AdminClient {
     }
 
     @Override
-    public AlterDisklessSwitchResult alterDisklessSwitch(final String topic, final int partition, final long sealOffset, final AlterDisklessSwitchOptions options) {
-        return adminDelegate.alterDisklessSwitch(topic, partition, sealOffset, options);
+    public RearmDisklessSwitchResult rearmDisklessSwitch(final String topic, final int partition, final RearmDisklessSwitchOptions options) {
+        return adminDelegate.rearmDisklessSwitch(topic, partition, options);
     }
 
     @Override

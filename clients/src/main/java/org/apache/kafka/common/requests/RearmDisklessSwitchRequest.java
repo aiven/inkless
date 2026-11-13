@@ -17,24 +17,24 @@
 
 package org.apache.kafka.common.requests;
 
-import org.apache.kafka.common.message.AlterDisklessSwitchRequestData;
-import org.apache.kafka.common.message.AlterDisklessSwitchResponseData;
+import org.apache.kafka.common.message.RearmDisklessSwitchRequestData;
+import org.apache.kafka.common.message.RearmDisklessSwitchResponseData;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Readable;
 
-public class AlterDisklessSwitchRequest extends AbstractRequest {
+public class RearmDisklessSwitchRequest extends AbstractRequest {
 
-    public static class Builder extends AbstractRequest.Builder<AlterDisklessSwitchRequest> {
-        private final AlterDisklessSwitchRequestData data;
+    public static class Builder extends AbstractRequest.Builder<RearmDisklessSwitchRequest> {
+        private final RearmDisklessSwitchRequestData data;
 
-        public Builder(AlterDisklessSwitchRequestData data) {
-            super(ApiKeys.ALTER_DISKLESS_SWITCH);
+        public Builder(RearmDisklessSwitchRequestData data) {
+            super(ApiKeys.REARM_DISKLESS_SWITCH);
             this.data = data;
         }
 
         @Override
-        public AlterDisklessSwitchRequest build(short version) {
-            return new AlterDisklessSwitchRequest(data, version);
+        public RearmDisklessSwitchRequest build(short version) {
+            return new RearmDisklessSwitchRequest(data, version);
         }
 
         @Override
@@ -43,28 +43,28 @@ public class AlterDisklessSwitchRequest extends AbstractRequest {
         }
     }
 
-    private final AlterDisklessSwitchRequestData data;
+    private final RearmDisklessSwitchRequestData data;
 
-    public AlterDisklessSwitchRequest(AlterDisklessSwitchRequestData data, short version) {
-        super(ApiKeys.ALTER_DISKLESS_SWITCH, version);
+    public RearmDisklessSwitchRequest(RearmDisklessSwitchRequestData data, short version) {
+        super(ApiKeys.REARM_DISKLESS_SWITCH, version);
         this.data = data;
     }
 
     @Override
-    public AlterDisklessSwitchRequestData data() {
+    public RearmDisklessSwitchRequestData data() {
         return data;
     }
 
     @Override
-    public AlterDisklessSwitchResponse getErrorResponse(int throttleTimeMs, Throwable e) {
+    public RearmDisklessSwitchResponse getErrorResponse(int throttleTimeMs, Throwable e) {
         ApiError apiError = ApiError.fromThrowable(e);
-        return new AlterDisklessSwitchResponse(new AlterDisklessSwitchResponseData()
+        return new RearmDisklessSwitchResponse(new RearmDisklessSwitchResponseData()
             .setThrottleTimeMs(throttleTimeMs)
             .setErrorCode(apiError.error().code())
             .setErrorMessage(apiError.message()));
     }
 
-    public static AlterDisklessSwitchRequest parse(Readable readable, short version) {
-        return new AlterDisklessSwitchRequest(new AlterDisklessSwitchRequestData(readable, version), version);
+    public static RearmDisklessSwitchRequest parse(Readable readable, short version) {
+        return new RearmDisklessSwitchRequest(new RearmDisklessSwitchRequestData(readable, version), version);
     }
 }

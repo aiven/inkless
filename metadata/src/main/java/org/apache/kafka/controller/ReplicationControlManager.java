@@ -38,8 +38,8 @@ import org.apache.kafka.common.errors.UnknownTopicIdException;
 import org.apache.kafka.common.errors.UnknownTopicOrPartitionException;
 import org.apache.kafka.common.errors.UnsupportedVersionException;
 import org.apache.kafka.common.internals.Topic;
-import org.apache.kafka.common.message.AlterDisklessSwitchRequestData;
-import org.apache.kafka.common.message.AlterDisklessSwitchResponseData;
+import org.apache.kafka.common.message.RearmDisklessSwitchRequestData;
+import org.apache.kafka.common.message.RearmDisklessSwitchResponseData;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestData.ReassignablePartition;
 import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestData.ReassignableTopic;
@@ -1886,31 +1886,22 @@ public class ReplicationControlManager {
     /**
      * Re-arms a pending classic-to-diskless switch for a single partition. Unlike {@link #initDisklessLog},
      * the caller is an administrator rather than the partition leader, so this performs no leader/epoch
-     * fencing. The controller accepts only a seal offset of {@code -2}
-     * ({@link PartitionRegistration#CLASSIC_TO_DISKLESS_SWITCH_PENDING}), and only while the switch is pending.
-     * It re-sets the leader to bump the leader epoch, so the leader seals again and re-drives
-     * {@code InitDisklessLog}, as after the switch-pending mark.
+     * fencing. The controller accepts the request only while the switch is pending
+     * ({@link PartitionRegistration#CLASSIC_TO_DISKLESS_SWITCH_PENDING}). It re-sets the leader to bump
+     * the leader epoch, so the leader seals again and re-drives {@code InitDisklessLog}, as after the
+     * switch-pending mark. The request carries no seal offset: only the leader knows its log end offset
+     * and the producer states.
      */
-    ControllerResult<AlterDisklessSwitchResponseData> alterDisklessSwitch(
-        AlterDisklessSwitchRequestData request
+    ControllerResult<RearmDisklessSwitchResponseData> rearmDisklessSwitch(
+        RearmDisklessSwitchRequestData request
     ) {
-        // An operator-chosen seal skips the leader, which is the only party that knows the log end offset
-        // and the producer states, so the controller accepts only a re-arm.
-        if (request.sealOffset() != PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING) {
-            throw new InvalidRequestException("Invalid seal offset " + request.sealOffset() +
-                "; AlterDisklessSwitch only accepts -2, which re-arms a pending switch.");
-        }
-        if (request.clearProducerStates()) {
-            throw new InvalidRequestException("AlterDisklessSwitch doesn't support ClearProducerStates.");
-        }
-
         Uuid topicId = topicsByName.get(request.topicName());
         if (topicId == null) {
             throw new UnknownTopicOrPartitionException("Topic not found: " + request.topicName());
         }
         if (!isDisklessTopic(request.topicName())) {
             throw new InvalidRequestException("Topic " + request.topicName() +
-                " does not have " + DISKLESS_ENABLE_CONFIG + " enabled. AlterDisklessSwitch only operates " +
+                " does not have " + DISKLESS_ENABLE_CONFIG + " enabled. RearmDisklessSwitch only operates " +
                 "on topics that are being switched to diskless.");
         }
         TopicControlInfo topic = topics.get(topicId);
@@ -1932,10 +1923,10 @@ public class ReplicationControlManager {
         record.unknownTaggedFields().add(
             InitDisklessLogFields.encodeClassicToDisklessStartOffset(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING));
 
-        log.info("AlterDisklessSwitch re-armed the switch for {}-{}", topic.name, request.partitionIndex());
+        log.info("RearmDisklessSwitch re-armed the switch for {}-{}", topic.name, request.partitionIndex());
 
         return ControllerResult.of(List.of(new ApiMessageAndVersion(record, (short) 0)),
-            new AlterDisklessSwitchResponseData());
+            new RearmDisklessSwitchResponseData());
     }
 
     private static String logPartitionChangeInfo(PartitionRegistration oldRegistration, PartitionRegistration newRegistration) {

@@ -192,7 +192,7 @@ A switched partition runs in one of two phases. The `classicPrefixInRemoteStorag
 | Unclean leader election | Blocked, even if `unclean.leader.election.enable` is `true`. See [Unclean leader election](#unclean-leader-election). | Allowed if `unclean.leader.election.enable` is `true`, as for a born-diskless topic. |
 | ISR expansion when a broker unfences | Skipped. As for a classic partition, only `AlterPartition` expands the ISR. | The controller re-adds the unfenced replica and completes an in-flight reassignment. |
 | Reassignment | The controller stages the move as it does for a classic topic. New replicas are adding and dropped replicas are removing until the adding replicas join the ISR. | The target replicas replace the current replicas in one step. |
-| `AlterDisklessSwitch` | Accepted only while the switch is pending. See [Re-arm a pending switch](#re-arm-a-pending-switch). | Rejected with `INVALID_REQUEST`. |
+| `RearmDisklessSwitch` | Accepted only while the switch is pending. See [Re-arm a pending switch](#re-arm-a-pending-switch). | Rejected with `INVALID_REQUEST`. |
 
 The controller sets the flag when it handles a `SetClassicPrefixInRemoteStorage` request from the current leader. In the same record, the controller sets the ISR, can complete a reassignment, and elects a leader if needed. The leader sends this request after the remote log manager uploads the classic prefix, or after retention or `DeleteRecords` removes it. For more information, see [Step 6](#step-6-request-the-classicprefixinremotestorage-flag).
 
@@ -278,12 +278,11 @@ After an unclean leader election before the switch, a remote segment can cross t
 
 Every step of the switch runs on the leader, and no operator command sets the seal offset or changes the control plane. Only the leader knows its log end offset and the producer states that the seal commits.
 
-If a switch doesn't leave the pending state, you can restart it without moving the leader. Run `kafka-topic-switch.sh rearm --topic <topic> --partition <partition>` with `--bootstrap-server` or `--bootstrap-controller`. The command sends the `AlterDisklessSwitch` controller RPC with a seal offset of `-2`. The controller authorizes the RPC as `ALTER` on the cluster. The controller writes a `PartitionChangeRecord` that keeps `classicToDisklessStartOffset` at `-2` and re-sets the leader, which bumps the leader epoch. The leader then seals again and re-drives `InitDisklessLog`, as after any leadership change while the switch is pending. A leader election has the same effect.
+If a switch doesn't leave the pending state, you can restart it without moving the leader. Run `kafka-topic-switch.sh rearm --topic <topic> --partition <partition>` with `--bootstrap-server` or `--bootstrap-controller`. The command sends the `RearmDisklessSwitch` controller RPC. The request contains only the topic and the partition. The controller authorizes the RPC as `ALTER` on the cluster. The controller writes a `PartitionChangeRecord` that keeps `classicToDisklessStartOffset` at `-2` and re-sets the leader, which bumps the leader epoch. The leader then seals again and re-drives `InitDisklessLog`, as after any leadership change while the switch is pending. A leader election has the same effect.
 
 The controller rejects the request with `INVALID_REQUEST` in these cases:
 
 * The topic doesn't have `diskless.enable=true`.
 * The switch of the partition isn't pending: `classicToDisklessStartOffset` is `-1` or a committed seal.
-* The seal offset in the request isn't `-2`, or `ClearProducerStates` is `true`. The RPC keeps both fields so that clients and controllers of different versions can still parse each other's requests.
 
 To see the switch state of each partition, run `kafka-topic-switch.sh state --topic <topic>`.

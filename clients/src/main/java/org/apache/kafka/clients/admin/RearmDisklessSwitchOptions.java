@@ -20,10 +20,10 @@ package org.apache.kafka.clients.admin;
 import org.apache.kafka.common.annotation.InterfaceStability;
 
 /**
- * Options for {@link Admin#alterDisklessSwitch(String, int, long, AlterDisklessSwitchOptions)}.
+ * Options for {@link Admin#rearmDisklessSwitch(String, int, long, RearmDisklessSwitchOptions)}.
  *
  * The API of this class is evolving, see {@link Admin} for details.
  */
 @InterfaceStability.Unstable
-public class AlterDisklessSwitchOptions extends AbstractOptions<AlterDisklessSwitchOptions> {
+public class RearmDisklessSwitchOptions extends AbstractOptions<RearmDisklessSwitchOptions> {
 }
