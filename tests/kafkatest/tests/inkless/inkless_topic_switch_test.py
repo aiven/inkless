@@ -115,6 +115,11 @@ class InklessClassicToDisklessSwitchTest(Test):
         # A failed assertion must not leave a broker cut off from a dependency.
         if self.verifier is not None:
             self.verifier.heal_all()
+            if self.verifier.control_plane_was_blocked:
+                # Postgres keeps the sessions that brokers closed during the outage. Stop
+                # the brokers first, so every session left from their addresses is stale.
+                self.kafka.stop()
+                self.verifier.terminate_broker_sessions()
 
     # -----------------------------------------------------------------------
     # Cluster setup
@@ -2348,6 +2353,28 @@ class InklessClassicToDisklessSwitchTest(Test):
         wait_until(done, timeout_sec=timeout_sec, backoff_sec=5,
                    err_msg="Reassignment of %s-0 to %s didn't finish within %ds" % (self.topic, target, timeout_sec))
 
+    def _wait_for_flags_accepted(self, timeout_sec=None):
+        """Wait until no live broker tracks a partition in ``WaitingForUpload`` or ``SendingFlagToController``.
+
+        A broker stops tracking a partition once the controller accepts its
+        flag. Unlike ``kafka-topic-switch.sh state``, the gauges don't need the
+        control plane.
+        """
+        if timeout_sec is None:
+            timeout_sec = self.PHASE_2_TIMEOUT_SEC
+        waiting_obj = self.SWITCH_STATE_GAUGES["WaitingForUpload"][0]
+        sending_obj = self.SWITCH_STATE_GAUGES["SendingFlagToController"][0]
+
+        def check():
+            waiting = self._live_cluster_jmx_sum(waiting_obj)
+            sending = self._live_cluster_jmx_sum(sending_obj)
+            self.logger.info("Cluster WaitingForUploadPartitions=%s, SendingFlagToControllerPartitions=%s",
+                             waiting, sending)
+            return waiting == 0 and sending == 0
+
+        wait_until(check, timeout_sec=timeout_sec, backoff_sec=2,
+                   err_msg="Brokers still waited for the upload or the flag after %ds" % timeout_sec)
+
     def _wait_for_no_upload_wait(self, timeout_sec=120):
         """Wait until no live broker tracks a partition in ``WaitingForUpload``."""
         waiting_obj = self.SWITCH_STATE_GAUGES["WaitingForUpload"][0]
@@ -2382,8 +2409,9 @@ class InklessClassicToDisklessSwitchTest(Test):
           pending for 10 s, then starts the second controller. The flag
           requests retry until the two live controllers elect a new leader.
         - ``postgres_outage_at_phase_2`` keeps the control plane unreachable
-          until the controller sets the flag on every partition. Consolidation
-          from the seal then starts without Postgres.
+          until no broker tracks a partition in ``WaitingForUpload`` or
+          ``SendingFlagToController``. The upload and the flag requests then
+          run without Postgres.
         - ``rolling_restart_at_phase_2`` stops the leader of partition 0 before
           the hold ends and keeps it down until every partition is in phase 2.
           The leader then rejoins in phase 2, and the other brokers restart
@@ -2484,6 +2512,10 @@ class InklessClassicToDisklessSwitchTest(Test):
         elif fault == "postgres_outage_at_phase_2":
             self.verifier.block_dependency("control_plane")
             self.verifier.heal_dependency("object_storage")
+            # `kafka-topic-switch.sh state` lists offsets, which needs the control plane.
+            # The broker gauges show the accepted flags without it.
+            self._wait_for_flags_accepted()
+            self.verifier.heal_dependency("control_plane")
         elif fault == "rolling_restart_at_phase_2":
             # The first broker stays down until every partition is in phase 2, so the
             # transition runs while a broker is restarting.
@@ -2507,8 +2539,6 @@ class InklessClassicToDisklessSwitchTest(Test):
 
         self._wait_for_switch_complete()
 
-        if fault == "postgres_outage_at_phase_2":
-            self.verifier.heal_dependency("control_plane")
         if stopped_controller is not None:
             self.kafka.isolated_controller_quorum.start_node(stopped_controller)
         if reassignment is not None:
