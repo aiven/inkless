@@ -74,7 +74,11 @@ class DisklessFetchOffsetRouterTest {
     disklessManagedReplicasEnabled: Boolean = true,
     disklessConsolidationEnabled: Boolean = false
   ): DisklessFetchOffsetRouter =
-    new DisklessFetchOffsetRouter(inklessMetadataView, disklessManagedReplicasEnabled, disklessConsolidationEnabled, purgatory)
+    new DisklessFetchOffsetRouter(inklessMetadataView, disklessManagedReplicasEnabled, disklessConsolidationEnabled, purgatory,
+      () => deferrals += 1)
+
+  // Timestamp lookups that the router deferred with a retriable error.
+  private var deferrals = 0
 
   private def makePartition(timestamp: Long, partitionIndex: Int): ListOffsetsPartition =
     new ListOffsetsPartition().setPartitionIndex(partitionIndex).setTimestamp(timestamp)
@@ -689,6 +693,7 @@ class DisklessFetchOffsetRouterTest {
     val result = resultOf(status)
     assertTrue(result.hasException, s"expected ${expected.getSimpleName}, got $result")
     assertEquals(expected, result.exception.get.getClass)
+    assertEquals(1, deferrals, "the router counts each deferred lookup once")
   }
 
   @Test
@@ -765,6 +770,7 @@ class DisklessFetchOffsetRouterTest {
       classicSearchableEnd = _ => 900L)
 
     assertSame(disklessHit, resultOf(status))
+    assertEquals(0, deferrals)
   }
 
   @Test
@@ -871,6 +877,7 @@ class DisklessFetchOffsetRouterTest {
       classicSearchableEnd = _ => 0L)
 
     assertSame(disklessError, resultOf(status))
+    assertEquals(0, deferrals)
   }
 
   @Test
@@ -884,6 +891,7 @@ class DisklessFetchOffsetRouterTest {
       classicSearchableEnd = _ => 900L)
 
     assertSame(walStartError, resultOf(status))
+    assertEquals(0, deferrals)
   }
 
   @Test
@@ -922,6 +930,7 @@ class DisklessFetchOffsetRouterTest {
 
     assertSame(disklessHit, resultOf(status))
     verify(job, never()).addWalStart(any())
+    assertEquals(0, deferrals)
   }
 
   @Test

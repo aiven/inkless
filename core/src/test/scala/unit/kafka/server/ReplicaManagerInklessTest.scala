@@ -8699,8 +8699,10 @@ class ReplicaManagerInklessTest {
           assertEquals(util.List.of(new EpochEntry(leaderEpoch, 0L)), currentLog.leaderEpochCache.epochEntries)
           // The classic prefix is only in the remote tier now, so a lookup of a classic timestamp can't fall
           // through to the diskless log at the seal.
+          val deferralsBefore = yammerMeterCount(deferredListOffsetsRateMeter)
           val timestampLookup = listOffsetsByTimestamp(replicaManager, tp, timestamp = 0L, currentLeaderEpoch = leaderEpoch)
           assertEquals(Errors.OFFSET_NOT_AVAILABLE.code, timestampLookup.errorCode)
+          assertEquals(deferralsBefore + 1L, yammerMeterCount(deferredListOffsetsRateMeter))
           val remoteLogManagerCalls = inOrder(mockRemoteLogManager)
           remoteLogManagerCalls.verify(mockRemoteLogManager).stopPartitions(
             ArgumentMatchers.eq(util.Set.of(new StopPartition(tp, false, false, false))), any())
@@ -8745,10 +8747,13 @@ class ReplicaManagerInklessTest {
     val controlPlane = walStartControlPlane()
     withConsolidatingReplica(controlPlane) { (replicaManager, log) =>
       if (localLogEndOffset > 0) log.truncateFullyAndStartAt(localLogEndOffset, Optional.empty[java.lang.Long]())
+      val deferralsBefore = yammerMeterCount(deferredListOffsetsRateMeter)
 
       val response = listOffsetsByTimestamp(replicaManager, consolidatingTp, timestamp = 11000L)
 
       assertEquals(expectedError.code, response.errorCode)
+      val expectedDeferrals = if (expectedError == Errors.NONE) 0L else 1L
+      assertEquals(deferralsBefore + expectedDeferrals, yammerMeterCount(deferredListOffsetsRateMeter))
       if (expectedError == Errors.NONE) assertEquals(1000L, response.offset)
       val tidp = new TopicIdPartition(consolidatingTopicId, consolidatingTp)
       verify(controlPlane).listOffsets(util.List.of(
@@ -8852,6 +8857,8 @@ class ReplicaManagerInklessTest {
       assertEquals(1000L, response.offset)
     }
   }
+
+  private val deferredListOffsetsRateMeter = "ConsolidationDeferredListOffsetsRate"
 
   private val consolidatingTp = new TopicPartition("consolidating-topic", 0)
   private val consolidatingTopicId = Uuid.randomUuid()

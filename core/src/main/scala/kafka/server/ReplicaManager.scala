@@ -28,7 +28,7 @@ import kafka.cluster.Partition
 import kafka.log.LogManager
 import kafka.server.DisklessFetchOffsetRouter.ClassicSearchRange
 import kafka.server.QuotaFactory.QuotaManagers
-import kafka.server.ReplicaManager.{AtMinIsrPartitionCountMetricName, ConsolidationFetchBytesInPerSecMetricName, ConsolidationHighWatermarkLagFetchRateMetricName, ConsolidationHighWatermarkLagPartitionCountMetricName, ConsolidationLocalBytesPerSecMetricName, ConsolidationSupplementBytesPerSecMetricName, ConsolidationSupplementRateMetricName, FailedIsrUpdatesPerSecMetricName, IsrExpandsPerSecMetricName, IsrShrinksPerSecMetricName, LeaderCountMetricName, OfflineReplicaCountMetricName, PartitionCountMetricName, PartitionsWithLateTransactionsCountMetricName, ProducerIdCountMetricName, ReassigningPartitionsMetricName, SealedPartitionsCountMetricName, DisklessSwitchedReplicasOutsideIsrCountMetricName, UnderMinIsrPartitionCountMetricName, UnderReplicatedPartitionsMetricName, DisklessSwitchedPrefixLagMetricName, DisklessSwitchedPrefixMissingFetchRateMetricName, ConsolidationDeferredPrefixFetchRateMetricName, PrefixDeferralLogGapMs, createLogReadResult, isListOffsetsTimestampUnsupported}
+import kafka.server.ReplicaManager.{AtMinIsrPartitionCountMetricName, ConsolidationFetchBytesInPerSecMetricName, ConsolidationHighWatermarkLagFetchRateMetricName, ConsolidationHighWatermarkLagPartitionCountMetricName, ConsolidationLocalBytesPerSecMetricName, ConsolidationSupplementBytesPerSecMetricName, ConsolidationSupplementRateMetricName, FailedIsrUpdatesPerSecMetricName, IsrExpandsPerSecMetricName, IsrShrinksPerSecMetricName, LeaderCountMetricName, OfflineReplicaCountMetricName, PartitionCountMetricName, PartitionsWithLateTransactionsCountMetricName, ProducerIdCountMetricName, ReassigningPartitionsMetricName, SealedPartitionsCountMetricName, DisklessSwitchedReplicasOutsideIsrCountMetricName, UnderMinIsrPartitionCountMetricName, UnderReplicatedPartitionsMetricName, DisklessSwitchedPrefixLagMetricName, DisklessSwitchedPrefixMissingFetchRateMetricName, ConsolidationDeferredPrefixFetchRateMetricName, ConsolidationDeferredListOffsetsRateMetricName, PrefixDeferralLogGapMs, createLogReadResult, isListOffsetsTimestampUnsupported}
 import kafka.server.metadata.InklessMetadataView
 import kafka.server.share.DelayedShareFetch
 import kafka.utils._
@@ -133,6 +133,7 @@ object ReplicaManager {
   private val DisklessSwitchedPrefixMissingFetchRateMetricName =
     "DisklessSwitchedPrefixMissingFetchRate"
   private val ConsolidationDeferredPrefixFetchRateMetricName = "ConsolidationDeferredPrefixFetchRate"
+  private val ConsolidationDeferredListOffsetsRateMetricName = "ConsolidationDeferredListOffsetsRate"
 
   // Far above the consumer retry backoff, so a quiet period has no consumer waiting.
   private val PrefixDeferralLogGapMs = 60000L
@@ -163,6 +164,7 @@ object ReplicaManager {
     ConsolidationLocalBytesPerSecMetricName,
     ConsolidationHighWatermarkLagFetchRateMetricName,
     ConsolidationDeferredPrefixFetchRateMetricName,
+    ConsolidationDeferredListOffsetsRateMetricName,
     DisklessSwitchedPrefixMissingFetchRateMetricName
   )
 
@@ -307,7 +309,8 @@ class ReplicaManager(val config: KafkaConfig,
     _inklessMetadataView,
     config.disklessManagedReplicasEnabled,
     config.disklessRemoteStorageConsolidationEnabled,
-    delayedRemoteListOffsetsPurgatory
+    delayedRemoteListOffsetsPurgatory,
+    () => consolidationDeferredListOffsetsRate.mark()
   )
   private val inklessDeleteRecordsInterceptor: Option[DeleteRecordsInterceptor] = inklessSharedState.map(new DeleteRecordsInterceptor(_))
   private val inklessRetentionEnforcer: Option[RetentionEnforcer] =
@@ -473,6 +476,8 @@ class ReplicaManager(val config: KafkaConfig,
   metricsGroup.newGauge(DisklessSwitchedPrefixLagMetricName, () => disklessSwitchedPrefixLag)
   private val consolidationDeferredPrefixFetchRate: Meter =
     metricsGroup.newMeter(ConsolidationDeferredPrefixFetchRateMetricName, "fetches", TimeUnit.SECONDS)
+  private val consolidationDeferredListOffsetsRate: Meter =
+    metricsGroup.newMeter(ConsolidationDeferredListOffsetsRateMetricName, "requests", TimeUnit.SECONDS)
   private val lastPrefixDeferralLogMs = new AtomicLong(0L)
   metricsGroup.newGauge(PartitionsWithLateTransactionsCountMetricName, () => lateTransactionsCount)
   metricsGroup.newGauge(ProducerIdCountMetricName, () => producerIdCount)

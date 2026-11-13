@@ -63,7 +63,8 @@ class DisklessFetchOffsetRouter(
   inklessMetadataView: InklessMetadataView,
   disklessManagedReplicasEnabled: Boolean,
   disklessConsolidationEnabled: Boolean,
-  delayedRemoteListOffsetsPurgatory: DelayedOperationPurgatory[DelayedRemoteListOffsets]
+  delayedRemoteListOffsetsPurgatory: DelayedOperationPurgatory[DelayedRemoteListOffsets],
+  recordTimestampLookupDeferral: () => Unit = () => ()
 ) {
   import DisklessFetchOffsetRouter._
 
@@ -174,11 +175,12 @@ class DisklessFetchOffsetRouter(
           def searchableEnd(): Long = if (searchRange.isCurrent()) searchRange.end else ClassicSearchRange.UnknownEnd
           def checkedDisklessLookup(onJob: () => FetchOffsetHandler.Job, startNow: Boolean): Lookup = {
             lazy val endBelowSeal = Some(searchableEnd()).filter(_ < classicToDisklessStartOffset)
-            if (hasCommittedSwitchOffset && endBelowSeal.isDefined)
+            if (hasCommittedSwitchOffset && endBelowSeal.isDefined) {
+              recordTimestampLookupDeferral()
               failedLookup(prefixNotSearchable(topicPartition, endBelowSeal.get, classicToDisklessStartOffset, version))
-            else if (consolidationActive)
+            } else if (consolidationActive)
               disklessLookupCheckingWalStart(onJob(), topicPartition, partition, startNow, classicToDisklessStartOffset,
-                () => searchableEnd(), version)
+                () => searchableEnd(), version, recordTimestampLookupDeferral)
             else
               disklessLookupOnJob(onJob(), topicPartition, partition, startNow)
           }
@@ -359,7 +361,8 @@ private[server] object DisklessFetchOffsetRouter {
                                              startNow: Boolean,
                                              classicToDisklessStartOffset: Long,
                                              searchableEnd: () => Long,
-                                             version: Short): Lookup = {
+                                             version: Short,
+                                             recordDeferral: () => Unit): Lookup = {
     val task = job.add(tp, partition)
     val walStart = job.addWalStart(tp)
     if (startNow) job.start()
@@ -371,8 +374,10 @@ private[server] object DisklessFetchOffsetRouter {
         val disklessStart = walStartResult.timestampAndOffset.toScala.map(_.offset).filter(_ >= 0L)
           .fold(Long.MaxValue)(walStartOffset => math.max(walStartOffset, classicToDisklessStartOffset))
         val end = searchableEnd()
-        if (end < disklessStart) prefixNotSearchable(tp, end, disklessStart, version)
-        else result
+        if (end < disklessStart) {
+          recordDeferral()
+          prefixNotSearchable(tp, end, disklessStart, version)
+        } else result
       })
     new AsyncOffsetReadFutureHolder(job.cancelHandler(), checked)
   }
