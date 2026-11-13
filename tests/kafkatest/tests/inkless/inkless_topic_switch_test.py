@@ -16,6 +16,7 @@
 
 import os
 import re
+import shlex
 import uuid
 
 from ducktape.cluster.remoteaccount import RemoteCommandError
@@ -979,11 +980,56 @@ class InklessClassicToDisklessSwitchTest(Test):
     # Helpers: broker operations
     # -----------------------------------------------------------------------
 
-    def _get_leader_node(self, topic=None, partition=0):
+    def _get_leader_node(self, topic=None, partition=0, timeout_sec=60):
+        """Returns the broker that leads ``partition`` in the KRaft metadata.
+
+        For a diskless topic, ``InklessTopicMetadataTransformer`` rewrites the
+        leader that clients see to a replica it picks by hash, so
+        ``kafka-topics.sh --describe`` can show a follower. Only the leader
+        reports a nonzero ``ReplicasCount`` gauge for the partition.
+        """
         if topic is None:
             topic = self.topic
-        leader = self.kafka.leader(topic, partition=partition)
-        return leader
+        found = {}
+
+        def single_leader():
+            leaders = [node for node in self.kafka.nodes
+                       if self.kafka.pids(node) and self._replicas_count(node, topic, partition) > 0]
+            self.logger.debug("Brokers that lead %s-%d: %s", topic, partition,
+                              [self.kafka.idx(node) for node in leaders])
+            if len(leaders) != 1:
+                return False
+            found["leader"] = leaders[0]
+            return True
+
+        wait_until(single_leader, timeout_sec=timeout_sec, backoff_sec=2,
+                   err_msg="No single broker led %s-%d within %ds" % (topic, partition, timeout_sec))
+        self.logger.info("Leader for topic %s and partition %d is broker %d",
+                         topic, partition, self.kafka.idx(found["leader"]))
+        return found["leader"]
+
+    def _replicas_count(self, node, topic, partition):
+        """Returns the ``ReplicasCount`` gauge of ``partition`` on ``node``, or 0 if the broker doesn't report it."""
+        object_name = "kafka.cluster:type=Partition,name=ReplicasCount,topic=%s,partition=%d" % (topic, partition)
+        version = self.kafka.jmxtool_version(node)
+        # `timeout` bounds the call when `SIGSTOP` holds the broker process.
+        cmd = ("timeout 30 %s %s --one-time true --report-format properties "
+               "--jmx-url service:jmx:rmi:///jndi/rmi://127.0.0.1:%d/jmxrmi "
+               "--object-name %s --attributes Value" % (
+                   self.kafka.path.script("kafka-run-class.sh", version),
+                   self.kafka.jmx_class_name(version),
+                   self.kafka.jmx_port,
+                   shlex.quote(object_name)))
+        try:
+            for line in node.account.ssh_capture(cmd, allow_fail=True, combine_stderr=False):
+                line = line.decode("utf-8") if isinstance(line, bytes) else line
+                line = line.strip()
+                if "ReplicasCount" in line and ":Value=" in line:
+                    return int(float(line.rsplit("=", 1)[1]))
+        except Exception as e:
+            self.logger.debug("Failed to read ReplicasCount of %s-%d on broker %d: %s",
+                              topic, partition, self.kafka.idx(node), e)
+        return 0
 
     def _get_follower_nodes(self, topic=None, partition=0):
         if topic is None:
