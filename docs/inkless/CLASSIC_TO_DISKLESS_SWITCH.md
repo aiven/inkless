@@ -191,7 +191,7 @@ A switched partition runs in one of two phases. The `classicPrefixInRemoteStorag
 | Controller behavior | Phase 1 | Phase 2 |
 | --- | --- | --- |
 | Leader election | Classic rules: the leader must be an active replica with an online log directory. | Born-diskless rules: any active replica can lead. |
-| Unclean leader election | Blocked, even if `unclean.leader.election.enable` is `true`. See [Unclean leader election](#unclean-leader-election). | Allowed if `unclean.leader.election.enable` is `true`, as for a born-diskless topic. |
+| Unclean leader election | Blocked, even if `unclean.leader.election.enable` is `true`. See [Unclean leader election](#unclean-leader-election). The last-known-leader election of KIP-966 still runs. See [Last-known-leader election](#last-known-leader-election). | Allowed if `unclean.leader.election.enable` is `true`, as for a born-diskless topic. |
 | ISR expansion when a broker unfences | Skipped. As for a classic partition, only `AlterPartition` expands the ISR. | The controller re-adds the unfenced replica and completes an in-flight reassignment. |
 | Reassignment | The controller stages the move as it does for a classic topic. New replicas are adding and dropped replicas are removing until the adding replicas join the ISR. | The target replicas replace the current replicas in one step. |
 | `AlterDisklessSwitch` | Accepted. See [Operator override](#operator-override-of-the-seal-offset). | Rejected with `INVALID_REQUEST`. |
@@ -219,7 +219,46 @@ In phase 1, only the ISR members store a complete copy of the classic prefix. An
 * It rejects a reassignment cancellation that needs an unclean leader election with `INVALID_REPLICA_ASSIGNMENT`.
 * It skips the unclean election in the other paths that can run one: broker fencing, `AlterPartition`, reassignment cancellation, and the periodic check for leaderless partitions.
 
-These guards also apply if the cluster default enables unclean leader election, which the topic config check doesn't cover. A partition that loses every ISR member has no leader until one of them returns.
+These guards also apply if the cluster default enables unclean leader election, which the topic config check doesn't cover. They don't block the last-known-leader election of eligible leader replicas. For more information, see [Last-known-leader election](#last-known-leader-election).
+
+### Last-known-leader election
+
+The `eligible.leader.replicas.version` feature is on by default at 4.1 and later. With it on, the controller tracks eligible leader replicas (ELR) as described in KIP-966. KIP-966 adds a last-known-leader election, and the phase 1 guards don't block it. The controller runs this election for every election type, not only `UNCLEAN`, and `unclean.leader.election.enable` doesn't control it.
+
+The controller elects the last known leader when all of the following hold:
+
+* The ISR and the ELR are empty.
+* `lastKnownElr` contains one replica: the leader at the time the partition lost its last ISR member.
+* That replica is active.
+
+A replica leaves the ELR when it registers after an unclean shutdown. So the election runs after every ISR and ELR member shuts down uncleanly and the last known leader returns. The controller resets the ISR to that replica and sets the leader recovery state to `RECOVERING`. The other replicas truncate to the new leader's log when they follow it.
+
+If the unclean shutdown cost the last known leader records, the partition loses those records, even though the high watermark covered them. KIP-966 accepts the same loss for a classic topic. The switch changes how the loss shows up:
+
+* If the last known leader holds the whole classic prefix, its log end offset equals the seal. The leader serves the partition, and the switch goes on.
+* If the leader lost records, its log end offset is below the seal, because the local log in phase 1 ends at the seal. The leader marks the partition offline without telling the controller, as described in [Additional Behavior](#additional-behavior). The controller keeps that leader and an ISR of one. No other replica can lead, because none is in the ISR or the ELR and phase 1 blocks unclean leader election. The remote log manager can't upload the prefix, so phase 2 doesn't start.
+
+If the partition is offline, lower the seal to the leader's log end offset. The partition loses the records between that offset and the old seal. To recover the partition, follow these steps:
+
+1. Find the leader's log end offset in the broker log message that marks the partition offline. The message starts with `Leader partition <topic>-<partition> has LEO`.
+2. Lower the seal to that offset:
+
+   ```bash
+   kafka-topic-switch.sh seal --bootstrap-server <broker> --topic <topic> --partition <partition> --offset <offset>
+   ```
+
+3. Restart the leader. A broker doesn't apply metadata changes to a partition that it marked offline. The partition doesn't serve requests until the restart. After the restart, the leader's log end offset equals the seal. The other replicas truncate to the seal and rejoin the ISR.
+4. Reconcile the control plane with the new seal:
+
+   ```bash
+   kafka-topic-switch.sh repair --bootstrap-server <broker> --topic <topic> --partition <partition>
+   ```
+
+   For more information, see [Reconciling the control plane](#reconciling-the-control-plane).
+
+The remote log manager then uploads the prefix, and the partition enters phase 2. A consumer that reads across the lost offsets gets the diskless records from the old seal on. The broker doesn't return an error for the missing offsets.
+
+The same election can run while the switch is pending. The leader then seals at its own log end offset, and the switch goes on. As on a classic topic, the partition loses the records that the leader lost, and you don't need to run any recovery steps.
 
 ### Forced deletion of the local classic prefix
 
