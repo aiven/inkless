@@ -49,7 +49,6 @@ import java.util.Optional;
 import java.util.Properties;
 
 import static net.sourceforge.argparse4j.impl.Arguments.store;
-import static net.sourceforge.argparse4j.impl.Arguments.storeTrue;
 
 public abstract class TopicSwitchCommand {
     public static void main(String... args) {
@@ -85,19 +84,9 @@ public abstract class TopicSwitchCommand {
                     stateCommand(System.out, adminClient, topic);
                 }
                 break;
-            case "seal":
+            case "rearm":
                 try (Admin adminClient = Admin.create(properties)) {
-                    sealCommand(System.out, adminClient, topic,
-                        namespace.getInt("partition"),
-                        Optional.ofNullable(namespace.getLong("offset")),
-                        namespace.getBoolean("clear_producer_states"),
-                        namespace.getBoolean("dry_run"));
-                }
-                break;
-            case "repair":
-                try (Admin adminClient = Admin.create(properties)) {
-                    repairCommand(System.out, adminClient, topic,
-                        Optional.ofNullable(namespace.getInt("partition")));
+                    rearmCommand(System.out, adminClient, topic, namespace.getInt("partition"));
                 }
                 break;
             default:
@@ -114,12 +103,10 @@ public abstract class TopicSwitchCommand {
 
         Subparser stateParser = commandParsers.addParser("state")
                 .help("Print the switch state for each partition of a specified topic.");
-        Subparser sealParser = commandParsers.addParser("seal")
-                .help("Override the topic seal offset. Use --dry-run to perform validation only.");
-        Subparser repairParser = commandParsers.addParser("repair")
-                .help("Repair the control-plane diskless log entry.");
+        Subparser rearmParser = commandParsers.addParser("rearm")
+                .help("Re-arm the pending switch of a partition, so its leader seals again and re-runs the switch.");
 
-        for (Subparser subparser : List.of(stateParser, sealParser)) {
+        for (Subparser subparser : List.of(stateParser, rearmParser)) {
             MutuallyExclusiveGroup connectionOptions = subparser.addMutuallyExclusiveGroup().required(true);
             connectionOptions.addArgument("--bootstrap-server", "-b")
                     .action(store())
@@ -127,13 +114,6 @@ public abstract class TopicSwitchCommand {
             connectionOptions.addArgument("--bootstrap-controller", "-C")
                     .action(store())
                     .help("A list of host/port pairs to use for establishing the connection to the KRaft controllers.");
-        }
-        repairParser.addArgument("--bootstrap-server", "-b")
-                .action(store())
-                .required(true)
-                .help("A list of host/port pairs to use for establishing the connection to the Kafka cluster.");
-
-        for (Subparser subparser : List.of(stateParser, sealParser, repairParser)) {
             subparser.addArgument("--command-config", "-c")
                     .action(store())
                     .help("Config properties file for the Admin client.");
@@ -143,35 +123,12 @@ public abstract class TopicSwitchCommand {
                     .help("Topic name for the specified topic.");
         }
 
-        sealParser.addArgument("--partition", "-p")
+        rearmParser.addArgument("--partition", "-p")
                 .action(store())
                 .type(Integer.class)
                 .required(true)
-                .help("The partition index to seal.");
-        sealParser.addArgument("--offset", "-o")
-                .action(store())
-                .type(Long.class)
-                .help("The seal offset to commit: >= 0 forces (re-)sealing at that offset, -1 aborts the "
-                        + "switch and reverts the partition to classic, and -2 re-arms the switch as pending. "
-                        + "-1 and -2 are only allowed while the switch is still pending (no seal committed yet). "
-                        + "Once a seal is committed, a new seal offset can't exceed it. "
-                        + "Once the partition's classic prefix is in remote storage (classicPrefixInRemoteStorage=true "
-                        + "in the state command), the controller rejects every seal offset. "
-                        + "If omitted, the partition's current end offset is used; omitting it is only allowed "
-                        + "before a seal is committed, otherwise an explicit offset is required.");
-        sealParser.addArgument("--clear-producer-states")
-                .action(storeTrue())
-                .help("When forcing a seal (offset >= 0), clear the committed producer states. Ignored for "
-                        + "negative offsets, which always clear them.");
-        sealParser.addArgument("--dry-run", "-d")
-                .action(storeTrue())
-                .help("Whether to only perform validation when adjusting the seal offset. The validation runs "
-                        + "in the command and doesn't cover -1 and -2, so the controller can still reject the request.");
-
-        repairParser.addArgument("--partition", "-p")
-                .action(store())
-                .type(Integer.class)
-                .help("The partition index to repair. If omitted, all switched partitions of the topic are repaired.");
+                .help("The partition index to re-arm. The controller accepts the request only while the "
+                        + "switch of the partition is pending (classicToDisklessStartOffset=-2).");
 
         return parser;
     }
@@ -250,149 +207,10 @@ public abstract class TopicSwitchCommand {
         }
     }
 
-    static void sealCommand(PrintStream stream, Admin adminClient, String topic, int partition,
-                            Optional<Long> offset, boolean clearProducerStates, boolean dryRun) throws Exception {
-        if (offset.isPresent() && offset.get() < PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING) {
-            throw new RuntimeException("Invalid seal offset " + offset.get()
-                + "; must be >= -2 (-2 re-arms, -1 aborts, >= 0 seals at that offset).");
-        }
-
-        long sealOffset;
-        if (offset.isEmpty()) {
-            SwitchState state = readSwitchState(adminClient, topic, partition);
-            rejectIfClassicPrefixInRemoteStorage(state, topic, partition);
-            if (state.classicToDisklessStartOffset() >= 0) {
-                throw new RuntimeException(String.format(
-                    "%s-%d already has a committed seal offset (%d); pass an explicit --offset to re-seal.",
-                    topic, partition, state.classicToDisklessStartOffset()));
-            }
-            sealOffset = endOffset(adminClient, topic, partition);
-            stream.printf("Validated %s-%d: sealing at end offset %d.%n", topic, partition, sealOffset);
-        } else {
-            sealOffset = offset.get();
-            if (sealOffset >= 0) {
-                SwitchState state = readSwitchState(adminClient, topic, partition);
-                rejectIfClassicPrefixInRemoteStorage(state, topic, partition);
-                long committedSeal = state.classicToDisklessStartOffset();
-                if (committedSeal >= 0 && sealOffset > committedSeal) {
-                    throw new RuntimeException(String.format(
-                        "Cannot seal %s-%d at offset %d: it exceeds the committed seal offset (%d).",
-                        topic, partition, sealOffset, committedSeal));
-                }
-                long startOffset = startOffset(adminClient, topic, partition);
-                long endOffset = endOffset(adminClient, topic, partition);
-                if (sealOffset < startOffset || sealOffset > endOffset) {
-                    throw new RuntimeException(String.format(
-                        "Cannot seal %s-%d at offset %d: it is outside the classic log range [%d, %d].",
-                        topic, partition, sealOffset, startOffset, endOffset));
-                }
-                stream.printf("Validated %s-%d: seal offset %d within classic log range [%d, %d].%n",
-                    topic, partition, sealOffset, startOffset, endOffset);
-            }
-        }
-
-        if (dryRun) {
-            stream.printf("[dry-run] Would set %s-%d classicToDisklessStartOffset to %s.%n",
-                topic, partition, describeSealOffset(sealOffset));
-            return;
-        }
-
-        AlterDisklessSwitchOptions options = new AlterDisklessSwitchOptions()
-            .clearProducerStates(clearProducerStates);
-        adminClient.alterDisklessSwitch(topic, partition, sealOffset, options).all().get();
-        stream.printf("Set %s-%d classicToDisklessStartOffset to %s.%n",
-            topic, partition, describeSealOffset(sealOffset));
-    }
-
-    static void repairCommand(PrintStream stream, Admin adminClient, String topic,
-                              Optional<Integer> partition) throws Exception {
-        DescribeTopicPartitionsResponseData responseData = adminClient
-            .describeTopicPartitions(List.of(topic), new DescribeTopicsOptions()).rawResponse().get();
-        DescribeTopicPartitionsResponseTopic topicData = responseData.topics().find(topic);
-        if (topicData == null) {
-            throw new RuntimeException("Topic not found: " + topic);
-        }
-        if (topicData.errorCode() != 0) {
-            throw new RuntimeException("Error describing topic " + topic + ": error code " + topicData.errorCode());
-        }
-
-        List<DescribeTopicPartitionsResponsePartition> partitions = topicData.partitions().stream()
-            .filter(p -> partition.isEmpty() || p.partitionIndex() == partition.get())
-            .toList();
-        if (partition.isPresent() && partitions.isEmpty()) {
-            throw new RuntimeException("Partition not found: " + topic + "-" + partition.get());
-        }
-
-        int repaired = 0;
-        for (DescribeTopicPartitionsResponsePartition p : partitions) {
-            long seal = InitDisklessLogFields.decodeClassicToDisklessStartOffset(p.unknownTaggedFields());
-            // Only committed partitions have a control-plane entry to reconcile.
-            if (seal < 0) {
-                stream.printf("Skipping %s-%d: not switched (classicToDisklessStartOffset=%s).%n",
-                    topic, p.partitionIndex(), formatStartOffset(seal));
-                continue;
-            }
-            if (p.leaderId() < 0) {
-                stream.printf("Skipping %s-%d: no current leader (leaderId=%d).%n",
-                    topic, p.partitionIndex(), p.leaderId());
-                continue;
-            }
-            // The control-plane write happens on the leader, so route the request there.
-            adminClient.repairDisklessLog(topic, p.partitionIndex(), p.leaderId()).all().get();
-            stream.printf("Repaired %s-%d control-plane diskless log at seal offset %d (leader %d).%n",
-                topic, p.partitionIndex(), seal, p.leaderId());
-            repaired++;
-        }
-        stream.printf("Repaired %d partition(s) of topic %s.%n", repaired, topic);
-    }
-
-    private static long startOffset(Admin adminClient, String topic, int partition) throws Exception {
-        TopicPartition tp = new TopicPartition(topic, partition);
-        return adminClient.listOffsets(Map.of(tp, OffsetSpec.earliest())).all().get().get(tp).offset();
-    }
-
-    private static long endOffset(Admin adminClient, String topic, int partition) throws Exception {
-        TopicPartition tp = new TopicPartition(topic, partition);
-        return adminClient.listOffsets(Map.of(tp, OffsetSpec.latest())).all().get().get(tp).offset();
-    }
-
-    private record SwitchState(long classicToDisklessStartOffset, boolean classicPrefixInRemoteStorage) { }
-
-    private static SwitchState readSwitchState(Admin adminClient, String topic, int partition) throws Exception {
-        DescribeTopicPartitionsResponseData responseData = adminClient
-            .describeTopicPartitions(List.of(topic), new DescribeTopicsOptions()).rawResponse().get();
-        DescribeTopicPartitionsResponseTopic topicData = responseData.topics().find(topic);
-        if (topicData == null) {
-            throw new RuntimeException("Topic not found: " + topic);
-        }
-        return topicData.partitions().stream()
-            .filter(p -> p.partitionIndex() == partition)
-            .findFirst()
-            .map(p -> new SwitchState(
-                InitDisklessLogFields.decodeClassicToDisklessStartOffset(p.unknownTaggedFields()),
-                InitDisklessLogFields.decodeClassicPrefixInRemoteStorage(p.unknownTaggedFields())))
-            .orElseThrow(() -> new RuntimeException("Partition not found: " + topic + "-" + partition));
-    }
-
-    // The controller rejects the request too. Failing here keeps --dry-run from reporting an action that
-    // can't succeed.
-    private static void rejectIfClassicPrefixInRemoteStorage(SwitchState state, String topic, int partition) {
-        if (state.classicPrefixInRemoteStorage()) {
-            throw new RuntimeException(String.format(
-                "%s-%d has its classic prefix in remote storage (classicPrefixInRemoteStorage=true); "
-                    + "the controller rejects every seal change in that state.",
-                topic, partition));
-        }
-    }
-
-    private static String describeSealOffset(long sealOffset) {
-        if (sealOffset == PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET) {
-            return "-1 (abort switch, revert to classic)";
-        } else if (sealOffset == PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING) {
-            return "-2 (re-arm switch)";
-        } else {
-            return String.valueOf(sealOffset);
-        }
+    static void rearmCommand(PrintStream stream, Admin adminClient, String topic, int partition) throws Exception {
+        adminClient.alterDisklessSwitch(topic, partition, PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING,
+            new AlterDisklessSwitchOptions()).all().get();
+        stream.printf("Re-armed the switch of %s-%d.%n", topic, partition);
     }
 
     private static String formatStartOffset(long offset) {

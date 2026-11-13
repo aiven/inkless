@@ -1884,27 +1884,24 @@ public class ReplicationControlManager {
     }
 
     /**
-     * Overrides a single partition's classic-to-diskless switch state. Unlike {@link #initDisklessLog},
+     * Re-arms a pending classic-to-diskless switch for a single partition. Unlike {@link #initDisklessLog},
      * the caller is an administrator rather than the partition leader, so this performs no leader/epoch
-     * fencing. The requested seal offset is written verbatim as the {@code classicToDisklessStartOffset}
-     * tagged field on a {@link PartitionChangeRecord}:
-     *
-     * <ul>
-     *   <li>{@code >= 0}: force (re-)sealing at that offset.</li>
-     *   <li>{@code -1} ({@link PartitionRegistration#NO_CLASSIC_TO_DISKLESS_START_OFFSET}): abort the
-     *       switch and revert the partition to classic.</li>
-     *   <li>{@code -2} ({@link PartitionRegistration#CLASSIC_TO_DISKLESS_SWITCH_PENDING}): re-arm the
-     *       switch as pending. The leader is re-set to the current leader to bump the leader epoch and
-     *       force the broker to re-seal.</li>
-     * </ul>
+     * fencing. The controller accepts only a seal offset of {@code -2}
+     * ({@link PartitionRegistration#CLASSIC_TO_DISKLESS_SWITCH_PENDING}), and only while the switch is pending.
+     * It re-sets the leader to bump the leader epoch, so the leader seals again and re-drives
+     * {@code InitDisklessLog}, as after the switch-pending mark.
      */
     ControllerResult<AlterDisklessSwitchResponseData> alterDisklessSwitch(
         AlterDisklessSwitchRequestData request
     ) {
-        long sealOffset = request.sealOffset();
-        if (sealOffset < PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING) {
-            throw new InvalidRequestException("Invalid seal offset " + sealOffset +
-                "; must be >= -2 (-2 re-arms, -1 aborts, >= 0 seals at that offset).");
+        // An operator-chosen seal skips the leader, which is the only party that knows the log end offset
+        // and the producer states, so the controller accepts only a re-arm.
+        if (request.sealOffset() != PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING) {
+            throw new InvalidRequestException("Invalid seal offset " + request.sealOffset() +
+                "; AlterDisklessSwitch only accepts -2, which re-arms a pending switch.");
+        }
+        if (request.clearProducerStates()) {
+            throw new InvalidRequestException("AlterDisklessSwitch doesn't support ClearProducerStates.");
         }
 
         Uuid topicId = topicsByName.get(request.topicName());
@@ -1922,48 +1919,20 @@ public class ReplicationControlManager {
             throw new UnknownTopicOrPartitionException("Partition not found: " +
                 request.topicName() + "-" + request.partitionIndex());
         }
-        if (partition.classicToDisklessStartOffset == PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET) {
-            throw new InvalidRequestException("Partition " + request.topicName() + "-" +
-                request.partitionIndex() + " is not part of a classic-to-diskless switch; there is " +
-                "nothing to override.");
-        }
-        if (partition.classicPrefixInRemoteStorage) {
-            throw new InvalidRequestException("Cannot alter the classic-to-diskless switch for " +
-                request.topicName() + "-" + request.partitionIndex() + ": the classic prefix is already " +
-                "in remote storage.");
-        }
-        if (sealOffset < 0 && partition.classicToDisklessStartOffset >= 0) {
-            throw new InvalidRequestException("Cannot abort or re-arm the classic-to-diskless switch for " +
-                request.topicName() + "-" + request.partitionIndex() + ": it has already committed a seal " +
-                "offset (" + partition.classicToDisklessStartOffset + "), and diskless data may exist past it.");
-        }
-        if (sealOffset > 0 && partition.classicToDisklessStartOffset >= 0
-                && sealOffset > partition.classicToDisklessStartOffset) {
-            throw new InvalidRequestException("Cannot seal " + request.topicName() + "-" +
-                request.partitionIndex() + " at offset " + sealOffset + ": it exceeds the committed seal " +
-                "offset (" + partition.classicToDisklessStartOffset + "), beyond which no classic data exists.");
+        if (partition.classicToDisklessStartOffset != PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING) {
+            throw new InvalidRequestException("Cannot re-arm the classic-to-diskless switch for " +
+                request.topicName() + "-" + request.partitionIndex() + ": the switch isn't pending " +
+                "(classicToDisklessStartOffset=" + partition.classicToDisklessStartOffset + ").");
         }
 
         PartitionChangeRecord record = new PartitionChangeRecord()
             .setTopicId(topicId)
-            .setPartitionId(request.partitionIndex());
+            .setPartitionId(request.partitionIndex())
+            .setLeader(partition.leader);
         record.unknownTaggedFields().add(
-            InitDisklessLogFields.encodeClassicToDisklessStartOffset(sealOffset));
-        if (sealOffset >= 0) {
-            record.unknownTaggedFields().add(
-                InitDisklessLogFields.encodeDisklessLeaderEpoch(partition.leaderEpoch));
-            if (request.clearProducerStates()) {
-                // Write an explicit empty producer-states tag; without it merge() leaves them unchanged.
-                record.unknownTaggedFields().add(
-                    InitDisklessLogFields.encodeProducerStates(List.of()));
-            }
-        } else if (sealOffset == PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING) {
-            // Bump the leader epoch to force the broker to seal again, as the switch-pending mark does.
-            record.setLeader(partition.leader);
-        }
+            InitDisklessLogFields.encodeClassicToDisklessStartOffset(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING));
 
-        log.info("AlterDisklessSwitch for {}-{}: classicToDisklessStartOffset={}",
-            topic.name, request.partitionIndex(), sealOffset);
+        log.info("AlterDisklessSwitch re-armed the switch for {}-{}", topic.name, request.partitionIndex());
 
         return ControllerResult.of(List.of(new ApiMessageAndVersion(record, (short) 0)),
             new AlterDisklessSwitchResponseData());

@@ -67,8 +67,6 @@ import io.aiven.inkless.control_plane.ListOffsetsResponse;
 import io.aiven.inkless.control_plane.PruneDisklessLogsRequest;
 import io.aiven.inkless.control_plane.PruneDisklessLogsResponse;
 import io.aiven.inkless.control_plane.PurgeDeletedLogsResponse;
-import io.aiven.inkless.control_plane.RepairDisklessLogRequest;
-import io.aiven.inkless.control_plane.RepairDisklessLogResponse;
 
 public class PostgresControlPlane extends AbstractControlPlane {
     private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger(PostgresControlPlane.class);
@@ -201,12 +199,6 @@ public class PostgresControlPlane extends AbstractControlPlane {
     @Override
     public List<InitDisklessLogResponse> initDisklessLog(final List<InitDisklessLogRequest> requests) {
         final InitDisklessLogJob job = new InitDisklessLogJob(time, jobsJooqCtx, requests, pgMetrics::onInitDisklessLogCompleted);
-        return job.call();
-    }
-
-    @Override
-    public List<RepairDisklessLogResponse> repairDisklessLog(final List<RepairDisklessLogRequest> requests) {
-        final RepairDisklessLogJob job = new RepairDisklessLogJob(time, jobsJooqCtx, requests, pgMetrics::onRepairDisklessLogCompleted);
         return job.call();
     }
 

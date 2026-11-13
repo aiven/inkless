@@ -222,8 +222,6 @@ import org.apache.kafka.common.message.RemoveRaftVoterRequestData;
 import org.apache.kafka.common.message.RemoveRaftVoterResponseData;
 import org.apache.kafka.common.message.RenewDelegationTokenRequestData;
 import org.apache.kafka.common.message.RenewDelegationTokenResponseData;
-import org.apache.kafka.common.message.RepairDisklessLogRequestData;
-import org.apache.kafka.common.message.RepairDisklessLogResponseData;
 import org.apache.kafka.common.message.SaslAuthenticateRequestData;
 import org.apache.kafka.common.message.SaslAuthenticateResponseData;
 import org.apache.kafka.common.message.SaslHandshakeRequestData;
@@ -1085,7 +1083,6 @@ public class RequestResponseTest {
             case DELETE_SHARE_GROUP_OFFSETS: return createDeleteShareGroupOffsetsRequest(version);
             case INIT_DISKLESS_LOG: return createInitDisklessLogRequest(version);
             case ALTER_DISKLESS_SWITCH: return createAlterDisklessSwitchRequest(version);
-            case REPAIR_DISKLESS_LOG: return createRepairDisklessLogRequest(version);
             case SET_CLASSIC_PREFIX_IN_REMOTE_STORAGE: return createSetClassicPrefixInRemoteStorageRequest(version);
             default: throw new IllegalArgumentException("Unknown API key " + apikey);
         }
@@ -1184,7 +1181,6 @@ public class RequestResponseTest {
             case DELETE_SHARE_GROUP_OFFSETS: return createDeleteShareGroupOffsetsResponse();
             case INIT_DISKLESS_LOG: return createInitDisklessLogResponse();
             case ALTER_DISKLESS_SWITCH: return createAlterDisklessSwitchResponse();
-            case REPAIR_DISKLESS_LOG: return createRepairDisklessLogResponse();
             case SET_CLASSIC_PREFIX_IN_REMOTE_STORAGE: return createSetClassicPrefixInRemoteStorageResponse();
             default: throw new IllegalArgumentException("Unknown API key " + apikey);
         }
@@ -1330,19 +1326,6 @@ public class RequestResponseTest {
 
     private AlterDisklessSwitchResponse createAlterDisklessSwitchResponse() {
         return new AlterDisklessSwitchResponse(new AlterDisklessSwitchResponseData()
-                .setThrottleTimeMs(123)
-                .setErrorCode(Errors.NONE.code()));
-    }
-
-    private RepairDisklessLogRequest createRepairDisklessLogRequest(short version) {
-        RepairDisklessLogRequestData data = new RepairDisklessLogRequestData()
-                .setTopicName("foo")
-                .setPartitionIndex(0);
-        return new RepairDisklessLogRequest.Builder(data).build(version);
-    }
-
-    private RepairDisklessLogResponse createRepairDisklessLogResponse() {
-        return new RepairDisklessLogResponse(new RepairDisklessLogResponseData()
                 .setThrottleTimeMs(123)
                 .setErrorCode(Errors.NONE.code()));
     }
