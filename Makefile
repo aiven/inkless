@@ -33,7 +33,7 @@ build_all:
 
 core/build/distributions/kafka_2.13-$(VERSION).tgz:
 	echo "Building Kafka distribution with version $(VERSION)"
-	./gradlew releaseTarGz -PcommitId=$$(git rev-parse HEAD)
+	./gradlew releaseTarGz $$(commit=$$(git rev-parse HEAD 2>/dev/null) && echo "-PcommitId=$$commit")
 
 .PHONY: build_release
 build_release: core/build/distributions/kafka_2.13-$(VERSION).tgz
