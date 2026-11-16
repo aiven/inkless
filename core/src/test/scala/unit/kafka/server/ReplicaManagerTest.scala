@@ -482,6 +482,16 @@ class ReplicaManagerTest {
       ReplicaManager.MeterMetricNames.foreach(metricName => verify(mockMetricsGroup).newMeter(ArgumentMatchers.eq(metricName), anyString(), any(classOf[TimeUnit])))
       ReplicaManager.MetricNames.foreach(verify(mockMetricsGroup).removeMetric(_))
 
+      val registeredNames = ArgumentCaptor.forClass(classOf[String])
+      val registeredTags = ArgumentCaptor.forClass(classOf[util.Map[String, String]])
+      verify(mockMetricsGroup, atLeastOnce()).newGauge(registeredNames.capture(), any(), registeredTags.capture())
+      val removedNames = ArgumentCaptor.forClass(classOf[String])
+      val removedTags = ArgumentCaptor.forClass(classOf[util.Map[String, String]])
+      verify(mockMetricsGroup, atLeastOnce()).removeMetric(removedNames.capture(), removedTags.capture())
+      assertEquals(
+        registeredNames.getAllValues.asScala.zip(registeredTags.getAllValues.asScala).toSet,
+        removedNames.getAllValues.asScala.zip(removedTags.getAllValues.asScala).toSet)
+
       // assert that we have verified all invocations on
       verifyNoMoreInteractions(mockMetricsGroup)
     } finally {

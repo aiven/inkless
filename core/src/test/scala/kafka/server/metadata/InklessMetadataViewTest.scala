@@ -282,6 +282,18 @@ class InklessMetadataViewTest {
     assertTrue(metadataView.getConsolidatingDisklessTopicPartitions.isEmpty)
   }
 
+  @Test
+  def testGetDisklessPartitionCountSumsDisklessTopicsOnly(): Unit = {
+    val metadataCache = mock(classOf[KRaftMetadataCache])
+    val metadataView = new InklessMetadataView(metadataCache, null)
+    stubTopicConfigs(metadataCache,
+      configs = Map("diskless-a" -> createTopicProps(diskless = Some("true")), "classic" -> createTopicProps(),
+        "diskless-deleted" -> createTopicProps(diskless = Some("true"))),
+      topics = Map("diskless-a" -> (Uuid.randomUuid(), 3), "classic" -> (Uuid.randomUuid(), 2)))
+
+    assertEquals(3, metadataView.getDisklessPartitionCount)
+  }
+
   private def createTopicProps(diskless: Option[String] = None, remoteStorageEnable: Option[String] = None): Properties = {
     val props = new Properties()
     diskless.foreach(v => props.put(TopicConfig.DISKLESS_ENABLE_CONFIG, v))

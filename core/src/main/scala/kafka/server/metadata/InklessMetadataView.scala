@@ -84,6 +84,17 @@ class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConf
   override def getConsolidatingDisklessTopicPartitions: util.Set[TopicIdPartition] =
     topicPartitions(isConsolidating)
 
+  /**
+   * Returns the number of partitions of all diskless topics.
+   */
+  def getDisklessPartitionCount: Int = {
+    val image = metadataCache.currentImage()
+    image.topics().topicsByName().values().stream()
+      .filter(topic => isDiskless(topicOverrides(image, topic.name())))
+      .mapToInt(_.partitions().size())
+      .sum()
+  }
+
   // Reads the topics, their configs, and their partitions from one image:
   // a topic that a later image deletes can't fail the scan.
   private def topicPartitions(filter: util.Map[String, String] => Boolean): util.Set[TopicIdPartition] = {
