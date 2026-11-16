@@ -48,8 +48,10 @@ import scala.jdk.OptionConverters.RichOptional
  *      (same rationale as sealed switched replicas: clients may be routed to any ISR replica).
  *   3. Partition that is being switched from classic to diskless
  *      (`classicToDisklessStartOffset == CLASSIC_TO_DISKLESS_SWITCH_PENDING` and managed
- *      replicas enabled, and not a consolidating diskless topic): fetch offset only in the
- *      classic path.
+ *      replicas enabled): fetch offset only in the classic path. A consolidating topic takes this
+ *      path too, because the control plane has no entry for the partition until the switch commits
+ *      the seal. The leader and the in-sync followers answer client requests, because the metadata
+ *      transformer sends clients to any in-sync replica while the switch is pending.
  *   4. Follower requests on a switched partition: ListOffsets requests (used by ReplicaFetcher
  *      for truncation / initial offset bootstrap) must never see diskless offsets, otherwise the
  *      follower would try to truncate to or fetch from offsets that live only in object storage:
@@ -63,6 +65,7 @@ class DisklessFetchOffsetRouter(
   inklessMetadataView: InklessMetadataView,
   disklessManagedReplicasEnabled: Boolean,
   disklessConsolidationEnabled: Boolean,
+  localBrokerId: Int,
   delayedRemoteListOffsetsPurgatory: DelayedOperationPurgatory[DelayedRemoteListOffsets],
   recordTimestampLookupDeferral: () => Unit = () => ()
 ) {
@@ -84,7 +87,9 @@ class DisklessFetchOffsetRouter(
    *                                      reached the classic-to-diskless switch offset.
    * @param classicSearchRange            returns the offset range, from the local UnifiedLog's
    *                                      `logStartOffset`, that a timestamp search of the local
-   *                                      UnifiedLog reads. The router reads it before the classic lookup.
+   *                                      UnifiedLog can answer from. For a client request the range ends
+   *                                      at the last fetchable offset of the isolation level. The router
+   *                                      reads it before the classic lookup.
    * @param classicFetchOffset            runs the standard Kafka classic-path lookup for the
    *                                      given `(topicPartition, partition, allowFromFollower)`.
    */
@@ -122,13 +127,10 @@ class DisklessFetchOffsetRouter(
     def classicLookup(): ListOffsetsPartitionStatus = classicFetchOffset(topicPartition, partition, allowFromFollower)
     def disklessLookup: Lookup = disklessLookupOnJob(job, topicPartition, partition)
 
-    // Consolidating diskless topics can still carry CLASSIC_TO_DISKLESS_SWITCH_PENDING in
-    // metadata while the leader serves (or is catching up) from object storage; ListOffsets must
-    // not be forced down the classic-only path in that case (see ReplicaManager diskless fetch
-    // routing for the analogous consolidating carve-out).
-    if (switchPending && disklessManagedReplicasEnabled && !isConsolidatingPartition) {
-      // Case 3.
-      classicFetchOffset(topicPartition, partition, false)
+    if (switchPending && disklessManagedReplicasEnabled) {
+      // Case 3. A follower answers client requests only: a replica fetcher sends its request to the leader.
+      val inSyncReplicaAnswers = !isFollowerRequest && inklessMetadataView.isReplicaInIsr(topicPartition, localBrokerId)
+      classicFetchOffset(topicPartition, partition, inSyncReplicaAnswers)
     } else if (isSwitchedWithClassicAccess && isFollowerRequest) {
       // Case 4.
       classicLookup()
@@ -160,10 +162,11 @@ class DisklessFetchOffsetRouter(
 
         case t if t >= 0 =>
           // Specific timestamp: classic first, fall back to diskless on a "no match".
-          // A "no match" covers only what the local log could search. The diskless lookup reads batches from the
-          // first retained one on, so a local log that ends below that batch leaves offsets that neither leg reads: a
-          // switched replica below the seal, or a consolidating replica that the WAL prune passed. Such a
-          // replica gets a retriable error until it rebuilds, as a consumer fetch does in the same state.
+          // A "no match" covers only what the local log could answer from. The diskless lookup reads batches from the
+          // first retained one on, so a local range that ends below that batch leaves offsets that neither leg reads: a
+          // switched replica below the seal, or a consolidating replica that the WAL prune passed. A client lookup also
+          // hides a match at or past the last fetchable offset, so a high watermark below that batch leaves the same
+          // gap. Such a replica gets a retriable error until it catches up, as a consumer fetch does in the same state.
           // The router reads the range before the search, and the search reads no more than that range. A rebuild
           // or recreation after the read can cut the log back. The guard then treats the range as unknown.
           val searchRange = classicSearchRange(topicPartition)
@@ -270,7 +273,7 @@ class DisklessFetchOffsetRouter(
 private[server] object DisklessFetchOffsetRouter {
 
   /**
-   * The offsets that a timestamp search of the local log reads, from its log start up to `end`.
+   * The offsets that a timestamp search of the local log can answer from, from its log start up to `end`.
    *
    * @param isCurrent checks whether the range still holds: false once the broker replaces or truncates the log.
    */

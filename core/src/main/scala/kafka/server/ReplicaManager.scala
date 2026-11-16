@@ -357,6 +357,7 @@ class ReplicaManager(val config: KafkaConfig,
     _inklessMetadataView,
     config.disklessManagedReplicasEnabled,
     config.disklessRemoteStorageConsolidationEnabled,
+    config.brokerId,
     delayedRemoteListOffsetsPurgatory,
     () => consolidationDeferredListOffsetsRate.mark()
   )
@@ -2241,13 +2242,21 @@ class ReplicaManager(val config: KafkaConfig,
     // is read first, so a truncation that the reads below straddle changes it and the range stops being current.
     // A queued remote search keeps the log start it read. Retention or DeleteRecords that moves the log start drops
     // the epoch of that offset, and the search then reads nothing, so a new log start also ends the range.
+    // A client lookup hides a match at or past the last fetchable offset of its isolation level, as in
+    // Partition.fetchOffsetForTimestamp, so the range of a client request ends there. The bound is read before the
+    // search, so it's at or below the one that the search applies.
+    val isClientRequest = replicaId == ListOffsetsRequest.CONSUMER_REPLICA_ID
+    def lastFetchableOffset(log: UnifiedLog): Long =
+      if (!isClientRequest) log.logEndOffset
+      else if (isolationLevel == IsolationLevel.READ_COMMITTED) log.lastStableOffset
+      else log.highWatermark
     val classicSearchRange: TopicPartition => ClassicSearchRange = tp => logManager.getLog(tp) match {
       case Some(log) =>
         val truncationCount = log.truncationCount()
         val logStartOffset = log.logStartOffset
         val remotePrefixUnsearchable = log.remoteLogEnabled() && logStartOffset < log.localLogStartOffset &&
           log.leaderEpochCache.epochForOffset(logStartOffset).isEmpty
-        val end = if (remotePrefixUnsearchable) logStartOffset else log.logEndOffset
+        val end = if (remotePrefixUnsearchable) logStartOffset else lastFetchableOffset(log)
         ClassicSearchRange(end, () => logManager.getLog(tp).exists(_ eq log) &&
           log.truncationCount() == truncationCount && log.logStartOffset == logStartOffset)
       case None => ClassicSearchRange.Unknown
