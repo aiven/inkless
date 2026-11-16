@@ -37,7 +37,6 @@ import org.apache.kafka.coordinator.group.GroupCoordinatorConfig;
 import org.apache.kafka.server.config.ServerConfigs;
 import org.apache.kafka.test.TestUtils;
 
-import org.apache.logging.log4j.Level;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -187,7 +186,6 @@ public class InklessDisklessTopicDeleteTest {
             assertEquals(0, beforeDelete.deletedLogCount(), "Live logs must not be stamped deleted");
 
             try (LogCaptureAppender appender = LogCaptureAppender.createAndRegister(TopicPurger.class)) {
-                appender.setClassLogger(TopicPurger.class, Level.INFO);
                 admin.deleteTopics(Collections.singletonList(TOPIC_NAME)).all().get(30, TimeUnit.SECONDS);
 
                 final ControlPlaneSnapshot afterDelete = readControlPlaneSnapshot(topicId);

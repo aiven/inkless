@@ -60,8 +60,8 @@ public class FileCleaner implements Runnable, Closeable {
      */
     private final AtomicInteger attempts = new AtomicInteger();
 
-    // `KafkaScheduler` uses `scheduleAtFixedRate`, so a sleep in `run()` queues missed ticks that then
-    // fire back to back and exceed `file.cleaner.max.files.per.cycle`.
+    // A sleep in `run()` holds a thread of the shared `KafkaScheduler`. If a run outlasts the interval,
+    // `scheduleAtFixedRate` fires the missed ticks back to back past `file.cleaner.max.files.per.cycle`.
     private volatile long nextEligibleMs;
 
     public FileCleaner(SharedState sharedState) {

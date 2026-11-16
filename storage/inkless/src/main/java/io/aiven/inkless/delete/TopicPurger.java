@@ -45,8 +45,8 @@ public class TopicPurger implements Runnable, Closeable {
     final TopicPurgerMetrics metrics;
     private final ExponentialBackoff errorBackoff = new ExponentialBackoff(100, 2, 60 * 1000, 0.2);
     private final AtomicInteger attempts = new AtomicInteger();
-    // `KafkaScheduler` uses `scheduleAtFixedRate`, so a sleep in `run()` queues missed ticks that then
-    // fire back to back and exceed `topic.purger.max.batches.per.cycle`.
+    // A sleep in `run()` holds a thread of the shared `KafkaScheduler`. If a run outlasts the interval,
+    // `scheduleAtFixedRate` fires the missed ticks back to back past `topic.purger.max.batches.per.cycle`.
     private volatile long nextEligibleMs;
 
     public TopicPurger(SharedState sharedState) {
