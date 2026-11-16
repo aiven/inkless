@@ -4862,7 +4862,12 @@ class ReplicaManager(val config: KafkaConfig,
           partition.seal()
           partition.makeLeader(info.partition, false, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
 
-          if (info.partition.classicToDisklessStartOffset == PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING) {
+          if (isSwitchPending) {
+            // Abort AFTER makeLeader so the markers carry the leader epoch in which this broker leads.
+            // The seal already blocks produce, and registerPartition waits for HW == LEO, so the
+            // proposed seal offset covers the markers. Abort only while the switch is pending: a
+            // committed seal offset fixes the classic prefix, and a leader must not append to it.
+            partition.abortOngoingTransactionsAsSealedLeader()
             initDisklessLogManager.foreach(_.registerPartition(partition, info.topicId()))
           }
           changedPartitions.add(partition)
@@ -4886,6 +4891,9 @@ class ReplicaManager(val config: KafkaConfig,
             // local log; seal() here just marks the partition sealed for the HW restore below.
             partition.makeLeader(info.partition, isNew, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
             partition.seal()
+            if (isSwitchPending) {
+              partition.abortOngoingTransactionsAsSealedLeader()
+            }
             changedPartitions.add(partition)
           } catch {
             case e: KafkaStorageException =>
@@ -4957,6 +4965,8 @@ class ReplicaManager(val config: KafkaConfig,
             try {
               val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
               val isNewLeaderEpoch = partition.makeFollower(info.partition, isNew, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
+              // A follower seals without aborting open transactions. It replicates the leader's
+              // ABORT markers, so its log contains only records that the leader wrote.
               partition.seal()
               changedPartitions.add(partition)
               val isOutOfIsr = !info.partition.isr.contains(config.brokerId)
