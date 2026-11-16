@@ -93,6 +93,7 @@ class ConsolidationVerifier(object):
         # node hostname -> {dependency: DROP'd IP}, so heal/teardown remove exactly the
         # rules block_dependency added.
         self._blocked = {}
+        self.control_plane_was_blocked = False
 
     # --------------------- JMX ---------------------
 
@@ -869,6 +870,8 @@ class ConsolidationVerifier(object):
                 "sudo iptables -C OUTPUT -d %s -j DROP 2>/dev/null || "
                 "sudo iptables -A OUTPUT -d %s -j DROP" % (ip, ip), allow_fail=False)
             self._blocked.setdefault(node.account.hostname, {})[dependency] = ip
+        if dependency == "control_plane":
+            self.control_plane_was_blocked = True
         self.logger.info("Blocked dependency %s (alias %s) on all brokers" % (dependency, alias))
 
     def heal_dependency(self, dependency):
@@ -888,6 +891,24 @@ class ConsolidationVerifier(object):
             for ip in list(self._blocked.get(node.account.hostname, {}).values()):
                 self._drop_rule(node, ip)
         self._blocked = {}
+
+    def terminate_broker_sessions(self):
+        """Ends every Postgres session that a broker of this cluster opened.
+
+        Call it after the brokers stop. During a control plane outage, the DROP
+        rule discards the FIN of each connection that a broker closes. Postgres
+        keeps that session open until TCP keepalive gives up, about two hours
+        later. Every test shares one Postgres. Those sessions use up
+        ``max_connections``, and later brokers fail with ``too many clients``.
+        Returns the number of sessions it ended.
+        """
+        ips = [self._resolve_alias_ip(node, node.account.hostname) for node in self.kafka.nodes]
+        client_addrs = ", ".join("%s::inet" % self._sql_literal(ip) for ip in ips)
+        terminated = self._psql_int(
+            "SELECT count(pg_terminate_backend(pid)) FROM pg_stat_activity "
+            "WHERE pid <> pg_backend_pid() AND client_addr IN (%s)" % client_addrs)
+        self.logger.info("Terminated %d Postgres sessions from brokers %s" % (terminated, ips))
+        return terminated
 
     @staticmethod
     def _drop_rule(node, ip):
