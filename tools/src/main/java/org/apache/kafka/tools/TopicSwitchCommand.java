@@ -18,6 +18,7 @@
 package org.apache.kafka.tools;
 
 import org.apache.kafka.clients.admin.Admin;
+import org.apache.kafka.clients.admin.AlterDisklessSwitchOptions;
 import org.apache.kafka.clients.admin.DescribeTopicPartitionsResult;
 import org.apache.kafka.clients.admin.DescribeTopicsOptions;
 import org.apache.kafka.clients.admin.ListOffsetsResult;
@@ -83,6 +84,17 @@ public abstract class TopicSwitchCommand {
                     stateCommand(System.out, adminClient, topic);
                 }
                 break;
+            case "rearm":
+                try (Admin adminClient = Admin.create(properties)) {
+                    rearmCommand(System.out, adminClient, topic, namespace.getInt("partition"));
+                }
+                break;
+            case "lower-seal":
+                try (Admin adminClient = Admin.create(properties)) {
+                    lowerSealCommand(System.out, adminClient, topic, namespace.getInt("partition"),
+                        namespace.getLong("offset"));
+                }
+                break;
             default:
                 throw new RuntimeException("Unknown command " + command);
         }
@@ -97,8 +109,13 @@ public abstract class TopicSwitchCommand {
 
         Subparser stateParser = commandParsers.addParser("state")
                 .help("Print the switch state for each partition of a specified topic.");
+        Subparser rearmParser = commandParsers.addParser("rearm")
+                .help("Re-arm the pending switch of a partition, so its leader seals again and re-runs the switch.");
+        Subparser lowerSealParser = commandParsers.addParser("lower-seal")
+                .help("Lower the committed seal of a partition in phase 1 to its leader's log end offset. The "
+                        + "partition loses the records between the new seal and the old one.");
 
-        for (Subparser subparser : List.of(stateParser)) {
+        for (Subparser subparser : List.of(stateParser, rearmParser, lowerSealParser)) {
             MutuallyExclusiveGroup connectionOptions = subparser.addMutuallyExclusiveGroup().required(true);
             connectionOptions.addArgument("--bootstrap-server", "-b")
                     .action(store())
@@ -115,6 +132,24 @@ public abstract class TopicSwitchCommand {
                     .help("Topic name for the specified topic.");
         }
 
+        rearmParser.addArgument("--partition", "-p")
+                .action(store())
+                .type(Integer.class)
+                .required(true)
+                .help("The partition index to re-arm. The controller accepts the request only while the "
+                        + "switch of the partition is pending (classicToDisklessStartOffset=-2).");
+
+        lowerSealParser.addArgument("--partition", "-p")
+                .action(store())
+                .type(Integer.class)
+                .required(true)
+                .help("The partition index whose seal to lower.");
+        lowerSealParser.addArgument("--offset", "-o")
+                .action(store())
+                .type(Long.class)
+                .required(true)
+                .help("The new seal: the leader's log end offset. The controller accepts it only in phase 1, "
+                        + "and only if it's at least 0 and lower than the committed seal.");
 
         return parser;
     }
@@ -191,6 +226,22 @@ public abstract class TopicSwitchCommand {
             }
             stream.println();
         }
+    }
+
+    static void rearmCommand(PrintStream stream, Admin adminClient, String topic, int partition) throws Exception {
+        adminClient.alterDisklessSwitch(topic, partition, PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING,
+            new AlterDisklessSwitchOptions()).all().get();
+        stream.printf("Re-armed the switch of %s-%d.%n", topic, partition);
+    }
+
+    static void lowerSealCommand(PrintStream stream, Admin adminClient, String topic, int partition,
+                                 long sealOffset) throws Exception {
+        // AlterDisklessSwitch reads -2 as a re-arm, so a negative offset must not reach the controller.
+        if (sealOffset < 0) {
+            throw new IllegalArgumentException("Invalid seal offset " + sealOffset + "; it must be at least 0.");
+        }
+        adminClient.alterDisklessSwitch(topic, partition, sealOffset, new AlterDisklessSwitchOptions()).all().get();
+        stream.printf("Lowered the seal of %s-%d to %d.%n", topic, partition, sealOffset);
     }
 
     private static String formatStartOffset(long offset) {

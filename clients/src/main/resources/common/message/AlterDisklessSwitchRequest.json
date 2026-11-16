@@ -22,10 +22,10 @@
   "flexibleVersions": "0+",
   "fields": [
     { "name": "TopicName", "type": "string", "versions": "0+", "entityType": "topicName",
-      "about": "The name of the topic whose classic-to-diskless switch state is being altered." },
+      "about": "The name of the topic whose classic-to-diskless switch is altered." },
     { "name": "PartitionIndex", "type": "int32", "versions": "0+",
       "about": "The partition index." },
     { "name": "SealOffset", "type": "int64", "versions": "0+",
-      "about": "The classic-to-diskless start offset to commit: >= 0 forces (re-)sealing at that offset, -1 aborts the switch and reverts the partition to classic, and -2 re-arms the switch as pending." }
+      "about": "-2 re-arms a pending switch. A seal of at least 0 lowers a committed seal in phase 1, and must be lower than the committed seal." }
   ]
 }
