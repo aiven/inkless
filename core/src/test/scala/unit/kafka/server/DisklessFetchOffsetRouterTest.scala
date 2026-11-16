@@ -32,6 +32,8 @@ import org.apache.kafka.storage.internals.log.AsyncOffsetReadFutureHolder
 import org.apache.kafka.storage.internals.log.OffsetResultHolder.FileRecordsOrError
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 import org.mockito.ArgumentMatchers.{any, eq => eqTo}
 import org.mockito.Mockito._
 
@@ -44,6 +46,7 @@ class DisklessFetchOffsetRouterTest {
   private val tp = new TopicPartition("diskless-topic", 0)
   private val consumerReplicaId = ListOffsetsRequest.CONSUMER_REPLICA_ID
   private val followerReplicaId = 1
+  private val localBrokerId = 0
 
   private val inklessMetadataView: InklessMetadataView = mock(classOf[InklessMetadataView])
   private val purgatory: DelayedOperationPurgatory[DelayedRemoteListOffsets] =
@@ -74,8 +77,8 @@ class DisklessFetchOffsetRouterTest {
     disklessManagedReplicasEnabled: Boolean = true,
     disklessConsolidationEnabled: Boolean = false
   ): DisklessFetchOffsetRouter =
-    new DisklessFetchOffsetRouter(inklessMetadataView, disklessManagedReplicasEnabled, disklessConsolidationEnabled, purgatory,
-      () => deferrals += 1)
+    new DisklessFetchOffsetRouter(inklessMetadataView, disklessManagedReplicasEnabled, disklessConsolidationEnabled,
+      localBrokerId, purgatory, () => deferrals += 1)
 
   // Timestamp lookups that the router deferred with a retriable error.
   private var deferrals = 0
@@ -183,6 +186,55 @@ class DisklessFetchOffsetRouterTest {
     verify(job, never()).add(any(), any())
   }
 
+  // The metadata transformer sends clients to any in-sync replica while the switch is pending.
+  @Test
+  def routesToClassicWithFollowerAccessWhenSwitchPendingAndReplicaInSync(): Unit = {
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
+    when(inklessMetadataView.isReplicaInIsr(tp, localBrokerId)).thenReturn(true)
+
+    val status = route(newRouter(), timestamp = ListOffsetsRequest.LATEST_TIMESTAMP)
+
+    assertSame(defaultClassicResult, status)
+    assertClassicCalledWith(allowFromFollower = true)
+    verify(job, never()).add(any(), any())
+  }
+
+  // A replica fetcher asks only its leader, so an in-sync follower doesn't answer it.
+  @Test
+  def routesToClassicWithoutFollowerAccessWhenSwitchPendingAndFollowerRequest(): Unit = {
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
+    when(inklessMetadataView.isReplicaInIsr(tp, localBrokerId)).thenReturn(true)
+
+    val status = route(newRouter(), timestamp = ListOffsetsRequest.LATEST_TIMESTAMP, replicaId = followerReplicaId)
+
+    assertSame(defaultClassicResult, status)
+    assertClassicCalledWith(allowFromFollower = false)
+    verify(job, never()).add(any(), any())
+  }
+
+  // The control plane has no entry for the partition until the switch commits the seal, so a consolidating
+  // topic takes the classic path for every timestamp while the switch is pending.
+  @ParameterizedTest
+  @ValueSource(longs = Array(
+    ListOffsetsRequest.LATEST_TIMESTAMP,
+    ListOffsetsRequest.EARLIEST_TIMESTAMP,
+    ListOffsetsRequest.MAX_TIMESTAMP,
+    123L))
+  def routesToClassicWhenSwitchPendingOnConsolidatingTopic(timestamp: Long): Unit = {
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
+    when(inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)).thenReturn(true)
+
+    val status = route(
+      newRouter(disklessManagedReplicasEnabled = true, disklessConsolidationEnabled = true),
+      timestamp = timestamp
+    )
+
+    assertSame(defaultClassicResult, status)
+    assertClassicCalledWith(allowFromFollower = false)
+    verify(job, never()).add(any(), any())
+    verify(job, never()).addWalStart(any())
+  }
+
   // ---------------------------------------------------------------------------
   // Case 4: follower request on a switched partition.
   // ---------------------------------------------------------------------------
@@ -240,11 +292,8 @@ class DisklessFetchOffsetRouterTest {
     verify(job, never()).add(any(), any())
   }
 
-  // Consolidation requires managed replicas, and a follower request on a switched partition then takes
-  // the direct classic route. A tiered diskless topic whose switch is pending has no committed seal, and
-  // the router already applies the consolidating rules to it, so a follower request takes the hybrid
-  // route while the classic fetcher still replicates the prefix. The local log is the only source of
-  // the earliest pending upload offset.
+  // A follower with `follower.fetch.last.tiered.offset.enable` asks its leader for the earliest pending upload
+  // offset while the classic fetcher still replicates the prefix. The local log is the only source of it.
   @Test
   def hybridConsolidatingFollowerEarliestPendingUploadGoesToClassicWhileSwitchPending(): Unit = {
     when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
@@ -257,7 +306,7 @@ class DisklessFetchOffsetRouterTest {
     )
 
     assertSame(defaultClassicResult, status)
-    assertClassicCalledWith(allowFromFollower = true)
+    assertClassicCalledWith(allowFromFollower = false)
     verify(job, never()).add(any(), any())
   }
 
@@ -467,22 +516,6 @@ class DisklessFetchOffsetRouterTest {
   }
 
   @Test
-  def routesToDisklessWhenSwitchPendingButConsolidatingTopic(): Unit = {
-    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
-    when(inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)).thenReturn(true)
-
-    val status = route(
-      newRouter(disklessManagedReplicasEnabled = true, disklessConsolidationEnabled = true),
-      timestamp = ListOffsetsRequest.LATEST_TIMESTAMP
-    )
-
-    assertTrue(classicCalls.isEmpty, "consolidating topics must not use switch-pending classic-only ListOffsets")
-    verify(job).add(eqTo(tp), any())
-    assertTrue(status.futureHolderOpt.isPresent)
-    assertFalse(status.responseOpt.isPresent)
-  }
-
-  @Test
   def hybridConsolidatingWithoutCommittedBoundaryAllowsFollowerOnEarliestLocal(): Unit = {
     when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
     when(inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)).thenReturn(true)
@@ -592,7 +625,7 @@ class DisklessFetchOffsetRouterTest {
         m
       }
       val status = new DisklessFetchOffsetRouter(
-        inklessMetadataView, true, true, purgatory).route(
+        inklessMetadataView, true, true, localBrokerId, purgatory).route(
         job = jobForBroker,
         newJob = () => throw new AssertionError("newJob() should not be called by this routing path"),
         topicPartition = tp,
