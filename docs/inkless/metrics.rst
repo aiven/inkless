@@ -423,9 +423,6 @@ PruneDisklessLogsQueryTime                         Time spent executing the Prun
 PurgeDeletedLogsLastSuccessfulQueryAgeMs           Milliseconds since the last successful PurgeDeletedLogs query completed; -1 if no query has succeeded since startup        
 PurgeDeletedLogsQueryRate                          Total number of PurgeDeletedLogs queries executed                                                                          
 PurgeDeletedLogsQueryTime                          Time spent executing the PurgeDeletedLogs query in milliseconds                                                            
-RepairDisklessLogLastSuccessfulQueryAgeMs          Milliseconds since the last successful RepairDisklessLog query completed; -1 if no query has succeeded since startup       
-RepairDisklessLogQueryRate                         Total number of RepairDisklessLog queries executed                                                                         
-RepairDisklessLogQueryTime                         Time spent executing the RepairDisklessLog query in milliseconds                                                           
 SafeDeleteFileCheckLastSuccessfulQueryAgeMs        Milliseconds since the last successful SafeDeleteFileCheck query completed; -1 if no query has succeeded since startup     
 SafeDeleteFileCheckQueryRate                       Total number of SafeDeleteFileCheck queries executed                                                                       
 SafeDeleteFileCheckQueryTime                       Time spent executing the SafeDeleteFileCheck query in milliseconds                                                         
