@@ -331,7 +331,7 @@ footer { border-top: 1px solid var(--line); padding: 2rem 1.5rem; color: var(--m
   <div class="hero-inner">
     <p class="eyebrow">Inkless · Diskless topics · A guide for newcomers</p>
     <h1>The diskless metadata coordinator, from the ground up</h1>
-    <p class="lede">Diskless topics keep Kafka data in object storage instead of on broker disks. Something still has to decide the order of that data and remember where every batch lives. This guide builds that component one piece at a time. Parts 1 to 6 describe the v2 design. Part 7 records where reviews find gaps, what research closes, and which v3 choices remain open.</p>
+    <p class="lede">Diskless topics keep Kafka data in object storage instead of on broker disks. Something still has to decide the order of that data and remember where every batch lives. This guide builds that component one piece at a time. Parts 1 to 6 describe the v2 design. Part 7 follows each review finding to the v3 decision that closes it, and names the tickets that are still open.</p>
     <div class="chain" aria-label="The chain of questions this guide answers">
       <a href="#ch-classic"><b>Part 1</b>Why does a diskless topic need a coordinator at all?</a>
       <a href="#ch-log"><b>Part 2</b>How do you build one from Kafka's own parts?</a>
@@ -339,7 +339,7 @@ footer { border-top: 1px solid var(--line); padding: 2rem 1.5rem; color: var(--m
       <a href="#ch-idempotent"><b>Part 4</b>How does the design make deletion safe without clocks?</a>
       <a href="#ch-barrier"><b>Part 5</b>How is the coordinator itself protected?</a>
       <a href="#ch-endtoend"><b>Part 6</b>What does it look like all together?</a>
-      <a href="#ch-v3-bar"><b>Part 7</b>Where does v2 fall short, and what is v3 working on?</a>
+      <a href="#ch-v3-bar"><b>Part 7</b>Where does v2 fall short, and how does v3 close it?</a>
     </div>
   </div>
 </header>
@@ -1377,7 +1377,7 @@ footer { border-top: 1px solid var(--line); padding: 2rem 1.5rem; color: var(--m
     </tbody>
   </table></div>
   <p>The benchmark question, whether <code>N</code> leaders sharing brokers with normal traffic can carry production load, is still open, and benchmarks will answer it. Their results could call for a separate SQLite disk, a cap on <code>findBatches</code> results, or a different default <code>N</code>.</p>
-  <p>Part 7 follows this list with the new bar and the open work on <a href="#ch-v3-fsync">fsync cost</a>, <a href="#ch-v3-replica">replica-set loss</a>, and <a href="#ch-v3-proof">load and proof</a>.</p>
+  <p>Part 7 revisits this list under a stricter bar: <a href="#ch-v3-replica">replica-set loss</a> becomes an accepted risk only under an enforced guard, the lost-tail and apply-bug rows stay accepted with a <a href="#ch-v3-bounds">named exception</a>, and <a href="#ch-v3-fsync">fsync cost</a> and <a href="#ch-v3-proof">load and proof</a> get their own decisions and open tickets.</p>
 </section>
 
 <section class="chapter" id="ch-future" data-title="Where this is heading">
@@ -1393,49 +1393,71 @@ footer { border-top: 1px solid var(--line); padding: 2rem 1.5rem; color: var(--m
 </section>
 
 <!-- ============================================================ PART 7 -->
-<div class="part-title" data-part="Part 7 · v3 open work">
+<div class="part-title" data-part="Part 7 · v3 decisions">
   <span class="num">Part 7</span>
-  <h2>Where v2 falls short, and what v3 is working on</h2>
-  <p>Parts 1 to 6 explain v2 as written. Two reviews then tested its failure posture, performance claims, and protocol edges. This part keeps their findings separate from v3's status: three research tickets are closed, and every design choice that remains open stays a candidate.</p>
+  <h2>Where v2 falls short, and how v3 closes it</h2>
+  <p>Parts 1 to 6 explain v2 as written. Two reviews then tested its failure posture, performance claims, and protocol edges. This part follows each finding to the v3 ticket that owns it. Fourteen of the nineteen tickets are closed: three by research, nine by a design decision, and two by recording a full design as future work. Tickets 15 to 19 are still open, and every chapter heading shows the state of its tickets.</p>
 </div>
 
 <section class="chapter" id="ch-v3-bar" data-title="Two reviews and a stricter bar">
-  <h3><span class="n">31</span>Two reviews and a stricter bar <span class="chip warn">open · ticket 18 · blocked by 01–17</span></h3>
+  <h3><span class="n">31</span>Two reviews and a stricter bar <span class="chip good">bar decided · map</span><span class="chip warn">open · ticket 18</span></h3>
   <div class="why">
     <span class="label">Why this exists</span>
     <p>The first six parts describe a design that v2 presents as safe at Kafka parity and no worse than PostgreSQL. The council review and Fable's review both find that the protocol has a conditional safety verdict, but gaps remain in failure posture, performance, and edge cases.</p>
     <div class="prompted"><span>Council review</span><span>Fable review</span><span>Ticket 18: cross-cutting consequences</span><span>New data-loss bar</span></div>
   </div>
   <p>Fable finds no path in v2 as specified that deletes an object while a committed batch still references it, or lets a part commit into a queued or deleted key. That result depends on <code>flush.messages=1</code>, honest <code>fsync</code>, no unclean election, and the storage-identity guard. Fable also finds an empty tracking part that can turn a failover into failed produces, a fallback lease that can fence a live range, a first-file failure after idle, a retired-marker edge case, and a topic-image edge case.</p>
-  <p>The council reaches the same conditional safety verdict, then challenges the conclusion that the consequences have Kafka parity. It points to lost-tail amplification, the cost of losing a coordinator replica set, the missing performance pass criteria, the lack of an admission or retry bound, and the untested fence and release protocol. The reviews don't choose a v3 implementation. They identify the questions that the tickets must settle.</p>
+  <p>The council reaches the same conditional safety verdict, then challenges the conclusion that the consequences have Kafka parity. It points to lost-tail amplification, the cost of losing a coordinator replica set, the missing performance pass criteria, the lack of an admission or retry bound, and the untested fence and release protocol. The reviews don't choose a v3 implementation. They identify the questions that the tickets settle.</p>
   <h4>Three clauses replace v2's parity sentence</h4>
   <ol>
     <li><b>Survive classic failures.</b> Any failure that a classic topic survives must be survived here.</li>
-    <li><b>Bound a classic-level loss.</b> A failure that a classic topic doesn't survive may remain an accepted risk only when its damage stays within the user partitions of the failed coordinator partition and loses no more than a classic topic loses to the same failure. Losing every replica of a coordinator partition therefore needs a recovery path.</li>
-    <li><b>Never cross the partition boundary.</b> A failure that lets one coordinator partition's loss delete or resurrect another partition's data needs a fix or a bound. It can't remain an accepted risk.</li>
+    <li><b>Bound a classic-level loss.</b> A failure that a classic topic doesn't survive can remain an accepted risk only when its damage stays within the user partitions of the failed coordinator partition and loses no more than a classic topic loses to the same failure. One exception: losing every replica of a coordinator partition is an accepted risk when a guard enforces replication factor 3 and rack spread. <a href="#ch-v3-guard">Chapter 40</a> describes that guard.</li>
+    <li><b>Never cross the partition boundary.</b> A failure that lets one coordinator partition's loss delete or resurrect another partition's data needs a fix or a bound. One exception: the rows for a lost tail, an apply bug, and an outside delete stay accepted risks, because a classic topic loses data to the same causes. <a href="#ch-v3-bounds">Chapter 42</a> lists them.</li>
   </ol>
-  <p><b>Cause versus consequence</b> matters here. A lost tail has the same cause on a classic and a coordinator partition, but the consequence differs: one classic lost tail affects one user partition, while one coordinator partition's replica-set loss can affect <b>1/N</b> of all diskless partitions. That is the <b>blast radius</b>, not Kafka parity. The v3 map keeps recovery, soft-delete bounds, and a deletion-rate cap in view instead of hiding that difference in an accepted-risk row.</p>
-  <div class="takeaway"><span class="label">Takeaway</span><p>V2 has a safety argument with explicit assumptions, but the new bar compares damage as well as causes. V3 is a work in progress, and ticket 18 rewrites the cross-cutting tables after the other tickets settle.</p></div>
-  <div class="next"><span class="label">What this leaves open</span><p>The first open protocol edge happens before any participant can answer: an empty tracking part can trigger fences while the file is still in flight.</p></div>
+  <p><b>Cause versus consequence</b> matters here. A lost tail has the same cause on a classic and a coordinator partition, but the consequence differs: one classic lost tail affects one user partition, while one coordinator partition's replica-set loss can affect <b>1/N</b> of all diskless partitions. That is the <b>blast radius</b>, not Kafka parity. The bar names its two exceptions instead of hiding the difference in an accepted-risk row. Each exception has a guard or a signal, and each has a full design for removing it, recorded as future work: the object footer in ticket 09 and the soft-delete bound in ticket 10.</p>
+  <p>The performance bar stays as in v2: no worse than the PostgreSQL backend. V3 makes it testable with benchmark pass criteria in ticket 16, while running the benchmarks stays out of scope. A finding closes in one of two ways: a fix with a failure-mode row and a named test, or an accepted risk that passes the bar, with a signal or an operator procedure.</p>
+  <div class="takeaway"><span class="label">Takeaway</span><p>The bar compares damage as well as causes, and it names its two exceptions. The rewrite of <code>design.md</code> and <code>spec.md</code> waits until every ticket is closed. Ticket 18 then folds the decisions into the cross-cutting tables.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>The first protocol edge happens before any participant can answer: an empty tracking part can trigger fences while the file is still in flight.</p></div>
 </section>
 
-<section class="chapter" id="ch-v3-empty" data-title="An empty tracking part fences in-flight commits">
-  <h3><span class="n">32</span>An empty tracking part fences in-flight commits <span class="chip bad">open · ticket 01</span></h3>
+<section class="chapter" id="ch-v3-empty" data-title="Finish reports">
+  <h3><span class="n">32</span>Finish reports: fence only what the broker finished <span class="chip good">decided · ticket 01</span></h3>
   <div class="why">
     <span class="label">Why this exists</span>
-    <p>Fable's critical finding targets the tracking rule in chapter 20. V2 releases an empty tracking part in the apply that records it. Because the tracking partition has heard from no participant yet, the condition for fencing every silent participant becomes true immediately.</p>
+    <p>Fable's critical finding targets the tracking rule in chapter 20. V2 releases an empty tracking part in the apply that records it. Because the tracking partition has heard from no participant yet, the condition for fencing every silent participant becomes true at once.</p>
     <div class="prompted"><span>Fable review: critical</span><span>Ticket 01</span><span>Failure posture</span></div>
   </div>
-  <p>Imagine a file with parts for <span class="chip cp" style="background:var(--cp0)">cp0</span>, <span class="chip cp" style="background:var(--cp1)">cp1</span>, and tracking <span class="chip cp" style="background:var(--cp2)">cp2</span>. The tracking partition holds no batches, so its part is empty. It applies that part and releases at once. V2 then fences cp0 and cp1 while their parts can still be in flight.</p>
-  <p>Now put cp1 behind a leader failover, a <code>NOT_COORDINATOR</code> retry, or a queue behind sequence <code>s-1</code>. The fence reaches cp1 first. The delayed part gets a non-retriable stale-sequence response, and the producer sees a failed produce instead of a delay within its deadline. Even when the participant parts win the race, the tracking partition sends one fence per participant and stores a participant-state answer with replication and a disk flush. A broker whose tracking partition holds none of its user partitions can pay that fan-out on every file.</p>
+  <p>Imagine a file with parts for <span class="chip cp" style="background:var(--cp0)">cp0</span>, <span class="chip cp" style="background:var(--cp1)">cp1</span>, and tracking <span class="chip cp" style="background:var(--cp2)">cp2</span>. The tracking partition holds no batches, so its part is empty. V2 applies that part, releases it, and fences cp0 and cp1 while their parts can still be in flight. If cp1 is in a leader failover, a <code>NOT_COORDINATOR</code> retry, or a queue behind sequence <code>s-1</code>, the fence reaches cp1 first. The delayed part gets a non-retriable stale-sequence response, and the producer sees a failed produce instead of a delay. Even when the parts win the race, every such file costs one fence and one fsynced participant-state record per participant.</p>
+  <p>The v3 rule removes the guess. The tracking partition fences a participant only after the broker has finished the file, and the broker says which participants didn't answer. A participant that answered is never fenced: the tracking partition waits for its release report.</p>
+
+  <h4>The broker reports what it finished</h4>
+  <ul>
+    <li><b>Finished part.</b> A part the broker stops sending: it committed, the leader rejected it with a non-retriable error, or its file's commit deadline passed.</li>
+    <li><b>Finished file.</b> A file whose every part is finished, the tracking part included. A file whose upload failed is finished at once.</li>
+    <li><b><code>finishedThrough</code>.</b> Every sequence at or below this value belongs to a finished file. It's inclusive, like the fenced-through pair, and it trails the slowest unfinished file by at most one commit deadline. Chapter 36 widens it to every file of the broker epoch.</li>
+    <li><b>Finish report.</b> <code>finishedThrough</code> plus at most one exception range <code>[a, b]</code> per participant.</li>
+  </ul>
+  <p>A participant <b>answered</b> when its last reply came from a recorded file-committed record, including an all-fail commit and a retry answered from the stored result. The part reply gains a <code>Recorded</code> flag for this, because per-batch error codes can't tell an all-fail commit from a rejection. Everything else is an <b>exception</b>: a rejection before the producer checks (stale epoch, stale sequence, mapping mismatch, or full overlay), <code>NOT_COORDINATOR</code> until the deadline, an unknown outcome at the deadline, or a part the broker never sent.</p>
+  <p>The broker adds the current report to every tracking part and lease request. The file-committed or sequences-leased record of that request stores it, so the report costs no append of its own and survives a failover in SQLite. The payload is at most one <code>int64</code> plus <code>N - 1</code> ranges.</p>
+  <p>The broker's claim decides only whether the tracking partition waits or fences. A participant's entry is released only by its own release report or a fence answer, so a wrong "answered" claim leaks an object and never deletes one.</p>
+
+  <h4>When fences run</h4>
+  <p>The tracking partition's own entry for an empty or all-fail part still releases in the apply that records it, but that release no longer triggers fences. Every other participant waits for a finish report. Fences go out in three cases, each only after the broker finished the files it covers:</p>
+  <ul>
+    <li><b>Exceptions.</b> One range fence per exception range. A finish report triggers at most <code>N - 1</code> fences, however many files it covers.</li>
+    <li><b>Missed sequences.</b> A missed sequence is fenced at all <code>N</code> partitions only once <code>finishedThrough</code> reaches the range's end, or the lease ends. The broker never supplies a missed sequence's participant set, because a broker bug that left a participant out would delete an object that participant still references.</li>
+    <li><b>Lease ends.</b> One range fence per partition, from the sequence after the recorded <code>finishedThrough</code> to the highest range end.</li>
+  </ul>
+  <p>V2's silent-participant trigger leaves the design, including its retention-path variant. With mixed retention, that variant could fence on day 1 and then wait 29 days for a release anyway.</p>
 
   <div class="demo" id="demo-v3-empty">
     <div class="demo-head"><h5>Try it: an empty tracking part during failover</h5><span class="tag">Step through</span></div>
     <div class="demo-body">
-      <p class="hint">Simplified toy: the file uses sequence <code>(7, 41)</code>, cp2 tracks it but holds no batches, and cp1's leader changes while its part waits. The candidate path delays the tracking release. It is labeled because ticket 01 is open.</p>
+      <p class="hint">The file uses sequence <code>(7, 41)</code>. Cp2 tracks it but holds no batches, so its part is empty. Compare v2 with the two v3 outcomes: cp1 recovers within the deadline, or cp1 stays unavailable past it.</p>
       <div class="controls">
         <button class="toggle on" id="et-v2">V2 behavior</button>
-        <button class="toggle" id="et-candidate">Candidate, not decided: resolve before fencing</button>
+        <button class="toggle" id="et-v3">V3: cp1 fails over, then commits</button>
+        <button class="toggle" id="et-v3x">V3: cp1 misses the deadline</button>
         <span class="sep"></span>
         <button id="et-prev">Back</button><button class="primary" id="et-next">Next step</button><button id="et-reset">Start over</button>
         <span class="step-count" id="et-count"></span>
@@ -1446,104 +1468,285 @@ footer { border-top: 1px solid var(--line); padding: 2rem 1.5rem; color: var(--m
     </div>
   </div>
 
-  <p>Ticket 01 keeps three candidate directions open: piggyback a resolved-through sequence on later tracking parts and lease requests, fence only at or below that resolved-through sequence or at lease end, or let participants report committed sequences in batches. The ticket must also say what replaces immediate release for an empty tracking part and an all-fail part, and whether the normal path still claims that fence fan-out happens only on failure.</p>
-  <div class="takeaway"><span class="label">Takeaway</span><p>V2's empty tracking part can close the book before participant parts answer. The failure produces stale-sequence errors and adds normal-path fence traffic, even though no data-loss path is shown.</p></div>
-  <div class="next"><span class="label">What this leaves open</span><p>The next gap comes from the timer that ends a lease the broker still believes it can use.</p></div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Cost for a file whose parts all answer</th><th>V2</th><th>V3</th></tr></thead>
+    <tbody>
+      <tr><td>Finish report</td><td>None</td><td>One <code>int64</code> in the tracking part and its record. No request, record, or fsync.</td></tr>
+      <tr><td>Fences at commit time</td><td>One per participant when the tracking part is empty or all-fail</td><td>None</td></tr>
+      <tr><td>Fences at retention time</td><td>One per participant still silent when the tracking partition releases</td><td>None</td></tr>
+      <tr><td>Release reports</td><td>One per object and participant</td><td>Batched, as chapter 35 describes</td></tr>
+    </tbody>
+  </table></div>
+  <p>The verdict against the PostgreSQL backend is "Within," because the fix adds no wait and no fsync. The performance claim "fan-out runs only on failure" becomes: "Fences run only on failure, and only after the broker finished the file." The named test is an empty tracking part with a participant failover in the middle of a commit: the produce succeeds within the deadline, no fence goes out, and the tracking partition keeps the object's entry until the participants release it.</p>
+  <div class="takeaway"><span class="label">Takeaway</span><p>The tracking partition no longer guesses. It fences only what the broker finished and reported as unanswered, so a failover delays a produce instead of failing it, and the normal path sends no fence at all.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>The finish report rides on tracking parts and lease requests. A broker that goes quiet, or falls back to another tracking partition, needs rules of its own.</p></div>
 </section>
 
-<section class="chapter" id="ch-v3-lease" data-title="Lease lifecycle gaps">
-  <h3><span class="n">33</span>Lease lifecycle gaps <span class="chip warn">open · ticket 02</span></h3>
+<section class="chapter" id="ch-v3-lease" data-title="Keepalives and lease releases">
+  <h3><span class="n">33</span>Keepalives, switches, and lease releases <span class="chip good">decided · ticket 02</span></h3>
   <div class="why">
     <span class="label">Why this exists</span>
-    <p>V2 lets a broker fall back to another tracking partition, but the broker and the first tracking partition don't share a durable view of when the fallback range starts. Fable finds both a low-rate failure and a normal idle-resume failure.</p>
+    <p>Two of Fable's findings come from the same gap: the idle timer ends a lease that the broker still counts on, and nothing tells the broker.</p>
     <div class="prompted"><span>Fable review: warnings</span><span>Ticket 02</span><span>Lease lifecycle</span></div>
   </div>
-  <p>Suppose cp2 stops answering and the broker confirms a range at cp3. The fallback range sits above the unused remainder of cp2's range. The broker keeps consuming the lower range, so no part names cp3 until it reaches the fallback range. Cp3's 15-minute idle timer can fire first. Its range fence raises every floor past the range that the broker is still using. The next files then fail until the broker leases again.</p>
-  <p>The first idle period has a second edge. After the lease-ended record applies, the broker doesn't learn that its local range ended before it closes the next file. That file gets stale-sequence. Files closed before a new lease confirms have no sequence and fail as well. This happens for an ordinary broker that resumes after 15 minutes, not only after a clock jump, so it adds a producer-visible failure that PostgreSQL doesn't have.</p>
+  <p><b>Fallback.</b> Suppose cp2 stops answering and the broker confirms a range at cp3. In v2, the fallback range sits above the unused remainder of cp2's range, and the broker keeps consuming the lower range first. No part names cp3 until the broker reaches the fallback range, so cp3's 15-minute idle timer can fire first. Its range fence raises every floor past the range the broker still uses, and the next files fail until the broker leases again. The threshold is <code>K / 2 = 512</code> files in 900 seconds, about 0.57 files per second.</p>
+  <p><b>Idle end.</b> After a lease-ended record applies, the broker doesn't learn that its range ended. Its next file gets stale-sequence, and files closed before a new lease confirms fail too. This happens to any broker that is quiet for 15 minutes, and PostgreSQL has no such failure.</p>
+
+  <h4>A live broker never relies on the idle timer</h4>
+  <ul>
+    <li><b>Keepalive.</b> If the broker has had no answer from a tracking partition it uses for half the idle timeout, it sends a keepalive there: a lease request for a range it already holds. It measures the time on its monotonic clock, from the send time of the last answered request. The tracking partition appends nothing, confirms the range, and reschedules its idle timer. The lease reply carries the leader's idle timeout, so a broker with a different config value still keeps alive in time.</li>
+    <li><b>Why heartbeats are back.</b> V2 rejected idle heartbeats because they would keep leftover keys and the duplicate window open. Chapter 32 removes both reasons: failed uploads are exceptions or missed sequences, and their fences follow the finish report, not the lease end.</li>
+    <li><b>The idle timer becomes a backstop</b> for brokers that are cut off from their tracking partition or paused past the timeout. Any idle end is now an anomaly.</li>
+  </ul>
+
+  <h4>Switch at once, release what you abandon</h4>
+  <ul>
+    <li>When the broker confirms a range at a partition other than the one it uses, it switches to that range at once and abandons its ranges at the old partition. A renewal at the same partition keeps v2's order and uses the remainder first, because abandoning it would turn up to <code>K/2</code> sequences into missed sequences on every renewal.</li>
+    <li>A tracking part that finishes without a leader answer starts a renewal at once. Renewing on the first <code>NOT_COORDINATOR</code> was rejected, because routine leader elections would cause fallbacks.</li>
+    <li>Once every file of the epoch at or below <code>b</code> is finished, the broker sends a <b>lease release</b> to the old partition. It names <code>b</code>, the highest range end it gives up, and carries the final finish report. The tracking partition appends a lease-ended record and sends the lease-end range fences up to <code>b</code>. A late or repeated release is idempotent, and a new range at the same partition always starts above <code>b</code>.</li>
+  </ul>
+
+  <h4>Finish reports on a quiet broker</h4>
+  <p>A keepalive carries the current finish report. The tracking partition appends a new finish-reported record only when the report is newer than the one it holds. An <b>urgent</b> report, one with an exception range or one that covers a file whose tracking part wasn't recorded, can't wait for traffic. If no tracking part carries it within one <code>produce.commit.interval.ms</code>, the broker sends the keepalive early. That closes the idle-broker duplicate window about one commit interval plus one append after the deadline. A busy broker never flushes early.</p>
 
   <div class="demo" id="demo-v3-lease">
-    <div class="demo-head"><h5>Try it: a fallback range waits above the live range</h5><span class="tag">Interactive</span></div>
+    <div class="demo-head"><h5>Try it: a fallback and a quiet period</h5><span class="tag">Interactive</span></div>
     <div class="demo-body">
-      <p class="hint">The toy keeps the v2 constants: <code>K = 1024</code>, renewal below half a range, and a 15-minute idle timeout. At fallback confirmation, 512 numbers remain in the primary range. The candidate toggle changes only when the idle timer starts.</p>
+      <p class="hint">The toy keeps the v2 constants: <code>K = 1024</code>, renewal below half a range, and a 15-minute idle timeout. At fallback confirmation, 512 numbers remain in the primary range at cp2. Move the file rate and the quiet period, then compare v2 with the v3 decision.</p>
       <div class="controls">
-        <label style="flex:1; min-width: 260px;">File rate <input type="range" id="ll-rate" min="0.1" max="2" step="0.05" value="0.6"></label>
+        <button class="toggle on" id="ll-v2">V2 behavior</button>
+        <button class="toggle" id="ll-v3">V3 decision</button>
+        <span class="sep"></span>
+        <label style="flex:1; min-width: 220px;">File rate <input type="range" id="ll-rate" min="0.1" max="2" step="0.05" value="0.4"></label>
         <span class="chip info" id="ll-rate-label"></span>
-        <button class="toggle" id="ll-candidate">Candidate, not decided: start the timer on first use</button>
+        <label style="flex:1; min-width: 220px;">Quiet period <input type="range" id="ll-quiet" min="0" max="60" step="1" value="20"></label>
+        <span class="chip info" id="ll-quiet-label"></span>
       </div>
       <div class="grid2">
         <div class="panel" id="ll-primary"></div>
         <div class="panel" id="ll-fallback"></div>
       </div>
+      <div class="panel" id="ll-idle" style="margin-top:0.8rem"></div>
       <div class="readout" id="ll-readout"></div>
     </div>
   </div>
 
-  <p>The review's roughly 0.6 files-per-second threshold follows the design's math: <code>K / 2 = 512</code> files remain after the broker renews, and <code>512 / 900 = 0.5689</code> files per second. Below that rate, the broker reaches the fallback range after the 900-second timer fires. Ticket 02 keeps open switching to the fallback immediately and abandoning the lower remainder, starting the fallback timer only when its first part arrives, or another rule that lets the first file wait for a renewal. It also asks whether <code>StaleSequenceRejectRate</code> stays an anomaly signal after an idle end.</p>
-  <div class="takeaway"><span class="label">Takeaway</span><p>The fallback path can fence the range in use, and an idle broker can lose its first file after the timer ends. The timer protects the tracking partition's view, not the broker's next append.</p></div>
-  <div class="next"><span class="label">What this leaves open</span><p>Even with a live lease, the coordinator can confuse a returning broker or a new metadata image with a retired one.</p></div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Cost</th><th>V2</th><th>V3</th></tr></thead>
+    <tbody>
+      <tr><td>Quiet broker, per half idle timeout</td><td>Nothing, then a failed file after the lease end</td><td>One keepalive request, no append, no fsync</td></tr>
+      <tr><td>Quiet broker after a failure</td><td>Exceptions wait for the lease end</td><td>One early keepalive and one finish-reported record</td></tr>
+      <tr><td>Per fallback</td><td>The broker uses the remainder at the unavailable partition, and each file waits for its deadline</td><td>One lease release and one lease-ended record at the old partition, plus its range fences</td></tr>
+    </tbody>
+  </table></div>
+  <p>The metrics change meaning to match. Any nonzero <code>StaleSequenceRejectRate</code> from a registered broker is an anomaly, and so is any <code>IdleLeaseEndRate</code>. The renewal counter gets a reason tag (<code>threshold</code>, <code>keepalive</code>, or <code>failed-tracking-part</code>), and <code>FinishReportFlushRate</code> counts early flushes. The named tests are a low-rate broker after a lease fallback and a broker that resumes after an idle period.</p>
+  <div class="takeaway"><span class="label">Takeaway</span><p>A live broker keeps its lease with keepalives, leaves an unavailable tracking partition at once, and ends what it abandons with a scoped release. The idle timer only catches brokers that are cut off or paused.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>Even with a live lease, the coordinator can confuse a returning broker or a new topic with a retired one, because its metadata image can lag.</p></div>
 </section>
 
 <section class="chapter" id="ch-v3-image" data-title="Image edge cases">
-  <h3><span class="n">34</span>Image edge cases: returning brokers and new partitions <span class="chip warn">open · ticket 03</span></h3>
+  <h3><span class="n">34</span>Image edge cases: an offset on every row <span class="chip good">decided · ticket 03</span></h3>
   <div class="why">
     <span class="label">Why this exists</span>
-    <p>Fable finds two cases where v2 compares coordinator state with a metadata image without enough identity or ordering information. One can reject a valid returning broker forever. The other can infer deletion from an image that has not caught up.</p>
+    <p>Fable finds two cases where v2 compares coordinator state with a metadata image without enough ordering information. One can reject a valid returning broker forever. The other can infer deletion from an image that hasn't caught up.</p>
     <div class="prompted"><span>Fable review: warnings</span><span>Ticket 03</span><span>Metadata image ordering</span></div>
   </div>
-  <p>V2's acceptance table treats a retired row as stale epoch unconditionally. Its retired marker carries no epoch, while the lifecycle text says that a broker with the same ID can return under a higher epoch and commit. The leader cannot distinguish "retired through epoch 7" from "a valid commit from epoch 8," so a re-registered broker ID can remain rejected.</p>
-  <p>V2 also appends <code>topic-deleted</code> when SQLite has a topic and the leader's metadata image does not. A partition leader can initialize or repair a diskless log from an image that is newer than the coordinator leader's image. If the coordinator treats absence as deletion before it reconciles the partition's creation, it purges rows and queues objects from an image gap. The outcome is irreversible.</p>
+  <p>Both findings come from a coordinator row that exists ahead of the leader's metadata image. The fix compares the image's last contained offset with an offset the row carries. The key fact comes from KRaft: a broker epoch is the metadata offset of its registration, because <code>QuorumController</code> passes <code>offsetControl.nextWriteOffset()</code> to <code>registerBroker</code> as the new epoch. An image at offset <code>X</code> has therefore seen every registration at an epoch at or below <code>X</code>.</p>
+  <p>The session found a third case of the same shape. A leader whose image lags a new broker's registration sees no registration and appends v2's unregistered form of broker-epoch-retired, which retires a live broker forever.</p>
+
+  <h4>Broker epoch retirement</h4>
+  <ul>
+    <li>The broker-epoch-retired record holds one value, <code>retiredThrough</code>. The retired marker and the unregistered flag leave the design.</li>
+    <li>If the image shows a newer epoch <code>E</code>, the leader sets <code>retiredThrough</code> to <code>E - 1</code>. If the image shows no registration, it uses the image's last contained offset.</li>
+    <li>The leader appends the record only when <code>retiredThrough</code> is at or above the broker's newest epoch in its row, its lease table, and its overlay. An image that lags a new registration therefore appends nothing.</li>
+    <li>Apply raises the row's floor to <code>(retiredThrough + 1, none)</code>. A commit at <code>e &lt;= retiredThrough</code> gets stale-epoch, and a broker that returns under the same ID has a higher epoch and commits normally. At a tracking partition, the same apply ends every lease at or below <code>retiredThrough</code>.</li>
+  </ul>
+
+  <h4>Topic deletion waits for the image</h4>
+  <p>The partition-created record gets a <code>metadataOffset</code> field: the image's last contained offset when the leader appended it. A leader appends topic-deleted only when its image is at or past the highest <code>metadataOffset</code> among the topic's partitions in SQLite and the overlay. Topic IDs are never reused, so absence from an image past the creation offset proves the deletion. The case that matters most is a leader change, where the old leader appended partition-created at image offset <code>M</code> and the new leader's image is at <code>M' &lt; M</code>.</p>
+
+  <h4>Unreconciled partitions</h4>
+  <p>A user partition is <b>unreconciled</b> at a leader when a call names it and neither SQLite nor the overlay holds its partition-created record. Every such call gets <code>COORDINATOR_LOAD_IN_PROGRESS</code> and appends nothing: commit parts, <code>initDisklessLog</code>, <code>repairDisklessLog</code>, <code>deleteRecords</code>, prune, cross-tier, and reads. Each rejection counts in <code>UnreconciledPartitionRejectCount</code>. The delegate retries a commit part until its deadline, the init queue retries with its existing backoff, and <code>findBatches</code> and <code>listOffsets</code> answer <code>OFFSET_NOT_AVAILABLE</code>. A new error code was rejected: it would add a fork-only entry to upstream <code>Errors.java</code> that collides with upstream's next code at every sync.</p>
+  <p>A new apply rule backs this up. A record that changes a user partition with no partition-created row stops the apply and reports corruption, so a leader bug that skipped the rejection stops the partition instead of creating a row that a later topic-deleted could purge.</p>
 
   <div class="demo" id="demo-v3-image">
-    <div class="demo-head"><h5>Try it: state and image disagree</h5><span class="tag">Interactive</span></div>
+    <div class="demo-head"><h5>Try it: move the leader's image</h5><span class="tag">Interactive</span></div>
     <div class="demo-body">
-      <p class="hint">Select an edge case. The right-hand text shows candidate protections from ticket 03; the candidate labels do not mean that v3 has selected them.</p>
+      <p class="hint">Pick a case, then drag the offset of the image the leader acts on. The timeline marks the metadata records that the image contains. In the first case, the returning broker's first commit at epoch 480 arrives after the leader acts on its image.</p>
       <div class="controls">
-        <label>Case <select id="ie-case"><option value="broker">The broker ID returns</option><option value="partition">The partition image lags</option></select></label>
+        <label>Case <select id="ie-case"><option value="broker">The broker ID returns</option><option value="lag">The image lags a new registration</option><option value="topic">The image lags a new topic</option></select></label>
+        <label style="flex:1; min-width: 260px;">Leader's image offset <input type="range" id="ie-x" min="100" max="700" step="10" value="400"></label>
+        <span class="chip info" id="ie-x-label"></span>
       </div>
+      <div class="bar-track" id="ie-track" aria-label="Metadata timeline"></div>
+      <div class="small" id="ie-events" style="margin:0.6rem 0 0.8rem"></div>
       <div class="grid2">
         <div class="panel" id="ie-v2"></div>
-        <div class="panel" id="ie-candidate"></div>
+        <div class="panel" id="ie-v3"></div>
       </div>
       <div class="readout" id="ie-readout"></div>
     </div>
   </div>
 
-  <p>Candidate options include a retired-through epoch that rejects only pairs at or below the recorded epoch, rejecting calls for an unreconciled partition with a retriable error, and recording the metadata offset in <code>partition-created</code> so <code>topic-deleted</code> waits until the leader's image reaches that offset. Ticket 03 also asks whether another coordinator write can get ahead of the image.</p>
-  <div class="takeaway"><span class="label">Takeaway</span><p>A broker ID needs an epoch boundary, and a partition needs an image boundary. Without both, a valid commit can look retired or a live partition can look deleted.</p></div>
-  <div class="next"><span class="label">What this leaves open</span><p>When releases and fences arrive in a different order, the tracking partition needs a state machine that never loses a terminal answer.</p></div>
+  <p>This inventory of paths that can write a row ahead of the image is complete:</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Row</th><th>Written by</th><th>Guard</th></tr></thead>
+    <tbody>
+      <tr><td>User partition, with its batches and producer state</td><td>partition-created, from the leader's own image</td><td>The <code>metadataOffset</code> gate on topic-deleted</td></tr>
+      <tr><td>Batches, producer state, and log starts</td><td>Commit parts, init, repair, <code>deleteRecords</code>, retention, prune, and cross-tier</td><td>Rejected without a partition-created record</td></tr>
+      <tr><td>Broker row or lease at an epoch the image hasn't seen</td><td>A commit or lease request from a new registration</td><td>No retirement below the newest held epoch</td></tr>
+      <tr><td>Broker row moved to <code>E</code> by an old leader</td><td>broker-epoch-retired</td><td>A new leader with a lagging image computes <code>retiredThrough &lt; E</code> and appends nothing</td></tr>
+      <tr><td>Switched partition before the seal reaches the leader's image</td><td><code>initDisklessLog</code></td><td>partition-created follows only an image that shows the partition as diskless</td></tr>
+    </tbody>
+  </table></div>
+  <div class="takeaway"><span class="label">Takeaway</span><p>A broker ID gets an epoch boundary taken from the image offset, and a partition gets the image offset it came from. Absence then means retirement or deletion only when the image is far enough along to prove it.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>Fences now wait for the broker, but the answers that settle an object, release reports and fence answers, can still arrive in any order.</p></div>
 </section>
 
-<section class="chapter" id="ch-v3-releases" data-title="Release reports and fence fan-out">
-  <h3><span class="n">35</span>Release reports and fence fan-out <span class="chip warn">open · tickets 05, 06 · blocked by 01</span></h3>
+<section class="chapter" id="ch-v3-releases" data-title="Release reports">
+  <h3><span class="n">35</span>Release reports: a state machine that only moves forward <span class="chip good">decided · ticket 05</span></h3>
   <div class="why">
     <span class="label">Why this exists</span>
-    <p>V2's tracking protocol assumes a tracking part exists before release reports arrive and that a later fence answer cannot contradict an earlier release. Fable finds both assumptions missing. The council and Fable also point to unbounded traffic when missed sequences or lease ends fan fences across the coordinator partitions.</p>
-    <div class="prompted"><span>Fable review: release ordering</span><span>Council review: fence storm</span><span>Tickets 05 and 06</span></div>
+    <p>V2's tracking protocol assumes a tracking part exists before release reports arrive, and that a later fence answer can't contradict an earlier release. Fable finds both assumptions missing. Fable also notes that release traffic isn't batched, and the council notes that no metric shows a leaked release.</p>
+    <div class="prompted"><span>Fable review: release ordering</span><span>Fable review: batching</span><span>Council review: leak signal</span><span>Ticket 05</span></div>
   </div>
-  <p>A participant can release an object before the tracking part reaches the tracking partition, especially when every part fails. V2's retry and release-accepted path covers an ordinary lost reply, but a permanently missed report would leak. A late <b>referenced</b> fence answer can also overwrite a prior <b>released</b> answer, so the object never reaches the deletion queue. V2 doesn't define the terminal state for each participant and sequence, or the metric that exposes a tracking entry that never completes.</p>
-  <p>The traffic cost is separate. A retention pass that empties many objects sends one report per object and appends participant-state and release-accepted records. A missed sequence sends a fence to every coordinator partition. For <code>N=8</code>, one missed sequence means 8 fence requests; <code>M</code> missed sequences mean up to <code>M × 8</code> requests before coalescing. If a rolling restart creates one missed range per broker, the range-level count is proportional to the broker count times 8. A lease-end range can contain <code>K</code> keys, but v2 represents it as one range fence per partition rather than one request per key.</p>
-  <p>Ticket 05 considers released as terminal per participant and sequence, recording a report for a sequence the tracking partition has not seen, batching reports and records, and adding a gauge for incomplete tracking entries. Ticket 06 considers coalescing fences per broker epoch, rate limiting them, or queueing them behind normal commits. Neither ticket picks an option yet.</p>
-  <div class="takeaway"><span class="label">Takeaway</span><p>Release ordering can create a leak without losing data, while correlated misses can create a fence storm. The protocol needs both a monotonic participant state and an explicit traffic bound.</p></div>
-  <div class="next"><span class="label">What this leaves open</span><p>Per-coordinator queues remove head-of-line blocking across files, but the producer still waits for the slowest part of its own file.</p></div>
+  <p>A participant can release an object before the tracking part reaches the tracking partition. This is common for all-fail parts, which release in the apply that records them. If the tracking partition drops that report, the participant has already appended release-accepted and never resends, so the object leaks. A late <b>referenced</b> fence answer can also overwrite a prior <b>released</b> answer, and the object never reaches the deletion queue.</p>
+
+  <h4>Released is terminal</h4>
+  <p>Once a participant's entry for <code>(brokerId, brokerEpoch, sequence)</code> is released, every later event leaves it unchanged. The rewrite states the safety argument as an invariant: after a participant releases a sequence, it can't come to reference that sequence again. A committed part leaves the broker's producer state above the sequence, an all-fail retry gets the stored result, and a fence answer leaves the sequence at or below the floor. A "referenced" answer that races a release report was applied before the removal on the participant's own log; only the network reorders the two messages.</p>
+
+  <h4>Four states, forward only</h4>
+  <p>"Answered" from a finish report and "referenced" from a fence mean the same thing to the tracking partition, so they merge into one state, held:</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>State</th><th>Meaning</th><th>Moves to</th></tr></thead>
+    <tbody>
+      <tr><td>Pending</td><td>The participant set is recorded, and nothing covers this participant yet.</td><td>Held, when a finish report says it answered or a fence answers "referenced." Fencing, when a finish report lists it as an exception or the lease ends.</td></tr>
+      <tr><td>Fencing</td><td>A range fence that covers the entry is out, with no recorded answer.</td><td>Held, when the fence answers "referenced."</td></tr>
+      <tr><td>Held</td><td>The participant holds batches and owes a release report.</td><td>Never back. A later exception leaves it held.</td></tr>
+      <tr><td>Released</td><td>Terminal.</td><td>Nothing. Any state reaches it through a release report or a "released" fence answer.</td></tr>
+    </tbody>
+  </table></div>
+  <p>The tracking partition also stores a report for a sequence it hasn't recorded. Above the range's highest recorded sequence, it stores the entry as released and merges it when the tracking part records. For a missed sequence with unanswered fences, the stored release counts as that participant's fence answer. At or below the highest recorded sequence with no entry, the object is already resolved, and the report is a no-op. Outside every range leased to that broker epoch, only a bug sends one, so it gets a non-retriable error and a counter. One more change follows: the tracking partition skips a range fence to a participant whose entries in that range are all held or released.</p>
+
+  <div class="demo" id="demo-v3-entry">
+    <div class="demo-head"><h5>Try it: deliver events in any order</h5><span class="tag">Interactive</span></div>
+    <div class="demo-body">
+      <p class="hint">Follow cp1's entry for one object at its tracking partition. Click events in any order, or load a scenario. Both models receive the same events. V2 has no finish report, so those events do nothing on the left.</p>
+      <div class="controls">
+        <button id="re-sc-early">Scenario: early release</button>
+        <button id="re-sc-late">Scenario: late "referenced"</button>
+        <button id="re-reset">Start over</button>
+      </div>
+      <div class="controls">
+        <button id="re-track">Tracking part records</button>
+        <button id="re-answered">Finish report: answered</button>
+        <button id="re-exception">Finish report: exception</button>
+        <button id="re-lease">Lease ends</button>
+        <button id="re-ref">Fence answers "referenced"</button>
+        <button id="re-rel">Fence answers "released"</button>
+        <button class="primary" id="re-report">cp1 release report</button>
+      </div>
+      <div class="grid2">
+        <div class="panel" id="re-v2"></div>
+        <div class="panel" id="re-v3"></div>
+      </div>
+      <div class="small muted" id="re-history" style="margin-top:0.6rem"></div>
+      <div class="readout" id="re-readout"></div>
+    </div>
+  </div>
+
+  <h4>Batching without a timer</h4>
+  <p>Each participant keeps at most one report in flight per tracking partition. A report carries <code>(brokerId, brokerEpoch)</code> groups, and each group holds sequence ranges. Releases that pile up while a report is in flight go into the next one, so a trickle goes out at once, as in v2, and a retention pass grows its own batches. Retention removes old objects first and one uploader's sequences rise over time, so a pass mostly releases consecutive sequences. Each side appends one record per report, and an internal constant, for example 512 KiB, caps a report's size. Across availability zones, a released object and participant cost about 570 bytes in v2, about 75 in v3's worst case, and close to 0 in the usual case.</p>
+
+  <h4>A signal for a stuck release</h4>
+  <p>Held entries can live as long as topic retention, so their age isn't a signal. The signal comes from the states that must clear quickly:</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Metric</th><th>Where</th><th>What it shows</th></tr></thead>
+    <tbody>
+      <tr><td><code>TrackingEntryCount</code>, tagged <code>state</code></td><td>Tracking leader</td><td>Entries in pending, fencing, and held.</td></tr>
+      <tr><td><code>TrackingEntryOldestAgeMs</code>, tagged <code>state</code></td><td>Tracking leader</td><td>A stuck pending or fencing entry. Pending clears within a commit deadline plus the next report; fencing clears within a few round trips.</td></tr>
+      <tr><td><code>PendingReleaseCount</code>, <code>PendingReleaseOldestAgeMs</code></td><td>Participant leader</td><td>Releases without a release-accepted record.</td></tr>
+      <tr><td><code>ReleaseReportRejectedRate</code>, <code>ReleaseOutsideParticipantSetRate</code></td><td>Tracking leader</td><td>Reports that only a bug sends. Both stay at 0.</td></tr>
+    </tbody>
+  </table></div>
+  <p>One accepted risk remains: a held entry whose participant no longer holds batches and never reports, after a broker wrongly claims "answered" or a participant skips its emptiness check. It leaks storage and never deletes data, so it passes the bar. The named test is a release report that arrives before the tracking part.</p>
+  <div class="takeaway"><span class="label">Takeaway</span><p>Each entry moves only forward and stops at released, and an early report is stored instead of dropped. Reordering can no longer leak an object, and batching keeps release traffic small without a timer.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>Release reports now have a traffic bound. The fences that a correlated failure creates need the same kind of bound.</p></div>
 </section>
 
-<section class="chapter" id="ch-v3-slowest" data-title="A file waits for its slowest part">
-  <h3><span class="n">36</span>A file waits for its slowest part <span class="chip warn">open · ticket 04</span></h3>
+<section class="chapter" id="ch-v3-fanout" data-title="Fence fan-out">
+  <h3><span class="n">36</span>Fence fan-out: one request in flight per participant <span class="chip good">decided · ticket 06</span></h3>
   <div class="why">
     <span class="label">Why this exists</span>
-    <p>Chapter 11 says that per-queue ordering keeps a slow coordinator partition from holding later files on every queue. That is true across files. It doesn't change v2's request-level completion rule: a file completes only when every part answers.</p>
+    <p>The council notes that each missed sequence costs <code>N</code> fences, and that a correlated failure, such as a tracking partition that is unavailable for a while or many brokers restarting, multiplies this into a fence storm on the partitions that are recovering.</p>
+    <div class="prompted"><span>Council review: fence storm</span><span>Fable review</span><span>Ticket 06</span></div>
+  </div>
+  <p>A fence costs no fsync of its own: its sequences-fenced record joins the leader's linger batch. It still costs a request, a record and its SQLite apply at the participant, and an answer record at the tracking partition. A storm's harm is that work and the overlay slots it takes on the partition that is recovering, because a full overlay rejects commits.</p>
+  <p>With the rules from chapters 32, 33, and 35, three correlated failures dominate at <code>N=8</code> with <code>B</code> brokers and the default 250 ms commit interval. One partition unavailable for <code>D</code> seconds collects about <code>B × D / 0.25</code> exception ranges, all delivered when it recovers: about 7,200 at <code>B=30</code> and <code>D=60</code>. A rolling restart costs <code>B × N</code> range fences, spread over the restart. A zone outage costs about <code>B/3 × N</code> within seconds, once the idle timers end the fenced brokers' leases. Only the first count grows without bound.</p>
+
+  <h4>One batched request per participant</h4>
+  <ul>
+    <li>Each tracking partition keeps at most one fence request in flight per participant. Fence needs that pile up meanwhile go into the next request, which mirrors the release reports.</li>
+    <li>A request carries <code>(brokerId, brokerEpoch)</code> groups with sequence ranges. Within a group, two ranges merge into their hull, because a fence's effect on the floor depends only on its upper end, and the answers for sequences in between leave held or released entries unchanged.</li>
+    <li>The same internal size cap as release reports applies. A new tracking leader rebuilds the pending set from recorded state and sends one batched request per participant.</li>
+    <li>Fences aren't rate-limited and don't queue behind commits. The in-flight bound already caps a participant's fence work at <code>N - 1</code> requests, and a rate limit would add a config and delay resolution.</li>
+  </ul>
+
+  <div class="demo" id="demo-v3-storm">
+    <div class="demo-head"><h5>Try it: size a fence storm</h5><span class="tag">Interactive</span></div>
+    <div class="demo-body">
+      <p class="hint">Choose a correlated failure and the cluster size. The left panel counts fence ranges under the v3 fence rules before batching. The right panel shows what reaches the recovering partition after batching. The formulas come from ticket 06.</p>
+      <div class="controls">
+        <label>Failure <select id="fx-event"><option value="outage">One coordinator partition unavailable</option><option value="restart">Rolling restart of every broker</option><option value="az">An availability zone goes down</option></select></label>
+        <label>Coordinator partitions (N) <select id="fx-n"><option>4</option><option selected>8</option><option>16</option></select></label>
+      </div>
+      <div class="controls">
+        <label style="flex:1; min-width: 220px;">Brokers <input type="range" id="fx-b" min="3" max="300" step="3" value="30"></label>
+        <span class="chip info" id="fx-b-label"></span>
+        <label style="flex:1; min-width: 220px;" id="fx-d-wrap">Outage <input type="range" id="fx-d" min="5" max="600" step="5" value="60"></label>
+        <span class="chip info" id="fx-d-label"></span>
+      </div>
+      <div class="grid2">
+        <div class="panel" id="fx-before"></div>
+        <div class="panel" id="fx-after"></div>
+      </div>
+      <div class="readout" id="fx-readout"></div>
+    </div>
+  </div>
+
+  <h4>A race the session found: <code>finishedThrough</code> covers the whole epoch</h4>
+  <p>A participant keeps one floor per broker, not one per tracking partition. A range fence up to <code>b</code> therefore makes every sequence of that broker at or below <code>b</code> stale there, whichever partition issued its range. Chapter 32 defined <code>finishedThrough</code> over the tracking partition's own ranges. After a fallback or a switch back to <code>t</code>, a file under another partition's range can have a lower sequence and still be retrying. A missed-sequence fence from <code>t</code> could raise the participant's floor past that file's part, which then failed with stale-sequence. No data was lost, but a produce failed that could still commit.</p>
+  <p>The fix is one definition: <code>finishedThrough</code> covers every file of the broker epoch, whichever tracking partition issued its range. Exception ranges stay scoped to the tracking partition's own ranges, and a lease release waits until every file of the epoch at or below <code>b</code> is finished. Right after a switch, fences can trail by one more commit deadline. Only fences wait.</p>
+  <p><code>FenceRate</code> gets <code>type</code> tags (exception, missed, or lease-end) and an <code>answer</code> tag, and the new <code>PendingFenceRangeCount</code> gauge shows the backlog. The named test takes one coordinator partition offline for 60 seconds at <code>N=8</code>: on recovery, each tracking partition has at most one fence request in flight to it, the gauge drains, and no commit is rejected for a full overlay.</p>
+  <div class="takeaway"><span class="label">Takeaway</span><p>A recovering partition receives at most <code>N - 1</code> fence requests at once, whatever the broker count or the outage length. Widening <code>finishedThrough</code> to the epoch keeps those fences from cutting a part that is still retrying.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>With fences bounded, the remaining normal-path question is latency: what does one slow coordinator partition cost a producer?</p></div>
+</section>
+
+<section class="chapter" id="ch-v3-slowest" data-title="Per-request completion">
+  <h3><span class="n">37</span>A produce waits only for its own parts <span class="chip good">decided · ticket 04</span></h3>
+  <div class="why">
+    <span class="label">Why this exists</span>
+    <p>Chapter 11 says that per-queue ordering keeps a slow coordinator partition from holding later files on every queue. That is true across files, but v2 completes a file only when every part answers. Story 83's promise that a stuck coordinator delays only the user partitions mapped to it overpromises what the request returns.</p>
     <div class="prompted"><span>Council review: story 83</span><span>Fable review</span><span>Ticket 04</span><span>Performance bar</span></div>
   </div>
-  <p>Most files touch most coordinator partitions. If cp2 takes 600 ms, every produce whose file includes cp2 waits for that part, even when its cp0, cp1, and cp3 parts answer in 20 ms. If cp2 is unavailable, those files reach the commit deadline and return a retriable error. The other queues keep working, but the file-level response still waits for the slowest part. Story 83's claim that a stuck coordinator delays only the user partitions mapped to it overpromises what the request returns.</p>
-  <p>Ticket 04 keeps two candidates open: change the wording and keep whole-file completion, or complete the produce response per batch as parts answer. The second option needs a decision for <code>AppendCompleter</code>, the produce response, and delayed produce when one request has batches with different outcomes. The ticket also needs the bound stated in terms of the commit deadline.</p>
+  <p>V3 completes each produce request once every part that holds the request's batches has finished, instead of waiting for the whole file. Completing per batch isn't possible: Kafka sends exactly one response per produce request. In <code>DelayedProduce</code>, a classic <code>acks=all</code> request also waits for its slowest partition, and partitions still pending at the timeout get <code>REQUEST_TIMED_OUT</code> in the same response. The request is the finest granularity, and it gives diskless topics the same isolation as classic ones.</p>
+  <ul>
+    <li>A request waits only for the parts that hold its batches. It waits for the tracking part only when the tracking partition holds one of its batches.</li>
+    <li>A request completes when the last of its parts finishes, with mixed per-batch results. Batches whose part didn't confirm by the deadline get <code>KAFKA_STORAGE_ERROR</code>, the same error every backend returns for a failed commit.</li>
+    <li>A file is still finished only when every part is finished, the tracking part included. <code>finishedThrough</code>, the finish report, and cleanup stay file-level events.</li>
+    <li><code>ClosedFile</code> records, for each request, the set of commit queues that hold its batches. <code>AppendCompleter</code> completes a request once all its queues finish, and each part fills the batch coordinate cache when it commits. The PostgreSQL and in-memory backends have one queue, so nothing changes for them.</li>
+  </ul>
 
   <div class="demo" id="demo-v3-slowest">
-    <div class="demo-head"><h5>Try it: the slowest part sets completion</h5><span class="tag">Interactive</span></div>
+    <div class="demo-head"><h5>Try it: three requests share one file</h5><span class="tag">Interactive</span></div>
     <div class="demo-body">
-      <p class="hint">Set one latency per coordinator partition and mark one failed. The toy assumes 85% of files touch the slowest partition as <code>N</code> grows. That coverage is a teaching simplification, not a benchmark result.</p>
+      <p class="hint">Request A writes to partitions that map to cp0 and cp1, request B writes to every coordinator partition, and request C writes only to cp2. Set one latency per coordinator partition, mark one as stuck, and compare v2's whole-file completion with v3's per-request completion. The commit deadline is 2,000 ms.</p>
       <div class="controls">
+        <button class="toggle on" id="sp-v2">V2: whole file</button>
+        <button class="toggle" id="sp-v3">V3: per request</button>
+        <span class="sep"></span>
         <label>Coordinator partitions <select id="sp-n"><option value="4">4</option><option value="8" selected>8</option><option value="16">16</option></select></label>
-        <label>Failed part <select id="sp-failed"><option value="-1">none</option></select></label>
+        <label>Stuck part <select id="sp-failed"><option value="-1">none</option></select></label>
       </div>
       <div id="sp-inputs" class="controls" aria-label="Coordinator part latencies"></div>
       <div class="gantt" id="sp-gantt"></div>
@@ -1551,31 +1754,46 @@ footer { border-top: 1px solid var(--line); padding: 2rem 1.5rem; color: var(--m
     </div>
   </div>
 
-  <div class="takeaway"><span class="label">Takeaway</span><p>Per-queue ordering protects unrelated files, but v2's whole-file reply still inherits the largest part latency. The performance claim needs either narrower wording or a new response contract.</p></div>
-  <div class="next"><span class="label">What this leaves open</span><p>Every part also brings a log flush on each replica. The research gives the count, but not the decision about how much cost v3 accepts.</p></div>
+  <p>The bound: a request that holds no batch for a stuck coordinator partition <code>P</code> gets no added delay from it. A request that holds a batch for <code>P</code> completes within one commit deadline of its file's close. The bound depends on two invariants that the design states as requirements: per-queue work never blocks a thread or resource that other queues share, and an in-flight cap on the broker never lets files stuck on one queue block admission for requests that don't touch it. The second one constrains ticket 15. A stuck leader broker stalls every coordinator partition it leads, so its blast radius covers all of them.</p>
+  <p>Story 83 becomes: "As a Kafka client, I want a stuck coordinator partition to delay only the produce requests that write to its user partitions, and those by at most one commit deadline, so that one failure doesn't stall every diskless produce." <code>FileCommitTime</code> stays a per-file metric that now measures the slowest part, and the benchmarks judge produce latency with Kafka's per-request metrics.</p>
+  <div class="takeaway"><span class="label">Takeaway</span><p>A produce request waits for the slowest part that holds its batches, not for the slowest part of its file. The gain goes mostly to requests that write to a few partitions, because a request that writes everywhere still touches most coordinator partitions.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>Every part that a producer waits for also costs a log flush on each replica.</p></div>
 </section>
 
-<section class="chapter" id="ch-v3-fsync" data-title="The cost of fsync">
-  <h3><span class="n">37</span>The cost of fsync <span class="chip good">research closed · ticket 12</span><span class="chip warn">open · tickets 13, 14 · blocked by 12</span></h3>
+<section class="chapter" id="ch-v3-fsync" data-title="Fsync cost and the default N">
+  <h3><span class="n">38</span>The cost of fsync, and the default <code>N</code> <span class="chip good">research closed · ticket 12</span><span class="chip good">decided · ticket 14</span></h3>
   <div class="why">
     <span class="label">Why this exists</span>
-    <p>Fable calls fsync amplification the main risk against the PostgreSQL performance bar. Ticket 12's research closes the count and shows where SQLite adds checkpoint work. Tickets 13 and 14 still need to decide checkpoint placement and the default coordinator partition count.</p>
-    <div class="prompted"><span>Fable review: fsync cost</span><span>Ticket 12: research closed</span><span>Tickets 13 and 14</span><span>Performance bar</span></div>
+    <p>Fable calls fsync amplification the main risk against the PostgreSQL performance bar, worst on small clusters. Ticket 12's research counts the flushes, and ticket 14 decides the default coordinator partition count and the smallest supported cluster.</p>
+    <div class="prompted"><span>Fable review: fsync cost</span><span>Ticket 12: research</span><span>Ticket 14</span><span>Performance bar</span></div>
   </div>
-  <p>One v2 file costs one coordinator log flush per part on the leader and one on each follower, for up to <code>parts × R</code>. The tracking part counts even when it holds no user batches, so the research bound is up to <code>N × R</code> when <code>N</code> is the total coordinator partition count. At <code>N=8</code> and <code>R=3</code>, that is 24 log flushes per file, compared with one PostgreSQL WAL flush on the primary, or two when a synchronous standby is part of the baseline.</p>
-  <p>The flushes can run in series on the commit path: the leader flushes on the coordinator runtime thread, then follower fetchers flush the fetched partitions before the high watermark advances. An empty tracking part adds up to <code>(parts − 1) × R</code> more flushes for fence answers under v2's rule. SQLite in <code>synchronous=NORMAL</code> does not sync most commits, but its automatic checkpoint runs on the thread that crosses the 1,000-page limit.</p>
-  <p>Ticket 12's research finds that <code>wal_autocheckpoint=0</code> plus a background <code>PASSIVE</code> checkpoint can move checkpoint sync and page copy away from the apply thread, with a minimum SQLite version of 3.51.3 or the named backports. One transaction per high-watermark advance is feasible with savepoints around the stop-at-bad-record rule. Ticket 13 keeps the background checkpoint, WAL growth, backup interaction, and transaction boundary open. Ticket 14 keeps the default <code>N</code>, smallest supported cluster, and linger open.</p>
+  <p>One file costs one coordinator log flush per part on the leader and one on each follower, for up to <code>parts × R</code>. The tracking part counts even when it holds no user batches, so the bound is <code>N × R</code>: 24 log flushes at <code>N=8</code> and <code>R=3</code>, against one PostgreSQL WAL flush, or two with a synchronous standby. The flushes run in series on the commit path: the leader flushes on the coordinator runtime thread, then follower fetchers flush before the high watermark advances.</p>
+  <p>Closed tickets already remove or bound three of v2's four sources of flushes. Commit-time fences for an empty tracking part are gone (chapter 32), release traffic is batched (chapter 35), and fences after a correlated failure are bounded (chapter 36). The commit fan-out remains. Each broker flushes between <code>N × R / B</code> and <code>N × R</code> times per commit round: 8 to 24 at <code>B=3, N=8, R=3</code>, or 32 to 96 per second at the 250 ms commit interval. A small cluster stands out because every broker hosts every coordinator replica, so even the lower bound is high.</p>
+
+  <h4>What ticket 14 decides</h4>
+  <ul>
+    <li><b>The default <code>N</code> stays a constant 8, still provisional.</b> It doesn't depend on the broker count, because the controller creates the topic as soon as about 3 brokers register (chapter 40). A derived default would fix every new cluster at its small-cluster <code>N</code>, and <code>N</code> can't grow after creation. An operator can still choose a lower power of two at creation.</li>
+    <li><b>3 brokers is the smallest supported cluster.</b> It follows from the minimum replication factor of 3. The first benchmark is the partition-count benchmark at <code>B=3</code> with <code>N</code> of 1, 2, 4, and 8, and it records appends per commit part to show how much the linger merges.</li>
+    <li><b>The append linger defaults to adaptive</b>, as the group coordinator's does. A fixed linger saves little on a small cluster: at <code>B=3</code> a shard receives about 12 parts per second, about 80 ms apart, so a short linger merges almost nothing, and a long one adds its full length to every part.</li>
+    <li><b>Outgrowing <code>N</code> is an accepted performance limit.</b> Each leader receives about <code>B</code> parts per round, so its load grows with the cluster while correctness and the blast radius don't change. The signal is the runtime's <code>event-queue-time-ms</code> and <code>batch-flush-time-ms</code> plus P99 <code>FileCommitTime</code>. The procedure is to choose <code>N</code> for the expected peak size at creation, and later to move coordinator leaders to less loaded brokers.</li>
+  </ul>
 
   <div class="demo" id="demo-v3-fsync">
     <div class="demo-head"><h5>Try it: count the flushes</h5><span class="tag">Interactive</span></div>
     <div class="demo-body">
-      <p class="hint">The toy counts <code>LogSegment.flush</code> calls, not device-level sync calls inside one flush. It assumes the tracking part is empty when selected. The flush duration is illustrative because the research does not measure a real device.</p>
+      <p class="hint">The toy counts <code>LogSegment.flush</code> calls, not device-level sync calls inside one flush. The flush duration is illustrative, because the research measures no real device. Switch between v2 and v3 to see the commit-time fence flushes disappear.</p>
       <div class="controls">
-        <label>Participants touched (N) <input type="number" id="fs-n" min="1" max="8" value="7" style="width: 5rem;"></label>
+        <button class="toggle on" id="fs-v2">V2 behavior</button>
+        <button class="toggle" id="fs-v3">V3 decision</button>
+        <span class="sep"></span>
+        <label>Coordinator partitions (N) <select id="fs-nn"><option>1</option><option>2</option><option>4</option><option selected>8</option><option>16</option></select></label>
+        <label>Participants touched <input type="number" id="fs-n" min="1" max="16" value="7" style="width: 5rem;"></label>
         <label>Replication factor <select id="fs-r"><option>1</option><option>2</option><option selected>3</option></select></label>
-        <label>Brokers <select id="fs-b"><option selected>3</option><option>6</option><option>12</option></select></label>
+        <label>Brokers <select id="fs-b"><option selected>3</option><option>6</option><option>12</option><option>30</option></select></label>
+      </div>
+      <div class="controls">
+        <button class="toggle on" id="fs-empty">The tracking part is empty</button>
         <label>Illustrative flush ms <input type="range" id="fs-ms" min="1" max="20" step="1" value="5" style="width: 8rem;"><span class="chip" id="fs-ms-label"></span></label>
-        <button class="toggle on" id="fs-empty">Empty tracking part adds one</button>
       </div>
       <div class="grid2">
         <div class="panel" id="fs-count"></div>
@@ -1585,96 +1803,248 @@ footer { border-top: 1px solid var(--line); padding: 2rem 1.5rem; color: var(--m
     </div>
   </div>
 
-  <div class="takeaway"><span class="label">Takeaway</span><p>Ticket 12 measures a potentially large flush multiplier and identifies a background checkpoint pattern. Tickets 13 and 14 still decide whether the implementation and default <code>N</code> can meet the PostgreSQL bar on small clusters.</p></div>
-  <div class="next"><span class="label">What this leaves open</span><p>If every coordinator replica set disappears, flush durability alone cannot rebuild the state that object storage still holds.</p></div>
+  <p>The gateway effort, a separate exploration with single-coordinator objects, changes this picture only above <code>N × n_racks</code> brokers, 24 at <code>N=8</code> with 3 racks. Below that size, gateways leave the commit fan-out unchanged and multiply object-storage PUTs by up to <code>N</code>.</p>
+  <div class="takeaway"><span class="label">Takeaway</span><p>V3 removes the fence flushes and keeps the commit fan-out, with the default <code>N</code> at 8 until the first benchmark at 3 brokers confirms or replaces it. A cluster that outgrows its <code>N</code> loses commit headroom, not correctness.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p><code>flush.messages=1</code> fixes the log flushes. SQLite adds syncs of its own, and v2 runs them on the commit path.</p></div>
+</section>
+
+<section class="chapter" id="ch-v3-sqlite" data-title="SQLite off the commit path">
+  <h3><span class="n">39</span>SQLite: checkpoints off the commit path <span class="chip good">decided · ticket 13</span></h3>
+  <div class="why">
+    <span class="label">Why this exists</span>
+    <p>V2 runs SQLite in WAL mode with <code>synchronous=NORMAL</code> and applies each record in its own transaction. SQLite's automatic checkpoint then syncs on the thread that applies and replies, a periodic stall on the commit path. Ticket 12's research shows how to move it.</p>
+    <div class="prompted"><span>Fable review: checkpoint on the shard thread</span><span>Ticket 12: research</span><span>Ticket 13</span></div>
+  </div>
+  <p>With <code>synchronous=NORMAL</code>, SQLite doesn't sync on commit. It syncs the WAL before a checkpoint, the database after a complete checkpoint, and the WAL header when a writer restarts the WAL. The automatic checkpoint runs at 1000 pages on whichever thread's commit crosses the limit, which in v2 is the runtime thread.</p>
+
+  <h4>Checkpoints on their own thread</h4>
+  <ul>
+    <li>The apply connection sets <code>wal_autocheckpoint=0</code>. One checkpoint thread per broker serves every coordinator database it hosts, with a second connection per database, and runs at most one checkpoint at a time, so checkpoints don't pile up against the log flushes.</li>
+    <li>The thread checkpoints a database once its WAL reaches 1000 pages, SQLite's own threshold, and only in <code>PASSIVE</code> mode, which never takes the writer lock.</li>
+    <li>A checkpoint connection beside an apply connection is the pattern that triggers SQLite's WAL-reset bug. The bundled SQLite must be 3.51.3 or later, or the 3.44.6 or 3.50.7 backport, and the broker refuses to start the coordinator backend below that.</li>
+    <li>A snapshot backup is the only long reader, and a <code>PASSIVE</code> checkpoint stops at it. The WAL grows by the apply rate times the backup's duration and drops back afterward. Nothing escalates: <code>RESTART</code> or <code>TRUNCATE</code> would stall the apply, and canceling the backup could stop snapshots for good. <code>SqliteWalPages</code> shows the size.</li>
+  </ul>
+
+  <h4>One transaction per high-watermark advance</h4>
+  <ul>
+    <li>The leader, the follower applier, and the loader each apply every record up to the new high watermark in one SQLite transaction, which stores the last applied record's offset and epoch.</li>
+    <li>Each record runs under its own <code>SAVEPOINT</code>. When a record stops the apply, the applier rolls back to that savepoint and commits the group with the offset and epoch of the record before it. The leader replies to the records before the stop and resigns, and the records after it fail with <code>NOT_COORDINATOR</code>.</li>
+    <li>A group closes before the record that would push it past 4 MiB of log bytes, and a larger record gets a group of its own. 4 MiB is about the 1000-page trigger, so one group can push the WAL to at most about twice the trigger.</li>
+    <li>A power loss rolls back whole groups, and the replica replays them from the log.</li>
+  </ul>
+
+  <h4>A thread for follower applies</h4>
+  <p>The leader's apply stays on the shard thread, because a commit reads SQLite plus the overlay there. One follower-applier thread per broker serves every coordinator database the broker follows, so the replica fetcher only appends bytes and moves the high watermark. Applying on the fetcher was rejected: SQLite writes would delay the next fetch for every partition from that leader, classic ones included. A follower whose applier falls behind stays in the ISR, the high-watermark gate holds commits if it becomes leader, and <code>ApplyLagBytes</code> shows the lag.</p>
+
+  <div class="demo" id="demo-v3-apply">
+    <div class="demo-head"><h5>Try it: apply a high-watermark advance</h5><span class="tag">Interactive</span></div>
+    <div class="demo-body">
+      <p class="hint">Twelve records arrive in one high-watermark advance, with sizes in KiB of log bytes. Pick a record that stops the apply, then compare v2's transaction per record with v3's group. The toy counts one KiB of log as a quarter of a 4 KiB WAL page, an illustration rather than SQLite's real frame size.</p>
+      <div class="controls">
+        <button class="toggle on" id="ga-v2">V2: transaction per record</button>
+        <button class="toggle" id="ga-v3">V3: groups with savepoints</button>
+        <span class="sep"></span>
+        <label>Record that stops the apply <select id="ga-stop"><option value="-1">none</option><option value="5">r6</option><option value="9">r10</option></select></label>
+      </div>
+      <div class="log" id="ga-log"></div>
+      <div class="legend" id="ga-legend"></div>
+      <div class="grid2">
+        <div class="panel" id="ga-tx"></div>
+        <div class="panel" id="ga-ckpt"></div>
+      </div>
+      <div class="readout" id="ga-readout"></div>
+    </div>
+  </div>
+
+  <div class="table-wrap"><table>
+    <thead><tr><th>Failure</th><th>Effect</th><th>Recovery</th></tr></thead>
+    <tbody>
+      <tr><td>A backup or a slow disk keeps the checkpoint behind, or a checkpoint fails</td><td>Applies continue, and <code>SqliteWalPages</code> rises.</td><td>The checkpoint thread logs the error and retries on its next pass.</td></tr>
+      <tr><td>A record stops the apply in the middle of a group</td><td>SQLite commits every record before it.</td><td>As v2's row for a record a replica can't read.</td></tr>
+      <tr><td>Power loss or a crash during a group</td><td>The whole group rolls back.</td><td>The replica replays from the previous applied offset.</td></tr>
+      <tr><td>The bundled SQLite is below the version floor</td><td>The broker refuses to start the coordinator backend.</td><td>Ship a build with a fixed SQLite.</td></tr>
+      <tr><td>The follower applier falls behind</td><td>The replica stays in the ISR, and <code>ApplyLagBytes</code> rises.</td><td>The high-watermark gate holds commits if it becomes leader.</td></tr>
+    </tbody>
+  </table></div>
+  <div class="takeaway"><span class="label">Takeaway</span><p>No apply thread runs a checkpoint, the replica fetcher never writes to SQLite, and a high-watermark advance costs one transaction instead of one per record. The apply-stop rule stays exact through savepoints.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>Durable logs and fast applies protect against a crash. They don't protect against losing every replica, which depends on where the replicas sit.</p></div>
+</section>
+
+<section class="chapter" id="ch-v3-guard" data-title="Replication guard">
+  <h3><span class="n">40</span>Replication factor 3 and rack spread, enforced <span class="chip good">decided · ticket 11</span></h3>
+  <div class="why">
+    <span class="label">Why this exists</span>
+    <p>V2 makes the replication factor a config with a default of 3 and places replicas across racks "where possible." The accepted-risk row for losing every replica relies on the deployment docs. Ada, in the council, says parity holds only if that is enforced. Clause 2's exception depends on this guard.</p>
+    <div class="prompted"><span>Council review: Ada</span><span>Ticket 11</span><span>Clause 2</span></div>
+  </div>
+  <p>The Kafka checkout sets the starting point. <code>StripedReplicaPlacer</code> puts replicas on racks round-robin and uses every rack, even with fewer racks than the replication factor. A broker without <code>broker.rack</code> counts as one more rack. <code>ReplicationControlManager</code> never checks racks on a reassignment, and upstream's <code>offsets.topic.replication.factor</code> accepts 1 with no minimum.</p>
+
+  <h4>Minimum replication factor</h4>
+  <p>Controller startup validation rejects a <code>diskless.metadata.topic.replication.factor</code> below 3. A new internal controller config, defined with <code>defineInternal</code> and left out of the docs, lowers the minimum to 1 for tests and local development. When the controller creates the topic below 3, it logs a warning, and clause 2's exception doesn't apply to that cluster. Dropping the override was rejected, because it would end the single-broker test runs at <code>N=1</code> and <code>N=8</code>.</p>
+
+  <h4>Maximal spread</h4>
+  <ul>
+    <li>A coordinator partition's replicas have <b>maximal spread</b> when they span <code>min(replication factor, distinct racks among registered brokers)</code> racks. With no rack declared, the rule reduces to distinct brokers.</li>
+    <li>Creation goes ahead with any number of racks, because the placer already produces maximal spread. With fewer racks than the replication factor, the controller logs a warning.</li>
+    <li><code>alterPartitionReassignments</code> rejects a reassignment with <code>INVALID_REPLICA_ASSIGNMENT</code> when the target spans fewer racks than the current set and fewer than maximal spread. A move within a rack, to decommission a broker, passes. A change in replica count still gets <code>INVALID_REPLICATION_FACTOR</code> first.</li>
+    <li>A broker that re-registers with another rack, or a rack that registers after creation, can lower the spread without any request to reject. The new controller gauge <code>CoordinatorPartitionsBelowRackSpread</code> counts those partitions, and the procedure is a reassignment.</li>
+  </ul>
+  <p>Strict spread, one rack per replica or no creation, was rejected because it blocks two-zone and single-zone deployments where a classic topic has the same spread.</p>
+
+  <h4>When the topic is created</h4>
+  <p>The active controller creates <code>__diskless_metadata</code> once it sees at least as many registered, unfenced brokers as the replication factor. It checks at each registration and unfencing, and once after it becomes active. Coordinator calls before then get v2's retriable error. If the first brokers share a rack, the gauge rises once other racks register, and the deployment docs say to start the first brokers across racks.</p>
+
+  <div class="demo" id="demo-v3-rack">
+    <div class="demo-head"><h5>Try it: start the controller and reassign a partition</h5><span class="tag">Interactive</span></div>
+    <div class="demo-body">
+      <p class="hint">Six brokers register. The coordinator partition's current replicas are b1, b2, and b3. Choose the rack layout, then tick a target replica set to see what the reassignment check answers. The first row checks the startup validation.</p>
+      <div class="controls">
+        <label>Replication factor config <select id="rk-rf"><option>1</option><option>2</option><option selected>3</option><option>4</option></select></label>
+        <button class="toggle" id="rk-override">Internal override</button>
+        <span class="chip" id="rk-startup"></span>
+      </div>
+      <div class="controls">
+        <label>Racks <select id="rk-racks"><option value="3" selected>3 racks: a, b, c</option><option value="late">3 racks, c registered after creation</option><option value="2">2 racks: a, b</option><option value="1">1 rack: a</option><option value="0">None declared</option></select></label>
+        <span class="sep"></span>
+        <span id="rk-boxes" class="controls" style="margin:0"></span>
+      </div>
+      <div class="grid2">
+        <div class="panel" id="rk-current"></div>
+        <div class="panel" id="rk-target"></div>
+      </div>
+      <div class="readout" id="rk-readout"></div>
+    </div>
+  </div>
+
+  <p>V2's other guards stay as written. <code>diskless.metadata.topic.min.insync.replicas</code> keeps its range from <code>min(2, replication factor)</code> to the replication factor, and the storage-change guard and ELR rules decide which replica may lead, not where replicas sit. On a 3-broker cluster, an operator can't decommission a broker without adding a replacement first, because the replica count is fixed.</p>
+  <div class="takeaway"><span class="label">Takeaway</span><p>The controller enforces 3 replicas at startup and keeps the rack spread from narrowing on reassignment, and a gauge covers the spread that decays without a request. That makes clause 2's exception for losing a replica set hold.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>The guard makes losing a replica set unlikely, and the bar's exception makes it acceptable. It can still happen, and the coordinator partition then needs a way back.</p></div>
 </section>
 
 <section class="chapter" id="ch-v3-replica" data-title="Losing a whole replica set">
-  <h3><span class="n">38</span>Losing a whole replica set <span class="chip good">research closed · ticket 07</span><span class="chip warn">open · tickets 09, 11 · ticket 09 blocked by 07</span></h3>
+  <h3><span class="n">41</span>Losing a whole replica set <span class="chip good">research closed · ticket 07</span><span class="chip info">future work · ticket 09</span><span class="chip warn">open · ticket 19</span></h3>
   <div class="why">
     <span class="label">Why this exists</span>
-    <p>V2 accepts the loss of every replica of a coordinator partition because a classic topic can lose a partition the same way. The new bar rejects that comparison when the consequence spans <code>1/N</code> of diskless partitions. Ticket 07 researches the leading recovery idea, and tickets 09 and 11 remain open.</p>
-    <div class="prompted"><span>Council review: replica-set loss</span><span>Ticket 07: research closed</span><span>Tickets 09 and 11</span><span>Clause 2</span></div>
+    <p>V2 accepts the loss of every replica of a coordinator partition because a classic topic can lose a partition the same way. The council rejects that comparison when the consequence spans <code>1/N</code> of all diskless partitions. V3 accepts the loss only under the enforced guard, and it still needs an operator procedure for when the loss happens.</p>
+    <div class="prompted"><span>Council review: replica-set loss</span><span>Ticket 07: research</span><span>Ticket 09: future work</span><span>Ticket 11</span><span>Ticket 19</span></div>
   </div>
-  <p>Ticket 07 finds that an <b>object footer</b> can sit in the same upload. Readers fetch batch coordinate ranges and ignore trailing bytes, and S3, GCS, and Azure already upload one complete in-memory array. At upload time, the broker knows each batch's user partition, byte range, producer fields, timestamps, broker identity, and sequence context.</p>
-  <p>The footer cannot know the absolute offsets the coordinator assigns, the log-append time, whether a batch is accepted or duplicate, the order against another broker, or later releases and removals. A recovery can therefore inventory an object's batches and partitions, but it cannot rebuild the coordinator's full state from the footer alone. The storage interface also has no listing operation, and Azure needs a size lookup before a suffix-range read. Ticket 09 must decide the footer fields, the recovery procedure, whether recovery prevents orphans only, and whether a tool is required.</p>
-  <p>Ticket 11 keeps an enforced replication guard open: require replication factor 3 and distinct rack placement when racks exist, while defining how a development cluster runs. A deployment note alone doesn't protect the bar during topic creation or reassignment.</p>
+
+  <h4>The accepted risk in v3</h4>
+  <p>With replication factor 3 and maximal spread enforced, clause 2's exception applies. When every replica of coordinator partition <code>P</code> loses its storage, the storage-change guard drops each returning replica from the ELR, and unclean election stays off, so <code>P</code> stays leaderless. Its user partitions, about <code>1/N</code> of the diskless partitions, can't be written or read. Clause 3 still holds: fences to <code>P</code> go unanswered and its releases never arrive, so the objects <code>P</code> touched leak instead of being deleted. The signal is <code>OfflinePartitionsCount</code> for <code>__diskless_metadata</code>.</p>
+  <p>The procedure is an <b>empty restart</b> of <code>P</code>. The controller accepts it only for <code>__diskless_metadata</code>, and only when no ISR member, ELR member, or last known leader has intact storage. <code>P</code> comes back with no state, its user partitions restart empty from offset 0, and the objects the old <code>P</code> tracked stay a known leak. Leaving <code>P</code> offline for good was rejected: a recreated topic gets a new topic ID, and about <code>1/N</code> of its partitions map to <code>P</code> again, so every diskless topic, present and future, would keep an unavailable share.</p>
+  <p>Losing the KRaft metadata is out of scope, because classic topics don't survive it either. In combined mode, losing a coordinator partition's replicas can also lose the controller quorum, so the design recommends dedicated controllers, citing Kafka's guidance that combined mode "should be avoided in critical deployment environments."</p>
+
+  <h4>What ticket 19 still has to settle</h4>
+  <ul>
+    <li>The mechanism: a new admin request for one coordinator partition, or Kafka's unclean election allowed for <code>__diskless_metadata</code> under the precondition, and how each fits the storage-change guard and topic protection.</li>
+    <li>How the user partitions restart through partition-created records and the <code>metadataOffset</code> rule, what consumers and idempotent producers see, and where a consolidated partition's restarted log starts so its offsets don't collide.</li>
+    <li><code>P</code> as a participant, where resent fences find no row and must still raise the floor, and <code>P</code> as a tracking partition, where brokers send parts for leases it doesn't know.</li>
+    <li>Whether a signal counts the leaked objects, and whether the protocol model covers an empty participant and an empty tracking partition.</li>
+  </ul>
+
+  <h4>The footer: researched, designed, and deferred</h4>
+  <p>Ticket 07's research finds that an object footer can sit in the same upload. Readers fetch batch coordinate ranges and ignore trailing bytes, and S3, GCS, and Azure each upload one complete in-memory array. The footer can't hold the absolute offsets, commit outcomes, or later removals, because the leader decides them after the upload.</p>
+  <p>Ticket 09 then designs a full recovery and records it as future work. Every object would end with a footer of partition runs, each with an offset hint: about 4 KB for 100 partitions in an 8 MiB object. After a replica-set loss, the operator triggers a recovery. The new leader of <code>P</code> refuses all work, lists the bucket through a new read-only list operation, reads every footer, filters the runs by what the surviving tracking partitions know, and serves the records again at new offsets above a floor, with producer state rebuilt from the batch headers. V3 writes no footer. <code>ObjectFormat</code> keeps its unused values so a later version can add one, and objects written before then can't be recovered.</p>
 
   <div class="demo" id="demo-v3-blast">
     <div class="demo-head"><h5>Try it: compare the blast radius</h5><span class="tag">Interactive</span></div>
     <div class="demo-body">
-      <p class="hint">Choose the coordinator partition count. The comparison holds the total diskless partition count at 10,000 and shows only the share affected by one replica-set loss. The recovery cards describe candidates, not decisions.</p>
+      <p class="hint">Choose the coordinator partition count and whether the guard holds. The comparison keeps 10,000 diskless partitions and shows the share that one replica-set loss affects.</p>
       <div class="controls">
         <label>Coordinator partitions (N) <select id="brt-n"><option>1</option><option>2</option><option>4</option><option selected>8</option><option>16</option><option>32</option></select></label>
+        <button class="toggle on" id="brt-guard">Guard: RF 3 and maximal spread</button>
+        <button class="toggle" id="brt-override">Internal override: RF 1</button>
       </div>
       <div class="grid3">
         <div class="panel" id="brt-classic"></div>
+        <div class="panel" id="brt-v3"></div>
         <div class="panel" id="brt-footer"></div>
-        <div class="panel" id="brt-soft"></div>
       </div>
       <div class="readout" id="brt-readout"></div>
     </div>
   </div>
 
-  <div class="takeaway"><span class="label">Takeaway</span><p>A footer can preserve upload-time facts, but not the coordinator decisions made later. A replica-set loss therefore remains an open recovery problem, with RF and rack spread as a guard rather than a substitute for a recovery path.</p></div>
-  <div class="next"><span class="label">What this leaves open</span><p>Even if the coordinator makes a wrong deletion, v3 needs to bound what that mistake can destroy and how an operator recovers it.</p></div>
+  <div class="takeaway"><span class="label">Takeaway</span><p>V3 makes a replica-set loss rare with an enforced guard and accepts it under clause 2's exception. The procedure brings the partition back empty, and its rules are ticket 19's open work. The footer recovery that would remove the exception is designed and deferred.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>A replica-set loss leaks objects. A lost tail or an apply bug can do worse: delete an object that another partition still references.</p></div>
 </section>
 
-<section class="chapter" id="ch-v3-bounds" data-title="Bounding what a bug can delete">
-  <h3><span class="n">39</span>Bounding what a bug can delete <span class="chip good">research closed · ticket 08</span><span class="chip warn">open · ticket 10 · blocked by 08</span></h3>
+<section class="chapter" id="ch-v3-bounds" data-title="What a bug can delete">
+  <h3><span class="n">42</span>What a bug can delete: accepted for now <span class="chip good">research closed · ticket 08</span><span class="chip info">future work · ticket 10</span></h3>
   <div class="why">
     <span class="label">Why this exists</span>
-    <p>Five v2 accepted-risk rows can let one coordinator partition delete or resurrect an object that another partition still references: a lost tail, an fsync that lies, an old log-directory restore, an over-truncated eligible leader, or a deterministic apply bug. Clause 3 of the new bar does not accept that cross-partition consequence without a bound.</p>
-    <div class="prompted"><span>Council review: lost-tail consequence</span><span>Ticket 08: research closed</span><span>Ticket 10</span><span>Clause 3</span></div>
+    <p>Five v2 accepted-risk rows can let one coordinator partition delete or resurrect an object that another partition still references. Clause 3 doesn't accept that consequence without a bound. The council proposes soft delete with about 7 days of retention and a deletion-rate cap.</p>
+    <div class="prompted"><span>Council review: lost-tail consequence</span><span>Ticket 08: research</span><span>Ticket 10: future work</span><span>Clause 3</span></div>
   </div>
-  <p>Ticket 08's research finds a recoverable-delete mechanism on each provider. S3 needs versioning and a noncurrent-version expiration rule. GCS soft delete keeps deleted objects for 7 to 90 days, with 7 days as the default for new buckets. Azure blob soft delete keeps them for 1 to 365 days. At an upload rate of 100 MiB per second, a seven-day window retains about 57.7 TiB, roughly $1,200 per month at the cited GCS regional Standard price. The retained bytes follow upload rate times the window.</p>
-  <p>The backends still see a successful delete, a missing object on a later read, and a second delete that counts as success. The usual object-write credentials can't inspect the setting: S3 needs bucket versioning and lifecycle permissions, GCS needs <code>storage.buckets.get</code>, and Azure's service-properties check needs a broader control-plane permission with Entra ID. S3 and Azure report a recoverable delete in their delete responses; GCS returns no such signal.</p>
-  <p>Ticket 10 keeps requiring the provider setting, checking it at startup or warning on inability to verify, and defining a per-tracking-partition <b>deletion-rate cap</b> with an alarm. It also needs an operator recovery procedure for offsets that stop reading and for a late part that resurrects a key after a lowered floor. The ticket does not select a provider policy, a failure response, or the cap's unit and default.</p>
-  <div class="takeaway"><span class="label">Takeaway</span><p>Soft delete or versioning can provide a recovery window for a wrong delete, but it adds retained storage and needs operator configuration. Ticket 10 still decides whether the requirement and deletion-rate cap make the cross-partition consequence bounded enough.</p></div>
-  <div class="next"><span class="label">What this leaves open</span><p>The safety boundary is only half of the review. V3 also needs a load limit, measurable performance criteria, and a model that explores every protocol interleaving.</p></div>
+  <p>Under the design as written, no path deletes a referenced object, as Fable's verdict found. A key enters a deletion queue only after every participant holds a durable record that makes it unreachable there: the removal of its batches, or a raised floor. A deleted key is referenced again only when that record disappears or was wrong from the start: an acknowledged record vanishes from every replica that can lead, a deterministic apply bug answers wrongly, or something outside the coordinator deletes the key. Object storage doesn't roll back with the coordinator log, so such a delete is permanent.</p>
+  <p>Ticket 08's research finds a recoverable delete on each provider: S3 versioning with a noncurrent-version expiration rule, GCS soft delete, which is on by default at 7 days, and Azure blob soft delete. None changes what the backends see, so v2's "missing key counts as success" rule stays valid. The retained bytes equal the upload rate times the window, about 57.7 TiB at 100 MiB per second for 7 days. The usual object-write credentials can't read the setting on any provider.</p>
+
+  <h4>Six rows stay accepted risks in v3</h4>
+  <p>Ticket 10 relaxes clause 3 for these rows on v2's argument that a classic topic loses data to the same causes. Each keeps v2's signal or procedure:</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Risk</th><th>Signal or procedure</th></tr></thead>
+    <tbody>
+      <tr><td>Log recovery truncates fsynced records after a read error or bit rot</td><td>Alert on log recovery's truncation warning for <code>__diskless_metadata</code>, and stop the broker for inspection.</td></tr>
+      <tr><td>A device acknowledges an fsync without persisting it</td><td>The deployment docs require storage that honors fsync.</td></tr>
+      <tr><td>An operator restores a log directory from an older copy</td><td>Never restore a log directory. Reformat it and let the broker re-replicate.</td></tr>
+      <tr><td>A stale leader-epoch entry over-truncates an ELR member, and the leader fails first</td><td><code>UncleanLeaderElectionsPerSec</code> and <code>ElectionFromEligibleLeaderReplicasPerSec</code>.</td></tr>
+      <tr><td>A deterministic apply bug corrupts every replica alike</td><td>Sustained <code>PartitionStorageErrorRate</code>, plus the shared suite, golden records, and the apply-stop rule.</td></tr>
+      <tr><td>Something outside the coordinator deletes a WAL key</td><td>The deployment docs forbid expiration rules and manual deletes on the WAL prefix. <code>PartitionStorageErrorRate</code> shows the effect.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h4>The deferred bound</h4>
+  <p>Ticket 10 records a full design that would let clause 3 hold without the exception. V3 includes none of it:</p>
+  <ul>
+    <li>The bucket keeps deleted WAL objects recoverable for at least 7 days. Azure versioning alone doesn't count, because its lifecycle rule ages a version from the upload.</li>
+    <li>Because credentials can't read the setting, the broker checks the effect: an hourly probe that uploads and deletes a small key, plus a check of every real delete response on S3 and Azure. A failed check stops deletes on that broker and sets <code>PermanentDeleteDetected</code>.</li>
+    <li>A fetch that misses a key that committed batch rows still reference raises <code>MissingReferencedObjectRate</code>, and the operator restores the key by name.</li>
+    <li>A deletion-rate cap holds each tracking partition to 4 times its trailing hourly sequence rate, with a floor of 10 keys per second, so a runaway stays visible and a restore stays small.</li>
+  </ul>
+  <div class="takeaway"><span class="label">Takeaway</span><p>V3 keeps six rows as accepted risks with their v2 signals, and states that their consequence can cross coordinator partitions. The soft-delete bound that would close them is designed and waits for a later version.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>The safety decisions are in place. Load limits, benchmark thresholds, and a model that explores every protocol interleaving remain.</p></div>
 </section>
 
 <section class="chapter" id="ch-v3-proof" data-title="Load and proof">
-  <h3><span class="n">40</span>Load and proof: admission, benchmarks, and a model <span class="chip warn">open · tickets 15, 16, 17 · ticket 16 blocked by 01, 13, 14, 15</span></h3>
+  <h3><span class="n">43</span>Load and proof: what is still open <span class="chip warn">open · tickets 15, 16, 17, 18, 19</span></h3>
   <div class="why">
     <span class="label">Why this exists</span>
-    <p>The council review finds no admission cap or retry budget when a coordinator leader slows down. The benchmark section names workloads but no pass thresholds. Ada and Feynman ask for a model of the fence, floor, and release protocol plus fault injection at every fsync point.</p>
-    <div class="prompted"><span>Council review</span><span>Tickets 15, 16, and 17</span><span>Performance bar</span><span>Protocol proof</span></div>
+    <p>The council finds no admission cap or retry budget when a coordinator leader slows down, and no pass thresholds for the benchmarks. Ada and Feynman ask for a model of the fence, floor, and release protocol, with fault injection at every fsync point.</p>
+    <div class="prompted"><span>Council review</span><span>Tickets 15 to 19</span><span>Performance bar</span><span>Protocol proof</span></div>
   </div>
-  <p>V2 has an overlay cap, request quotas, backoff, and a produce request timeout, but its delegate retries each part until the commit deadline while the same leader also handles leases, releases, fences, and cache-miss reads. Ticket 15 asks whether v3 adds an admission cap, a retry budget, or neither, and how it prioritizes commit parts, fences, release reports, lease requests, and reads. It also needs a metric for shed work and its error.</p>
-  <p>Ticket 16 turns the PostgreSQL comparison into a gate: commit P99, <code>FindBatchesTime</code>, co-tenancy, failover recovery, snapshot transfer, and partial-failure produce latency all need workloads, scales, and thresholds. A slow or unavailable coordinator must distinguish files that touch it from files that don't. Ticket 16 waits on tickets 01, 13, 14, and 15. Ticket 17 waits on tickets 01, 02, 03, 05, and 06. Running the benchmarks remains out of scope, so no result chooses a default <code>N</code>, a separate SQLite disk, a result cap, or a retry policy.</p>
-  <p>Ticket 17 builds a bounded model with two or three coordinator partitions and one or two brokers. It must first reproduce Fable's v2 defects, then check that no object is deleted while a batch references it and no part commits into a queued or deleted key. Fault injection drops the unflushed tail at each fsync point. A failing invariant feeds ticket 10 or reopens the owning protocol decision.</p>
-  <p>Ticket 18 is blocked until these decisions settle. It rewrites the failure modes, accepted risks, metrics, tests, stories, and Terms entries after the other tickets provide their rows. The status board below is a map of that work, not a claim that v3 has chosen the candidates.</p>
-  <div class="takeaway"><span class="label">Takeaway</span><p>V3 has an open performance bar and an open proof obligation. The existing v2 timeout machinery bounds some waits, but it doesn't yet define admission, retry amplification, or passing measurements.</p></div>
-  <div class="next"><span class="label">What this leaves open</span><p>Every finding needs one visible place that says who raised it, which ticket owns it, and whether research or a decision closed it.</p></div>
+  <p><b>Ticket 15, admission cap or retry budget,</b> is in a grilling session. Its notes so far bound a leader's load with the brokers' existing in-flight limits instead of a new admission cap: per broker at one leader, one commit part per commit queue, one lease renewal, one release report per tracking partition, one batched fence per participant, and up to 8 cache-miss reads. Every private RPC that the delegate retries waits with Kafka's <code>ExponentialBackoff</code>, from 100 ms up to 1,000 ms with jitter, and a commit part still stops at its deadline. Reads move off the shard's event queue onto read-only SQLite connections, so commit parts never wait behind read scans. The ticket stays open, and chapter 37's invariant constrains it: no in-flight cap may let one stuck queue block unrelated requests.</p>
+  <p><b>Ticket 16, benchmark pass criteria,</b> now waits only on ticket 15. It turns the PostgreSQL comparison into a gate for commit P99, <code>FindBatchesTime</code>, co-tenancy, failover recovery, snapshot transfer, and partial-failure produce latency. Two inputs are settled: ticket 04 judges produce latency with Kafka's per-request metrics, and its partial-failure benchmark passes only if requests with no batch for the offline coordinator partition don't wait for its deadline. Ticket 14 makes the partition-count benchmark at 3 brokers the first run.</p>
+  <p><b>Ticket 17, the protocol model,</b> now waits only on ticket 19. It builds a bounded model with two or three coordinator partitions and one or two brokers, first reproduces Fable's v2 defects, then checks that no object is deleted while a batch references it and no part commits into a queued or deleted key. Fault injection drops the unflushed tail at each fsync point. A failing invariant reopens the decision that owns it.</p>
+  <p><b>Ticket 19, the empty restart,</b> is chapter 41's open procedure. <b>Ticket 18</b> rewrites the failure modes, accepted risks, metrics, tests, stories, and Terms entries once the others close. It takes ticket 10's six rows as written and adds Future work entries for the footer and the soft-delete bound.</p>
+  <div class="takeaway"><span class="label">Takeaway</span><p>The open work is load, measurement, proof, and one recovery procedure. Each open ticket inherits constraints from the closed ones, so none of them reopens a settled safety argument by default.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>Every finding needs one visible place that says who raised it, which ticket owns it, and how it closed.</p></div>
 </section>
 
 <section class="chapter" id="ch-v3-status" data-title="Status board">
-  <h3><span class="n">41</span>Status board: every review finding <span class="chip warn">open · ticket 18 · blocked by 01–17</span></h3>
+  <h3><span class="n">44</span>Status board: every review finding <span class="chip warn">open · ticket 18</span></h3>
   <div class="why">
     <span class="label">Why this exists</span>
-    <p>The tickets deliberately separate research from design decisions. This board makes that distinction filterable, so you can see the open work without reading a closed research result as a selected design.</p>
-    <div class="prompted"><span>Ticket map</span><span>Council review</span><span>Fable review</span><span>Research status</span></div>
+    <p>The tickets close in different ways: research answers a factual question, a decision picks a design, and future work records a full design without building it. This board makes those differences filterable.</p>
+    <div class="prompted"><span>Ticket map</span><span>Council review</span><span>Fable review</span><span>Ticket status</span></div>
   </div>
-  <p>Filter by the ticket state or by the review source. “Research closed” means the ticket's factual question has an answer. “Blocked by” means the ticket waits for another decision. “Open” means the candidate set still needs a choice.</p>
+  <p>Filter by ticket status or by the review source. "Decided" means the ticket chose a design that the rewrite applies. "Research closed" means its factual question has an answer. "Future work" means the ticket records a full design that v3 doesn't build. "Waiting on" lists only the blockers that are still open.</p>
   <div class="demo" id="demo-v3-status">
     <div class="demo-head"><h5>Try it: filter the v3 work</h5><span class="tag">Interactive</span></div>
     <div class="demo-body">
       <div class="controls">
-        <label>Status <select id="sb-status"><option value="all">All statuses</option><option value="open">Open</option><option value="blocked">Blocked</option><option value="research">Research closed</option></select></label>
+        <label>Status <select id="sb-status"><option value="all">All statuses</option><option value="decided">Decided</option><option value="research">Research closed</option><option value="future">Future work</option><option value="open">Open</option><option value="blocked">Blocked</option></select></label>
         <label>Review <select id="sb-review"><option value="all">All sources</option><option value="council">Council</option><option value="fable">Fable</option><option value="both">Council and Fable</option><option value="research">Research</option></select></label>
         <span class="chip info" id="sb-count"></span>
       </div>
-      <div class="table-wrap"><table><thead><tr><th>Ticket</th><th>Source review</th><th>Severity</th><th>Status</th><th>Candidate options</th></tr></thead><tbody id="sb-table"></tbody></table></div>
+      <div class="table-wrap"><table><thead><tr><th>Ticket</th><th>Source review</th><th>Severity</th><th>Status</th><th>Decision or open question</th></tr></thead><tbody id="sb-table"></tbody></table></div>
       <div class="readout" id="sb-readout"></div>
     </div>
   </div>
-  <div class="takeaway"><span class="label">Takeaway</span><p>Three tickets close research questions, and the remaining tickets keep their candidate options visible. V3 has not selected an open ticket's design.</p></div>
-  <div class="next"><span class="label">What this leaves open</span><p>The glossary adds the terms that distinguish v2's review language from the stricter v3 bar.</p></div>
+  <div class="takeaway"><span class="label">Takeaway</span><p>Fourteen tickets are closed and five remain. Every review finding now has a decision, a research answer, a recorded future design, or an open ticket that names what it must settle.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>The glossary adds the terms that v3's decisions introduce.</p></div>
 </section>
 
 <section class="chapter" id="ch-glossary" data-title="Glossary">
-  <h3><span class="n">42</span>Glossary</h3>
+  <h3><span class="n">45</span>Glossary</h3>
   <div class="table-wrap"><table>
     <thead><tr><th>Term</th><th>Meaning</th></tr></thead>
     <tbody id="glossary"></tbody>
@@ -3394,93 +3764,140 @@ function demoSkip() {
   render();
 }
 
-/* ---------------------------------------------------------------- part 7: empty tracking part */
+/* ---------------------------------------------------------------- part 7: finish reports */
 function demoV3Empty() {
   const host = $('#et-parts');
   if (!host) return;
-  const v2Btn = $('#et-v2');
-  const candidateBtn = $('#et-candidate');
-  let candidate = false;
+  const btns = { v2: $('#et-v2'), v3: $('#et-v3'), v3x: $('#et-v3x') };
+  let mode = 'v2';
   const init = () => ({
     cps: [
-      { name: 'cp0', state: 'waiting', note: 'participant part for (7, 41)' },
-      { name: 'cp1', state: 'waiting', note: 'participant part for (7, 41)' },
-      { name: 'cp2', state: 'waiting', note: 'empty tracking part' },
+      { state: 'waiting', note: 'participant part for (7, 41)' },
+      { state: 'waiting', note: 'participant part for (7, 41)' },
+      { state: 'waiting', note: 'empty tracking part' },
     ],
     outcome: '',
   });
-  const v2Steps = [
-    { title: 'The file sends three parts', text: 'The broker uploads the file and sends parts to cp0, cp1, and cp2. Cp2 tracks the file but holds no batches, so its part is empty.' },
-    { title: 'The empty tracking part applies', text: 'Cp2 applies the empty part and releases its own state at once. V2 now sees cp0 and cp1 as silent participants and sends a fence to both.',
-      run: s => { s.cps[2].state = 'released'; s.cps[2].note = 'released in the empty-part apply; fences sent'; s.cps[0].state = 'fence sent'; s.cps[0].note = 'waiting for the participant fence'; s.cps[1].state = 'fence sent'; s.cps[1].note = 'waiting for the participant fence'; } },
-    { title: 'cp0 wins the race; cp1 changes leader', text: 'Cp0\'s part arrives before the fence and commits, so the fence answers referenced. The file still paid one fence request and a fsynced participant-state record. Cp1 is in a leader change: its part waits for the new leader, while the fence from cp2 reaches the queue first.',
-      run: s => { s.cps[0].state = 'committed'; s.cps[0].note = 'part committed first; fence answers referenced'; s.cps[1].state = 'failover'; s.cps[1].note = 'part waits behind leader recovery'; } },
-    { title: 'The queued cp1 part arrives', text: 'The participant part reaches cp1 after the fence. Its pair is at the floor, so cp1 returns a non-retriable stale-sequence error. The produce fails instead of waiting through the failover.',
-      run: s => { s.cps[1].state = 'stale'; s.cps[1].note = 'part rejected at (7, 41)'; s.outcome = 'bad'; } },
-  ];
-  const candidateSteps = [
-    { title: 'The file sends three parts', text: 'The broker uploads the file and sends parts to cp0, cp1, and cp2. Cp2 tracks the file but holds no batches, so its part is empty.' },
-    { title: 'The candidate delays tracking release', text: 'The candidate does not release the empty tracking part until a later report says which sequence is resolved. No participant fence runs yet.',
-      run: s => { s.cps[2].state = 'deferred'; s.cps[2].note = 'release waits for a resolved-through report'; s.cps[0].state = 'waiting'; s.cps[0].note = 'part can still commit'; s.cps[1].state = 'waiting'; s.cps[1].note = 'part can still commit'; } },
-    { title: 'The participant parts finish', text: 'Cp0 commits. Cp1 changes leader, then its retry reaches the new leader and commits with the same pair. The tracking part remains open while these answers arrive.',
-      run: s => { s.cps[0].state = 'committed'; s.cps[0].note = 'batches recorded for (7, 41)'; s.cps[1].state = 'failover'; s.cps[1].note = 'retry reaches the new leader'; } },
-    { title: 'The candidate resolves the sequence', text: 'A later tracking part or lease request carries resolved-through (7, 41). Cp2 can release only sequences at or below that report, so it does not fence the in-flight participant part. The produce succeeds.',
-      run: s => { s.cps[1].state = 'committed'; s.cps[1].note = 'retry committed after failover'; s.cps[2].state = 'resolved'; s.cps[2].note = 'resolved-through (7, 41); no fence for a live part'; s.outcome = 'good'; } },
-  ];
+  const send = { title: 'The file sends three parts', text: 'The broker uploads the file and sends parts to cp0, cp1, and cp2. Cp2 tracks the file but holds no batches, so its part is empty.' };
+  const recorded = { title: 'The empty tracking part records', text: 'Cp2 records the part, and its own entry releases in the same apply. That release no longer triggers fences. The entries for cp0 and cp1 are pending: they wait for a finish report that covers sequence 41.',
+    run: s => { s.cps[2].state = 'recorded'; s.cps[2].note = 'own entry released; cp0 and cp1 pending'; s.cps[0].state = 'pending'; s.cps[0].note = 'part in flight; no fence'; s.cps[1].state = 'pending'; s.cps[1].note = 'part in flight; no fence'; } };
+  const steps = {
+    v2: [
+      send,
+      { title: 'The empty tracking part applies', text: 'Cp2 applies the empty part and releases its own state at once. V2 now sees cp0 and cp1 as silent participants and sends a fence to both.',
+        run: s => { s.cps[2].state = 'released'; s.cps[2].note = 'released in the empty-part apply; fences sent'; s.cps[0].state = 'fence sent'; s.cps[0].note = 'waiting for the participant fence'; s.cps[1].state = 'fence sent'; s.cps[1].note = 'waiting for the participant fence'; } },
+      { title: 'cp0 wins the race; cp1 changes leader', text: 'Cp0\'s part arrives before the fence and commits, so the fence answers referenced. The file still paid one fence request and an fsynced participant-state record. Cp1 is in a leader change: its part waits for the new leader, while the fence from cp2 reaches the queue first.',
+        run: s => { s.cps[0].state = 'committed'; s.cps[0].note = 'part committed first; fence answers referenced'; s.cps[1].state = 'failover'; s.cps[1].note = 'part waits behind leader recovery'; } },
+      { title: 'The queued cp1 part arrives', text: 'The participant part reaches cp1 after the fence. Its pair is at the floor, so cp1 returns a non-retriable stale-sequence error. The produce fails instead of waiting through the failover.',
+        run: s => { s.cps[1].state = 'stale'; s.cps[1].note = 'part rejected at (7, 41)'; s.outcome = 'bad'; } },
+    ],
+    v3: [
+      send,
+      recorded,
+      { title: 'cp0 commits; cp1 changes leader', text: 'Cp0\'s part commits. Cp1\'s leader changes, so its part gets <code>NOT_COORDINATOR</code>, and the broker retries it at the new leader. Nothing at cp2 has fenced cp1.',
+        run: s => { s.cps[0].state = 'committed'; s.cps[0].note = 'recorded file-committed: answered'; s.cps[1].state = 'failover'; s.cps[1].note = 'NOT_COORDINATOR; the broker retries'; } },
+      { title: 'The retry commits within the deadline', text: 'The new cp1 leader commits the part with the same pair. Every part is finished, so the file is finished, and the produce request succeeds.',
+        run: s => { s.cps[1].state = 'committed'; s.cps[1].note = 'committed at the new leader: answered'; s.outcome = 'good'; } },
+      { title: 'The next tracking part carries the finish report', text: 'The broker\'s next tracking part to cp2 carries <code>finishedThrough</code> 41 with no exception ranges. Cp2 moves cp0 and cp1 from pending to held. It sends no fence and waits for their release reports.',
+        run: s => { s.cps[2].state = 'held'; s.cps[2].note = 'finishedThrough 41, no exceptions: cp0 and cp1 held'; s.cps[0].note = 'held: owes a release report'; s.cps[1].note = 'held: owes a release report'; } },
+      { title: 'Retention releases the object', text: 'Later, retention removes the batches at cp0 and cp1. Each sends a release report, cp2 moves both entries to released, and it queues the object for deletion.',
+        run: s => { s.cps[0].state = 'released'; s.cps[0].note = 'release report accepted'; s.cps[1].state = 'released'; s.cps[1].note = 'release report accepted'; s.cps[2].state = 'queued'; s.cps[2].note = 'every entry released: object queued'; } },
+    ],
+    v3x: [
+      send,
+      recorded,
+      { title: 'cp0 commits; cp1 stays unavailable', text: 'Cp0\'s part commits. Cp1 has no leader, so every attempt gets <code>NOT_COORDINATOR</code>. The broker keeps retrying until the commit deadline.',
+        run: s => { s.cps[0].state = 'committed'; s.cps[0].note = 'recorded file-committed: answered'; s.cps[1].state = 'retrying'; s.cps[1].note = 'NOT_COORDINATOR on every attempt'; } },
+      { title: 'The commit deadline passes', text: 'Cp1\'s part is finished without a leader answer, so it is an exception. The request gets <code>KAFKA_STORAGE_ERROR</code> for cp1\'s batches and its own results for cp0\'s batches. The producer retries the failed partitions.',
+        run: s => { s.cps[1].state = 'exception'; s.cps[1].note = 'finished at the deadline; outcome unknown'; s.outcome = 'warn'; } },
+      { title: 'The finish report lists the exception', text: 'The next tracking part carries <code>finishedThrough</code> 41 with the exception range [41, 41] for cp1. Cp2 moves cp0 to held and cp1 to fencing, and it sends cp1 one range fence. The broker finished the file, so no live part can still arrive.',
+        run: s => { s.cps[2].state = 'fencing'; s.cps[2].note = 'cp0 held; range fence [41, 41] to cp1'; s.cps[1].state = 'fence sent'; s.cps[1].note = 'range fence up to (7, 41)'; } },
+      { title: 'The fence answers', text: 'Cp1\'s new leader applies the fence and raises the broker\'s floor to (7, 41), so the old part can never commit there. The part never committed, so the answer is "released," and cp1\'s entry is released. Had it committed, the answer would be "referenced," and cp1 would release later.',
+        run: s => { s.cps[1].state = 'released'; s.cps[1].note = 'floor (7, 41); answer: released'; s.cps[2].state = 'held'; s.cps[2].note = 'cp0 held; cp1 released'; s.outcome = 'good'; } },
+    ],
+  };
+  const stateClass = st => st === 'stale' ? 'bad'
+    : ['committed', 'released', 'recorded', 'held', 'queued'].includes(st) ? 'good'
+    : ['fence sent', 'failover', 'retrying', 'exception', 'fencing'].includes(st) ? 'warn' : 'info';
   const panel = (c, i, changed) => h('div', { class: 'panel' + (changed ? ' changed' : '') },
-    h('h6', null, h('span', { html: cpChip(i) }), h('span', { class: 'chip ' + (c.state === 'stale' ? 'bad' : c.state === 'committed' || c.state === 'resolved' ? 'good' : c.state === 'fenced' ? 'warn' : 'info') }, c.state)),
+    h('h6', null, h('span', { html: cpChip(i) }), h('span', { class: 'chip ' + stateClass(c.state) }, c.state)),
     h('div', { class: 'small' }, c.note));
+  const readout = s => {
+    if (mode === 'v2') return s.outcome === 'bad' ? 'V2 path: the delayed cp1 part gets stale-sequence, so the produce fails.' : 'V2 path: step through the empty tracking part and the failover.';
+    if (mode === 'v3') return s.outcome === 'good' ? 'V3 path: the produce succeeded, and cp2 sent no fence. Ticket 01\'s named test checks exactly this.' : 'V3 path: the tracking partition waits for a finish report before it decides anything.';
+    return s.outcome === 'good' ? 'V3 path: the only fence went to the participant that the broker reported as an exception, after the file finished. It answered released.'
+      : s.outcome === 'warn' ? 'V3 path: cp1\'s batches failed at the deadline, as any unconfirmed part does. A fence comes only after the finish report.'
+      : 'V3 path: the tracking partition waits for a finish report before it decides anything.';
+  };
   const ctl = stepper({
     prev: $('#et-prev'), next: $('#et-next'), reset: $('#et-reset'),
-    init, steps: () => candidate ? candidateSteps : v2Steps,
+    init, steps: () => steps[mode],
     render: (s, prev, step, i, n) => {
       $('#et-count').textContent = `Step ${i + 1} of ${n}`;
-      $('#et-narr').innerHTML = `<h6>${step.title} ${candidate ? chip('warn', 'candidate, not decided') : chip('info', 'v2 behavior')}</h6><p>${step.text}</p>`;
+      $('#et-narr').innerHTML = `<h6>${step.title} ${mode === 'v2' ? chip('info', 'v2 behavior') : chip('good', 'v3 decision')}</h6><p>${step.text}</p>`;
       host.innerHTML = '';
       s.cps.forEach((c, k) => host.append(panel(c, k, prev && JSON.stringify(prev.cps[k]) !== JSON.stringify(c))));
-      show($('#et-readout'), s.outcome, candidate
-        ? 'Candidate path: the tracking partition waits for a resolved-through report before it fences. Ticket 01 still has no selected option.'
-        : s.outcome === 'bad' ? 'V2 path: the delayed cp1 part gets stale-sequence, so the produce fails.' : 'V2 path: step through the empty tracking part and the failover.');
+      show($('#et-readout'), s.outcome, readout(s));
     },
   });
-  v2Btn.addEventListener('click', () => { candidate = false; setOn([v2Btn, candidateBtn], v2Btn); ctl.go(0); });
-  candidateBtn.addEventListener('click', () => { candidate = true; setOn([v2Btn, candidateBtn], candidateBtn); ctl.go(0); });
+  for (const [key, btn] of Object.entries(btns)) {
+    btn.addEventListener('click', () => { mode = key; setOn(Object.values(btns), btn); ctl.go(0); });
+  }
 }
 
 /* ---------------------------------------------------------------- part 7: lease lifecycle */
 function demoV3Lease() {
   const rateEl = $('#ll-rate');
   if (!rateEl) return;
-  const primary = $('#ll-primary'), fallback = $('#ll-fallback');
-  const candidateBtn = $('#ll-candidate');
+  const quietEl = $('#ll-quiet');
+  const v2Btn = $('#ll-v2'), v3Btn = $('#ll-v3');
+  const primary = $('#ll-primary'), fallback = $('#ll-fallback'), idle = $('#ll-idle');
   const K = 1024, HALF = K / 2, IDLE = 15 * 60;
-  let candidate = false;
+  let v3 = false;
   const render = () => {
-    const rate = +rateEl.value;
+    const rate = +rateEl.value, quiet = +quietEl.value;
     const reaches = HALF / rate;
     const v2Fires = reaches > IDLE;
     $('#ll-rate-label').textContent = rate.toFixed(2) + ' files/s';
-    const primaryClass = v2Fires ? 'var(--bad)' : 'var(--accent)';
-    primary.innerHTML = `<h6>Primary range <span class="chip ${v2Fires ? 'bad' : 'good'}">[0, 1023] ${v2Fires ? 'fenced too early' : 'in use'}</span></h6>` +
-      `<div class="bar-track"><div class="bar-seg" style="left:0;width:50%;background:var(--accent)">used 0–511</div><div class="bar-seg" style="left:50%;width:50%;background:${primaryClass}">${v2Fires ? 'live range fenced' : 'live 512–1023'}</div></div>` +
-      `<div class="small muted" style="margin-top:0.4rem">At fallback confirmation, the broker still needs 512 files to reach the next range.</div>` +
-      `<dl class="kv" style="margin-top:0.4rem"><dt>time to live range end</dt><dd>${reaches.toFixed(1)} s</dd><dt>floor after timer</dt><dd>${v2Fires ? '(7, 2047)' : '(7, 511)'}</dd></dl>`;
-    const fallbackState = candidate ? 'timer starts on first use' : v2Fires ? 'idle timer ends it first' : 'broker reaches it first';
-    fallback.innerHTML = `<h6>Fallback range <span class="chip ${v2Fires ? 'bad' : 'info'}">[1024, 2047]</span></h6>` +
-      `<div class="bar-track"><div class="bar-seg" style="left:0;width:${v2Fires ? '100' : '50'}%;background:${v2Fires ? 'var(--bad)' : 'var(--soft)'};color:${v2Fires ? '#fff' : 'var(--muted)'}">${v2Fires ? 'ended and fenced' : 'above the live range'}</div></div>` +
-      `<div class="small" style="margin-top:0.4rem">${candidate ? 'The candidate starts its idle timer when the first part names this range.' : `The fallback leader's 900-second timer starts at confirmation. ${v2Fires ? 'It fires before the broker reaches sequence 1024.' : 'The broker reaches sequence 1024 before the timer fires.'}`}</div>` +
-      `<dl class="kv" style="margin-top:0.4rem"><dt>timer outcome</dt><dd>${fallbackState}</dd><dt>idle timeout</dt><dd>900 s</dd></dl>`;
-    show($('#ll-readout'), v2Fires && !candidate ? 'bad' : candidate ? 'warn' : 'good',
-      `The broker reaches the fallback range in <b>${reaches.toFixed(1)} seconds</b> at ${rate.toFixed(2)} files/s. ` +
-      (candidate
-        ? `Candidate path: the timer begins when the first fallback part arrives, so it doesn't fence the primary range before sequence 1024.`
-        : v2Fires
-          ? `V2 path: 900 seconds elapse first, so the fallback range raises the floor past the live primary range and subsequent files fail until a new lease arrives.`
-          : `V2 path: the broker reaches the fallback range before 900 seconds, so its first part reschedules the timer.`) +
-      ` The threshold is ${ (HALF / IDLE).toFixed(4) } files/s, roughly 0.6.`);
+    $('#ll-quiet-label').textContent = quiet + ' min quiet';
+    if (v3) {
+      primary.innerHTML = `<h6>Primary range at cp2 ${chip('info', '[0, 1023] abandoned')}</h6>` +
+        `<div class="bar-track"><div class="bar-seg" style="left:0;width:50%;background:var(--accent)">used 0–511</div><div class="bar-seg" style="left:50%;width:50%;background:var(--soft);color:var(--muted)">abandoned 512–1023</div></div>` +
+        `<div class="small" style="margin-top:0.4rem">The broker switched away at confirmation. Once cp2 answers again, a lease release with <code>b = 1023</code> ends this range, and its range fences queue the unused keys.</div>` +
+        `<dl class="kv" style="margin-top:0.4rem"><dt>lease release</dt><dd>b = 1023, with the final finish report</dd><dt>floors after release</dt><dd>(7, 1023), below the live range</dd></dl>`;
+      fallback.innerHTML = `<h6>Fallback range at cp3 ${chip('good', '[1024, 2047] in use')}</h6>` +
+        `<div class="bar-track"><div class="bar-seg" style="left:0;width:100%;background:var(--accent)">in use from confirmation</div></div>` +
+        `<div class="small" style="margin-top:0.4rem">The first file after confirmation names cp3. Keepalives at half the idle timeout keep the range live even at a low rate.</div>` +
+        `<dl class="kv" style="margin-top:0.4rem"><dt>time to first use</dt><dd>0 s</dd><dt>timer outcome</dt><dd>rescheduled by every part or keepalive</dd></dl>`;
+    } else {
+      const primaryColor = v2Fires ? 'var(--bad)' : 'var(--accent)';
+      primary.innerHTML = `<h6>Primary range at cp2 ${chip(v2Fires ? 'bad' : 'good', `[0, 1023] ${v2Fires ? 'fenced too early' : 'in use'}`)}</h6>` +
+        `<div class="bar-track"><div class="bar-seg" style="left:0;width:50%;background:var(--accent)">used 0–511</div><div class="bar-seg" style="left:50%;width:50%;background:${primaryColor}">${v2Fires ? 'live range fenced' : 'live 512–1023'}</div></div>` +
+        `<div class="small muted" style="margin-top:0.4rem">At fallback confirmation, the broker still needs 512 files to reach the next range.</div>` +
+        `<dl class="kv" style="margin-top:0.4rem"><dt>time to live range end</dt><dd>${reaches.toFixed(1)} s</dd><dt>floor after timer</dt><dd>${v2Fires ? '(7, 2047)' : '(7, 511)'}</dd></dl>`;
+      fallback.innerHTML = `<h6>Fallback range at cp3 ${chip(v2Fires ? 'bad' : 'info', '[1024, 2047]')}</h6>` +
+        `<div class="bar-track"><div class="bar-seg" style="left:0;width:${v2Fires ? '100' : '50'}%;background:${v2Fires ? 'var(--bad)' : 'var(--soft)'};color:${v2Fires ? '#fff' : 'var(--muted)'}">${v2Fires ? 'ended and fenced' : 'above the live range'}</div></div>` +
+        `<div class="small" style="margin-top:0.4rem">The fallback leader's 900-second timer starts at confirmation. ${v2Fires ? 'It fires before the broker reaches sequence 1024.' : 'The broker reaches sequence 1024 before the timer fires.'}</div>` +
+        `<dl class="kv" style="margin-top:0.4rem"><dt>timer outcome</dt><dd>${v2Fires ? 'idle timer ends it first' : 'broker reaches it first'}</dd><dt>idle timeout</dt><dd>900 s</dd></dl>`;
+    }
+    const quietS = quiet * 60;
+    const v2Ended = quietS >= IDLE;
+    const keepalives = Math.floor(quietS / (IDLE / 2));
+    idle.innerHTML = v3
+      ? `<h6>After ${quiet} quiet minutes ${chip('good', 'lease kept')}</h6><p class="small" style="margin:0">The broker sent <b>${keepalives}</b> keepalive${keepalives === 1 ? '' : 's'}, one after each 450 seconds without an answered request. Each costs a request, no append, and no fsync. The first file after the quiet period commits with no wait, and <code>IdleLeaseEndRate</code> stays at 0.</p>`
+      : `<h6>After ${quiet} quiet minutes ${chip(v2Ended ? 'bad' : 'good', v2Ended ? 'lease ended idle' : 'lease still live')}</h6><p class="small" style="margin:0">${v2Ended
+        ? 'The idle timer ended the lease at 15 minutes, and nothing told the broker. Its next file gets stale-sequence, and files closed before a new lease confirms fail too.'
+        : 'The quiet period is shorter than the 15-minute idle timeout, so the first file commits.'}</p>`;
+    show($('#ll-readout'), v3 ? 'good' : (v2Fires || v2Ended) ? 'bad' : '',
+      v3
+        ? 'V3: the broker uses the fallback range at once, so the file rate no longer matters, and keepalives keep the lease live through any quiet period. No file fails, and the abandoned range ends with a scoped release.'
+        : `V2: the broker reaches the fallback range in <b>${reaches.toFixed(1)} s</b> at ${rate.toFixed(2)} files/s, ${v2Fires ? 'after the 900-second timer, so the fallback range fence cuts the live primary range' : 'before the 900-second timer fires'}. ` +
+          `${v2Ended ? `The ${quiet}-minute quiet period also ends the lease, so the first file after it fails.` : 'The quiet period stays under the idle timeout.'} The fallback threshold is ${(HALF / IDLE).toFixed(4)} files/s.`);
   };
   rateEl.addEventListener('input', render);
-  candidateBtn.addEventListener('click', () => { candidate = !candidate; candidateBtn.classList.toggle('on', candidate); render(); });
+  quietEl.addEventListener('input', render);
+  v2Btn.addEventListener('click', () => { v3 = false; setOn([v2Btn, v3Btn], v2Btn); render(); });
+  v3Btn.addEventListener('click', () => { v3 = true; setOn([v2Btn, v3Btn], v3Btn); render(); });
   render();
 }
 
@@ -3488,32 +3905,231 @@ function demoV3Lease() {
 function demoV3Image() {
   const sel = $('#ie-case');
   if (!sel) return;
+  const xEl = $('#ie-x'), track = $('#ie-track');
+  const MIN = +xEl.min, MAX = +xEl.max;
+  const pos = o => ((o - MIN) / (MAX - MIN)) * 100;
+  const ok = (title, text) => ({ cls: 'good', title, text });
+  const bad = (title, text) => ({ cls: 'bad', title, text });
   const cases = {
     broker: {
-      v2: '<b>V2.</b> The retired marker has no epoch. Its acceptance rule rejects a retired row, while the lifecycle text expects a returning broker ID with a higher epoch to commit. The same ID can remain rejected forever.',
-      candidate: `${chip('warn', 'candidate, not decided')} Store a retired-through epoch and reject only pairs at or below it. The new epoch can then replace the row and its old leases.`,
-      readout: 'The missing value is the epoch boundary between an old incarnation and a valid re-registration.',
+      start: 400,
+      events: [[120, 'Broker 4 registers at epoch 120 and commits here.'], [300, 'Broker 4 is unregistered.'], [480, 'Broker 4 re-registers at epoch 480.']],
+      at: x => x < 120 ? {
+        v2: bad('live broker retired', 'The image shows no registration for broker 4, so v2 appends the unregistered form of broker-epoch-retired. The marker has no epoch, and broker 4 is rejected for good, although it is live at epoch 120.'),
+        v3: ok('nothing appended', `<code>retiredThrough</code> would be ${x}, below epoch 120 that the row already holds, so the leader appends nothing. Commits at epoch 120 proceed.`),
+      } : x < 300 ? {
+        v2: ok('no change', 'The image shows broker 4 at epoch 120, the epoch the row holds. Nothing needs retiring.'),
+        v3: ok('no change', 'The image shows broker 4 at epoch 120, the epoch the row holds. Nothing needs retiring.'),
+      } : x < 480 ? {
+        v2: bad('rejected forever', 'The image shows no registration, so v2 appends the retired marker. When broker 4 returns at epoch 480, the marker rejects it as stale epoch, and it stays rejected.'),
+        v3: ok(`retiredThrough ${x}`, `The image shows no registration, so <code>retiredThrough</code> is the image offset, ${x}. A late part at epoch 120 gets stale-epoch. Epoch 480 is above ${x}, so the returning broker commits.`),
+      } : {
+        v2: ok('row moves to 480', 'The image shows epoch 480, so v2 moves the row to the new epoch, and commits at 480 pass. V2 fails only when it acted on an image from the unregistered window.'),
+        v3: ok('retiredThrough 479', 'The image shows epoch 480, so <code>retiredThrough</code> is 479. Epoch 120 gets stale-epoch, epoch 480 commits, and the tracking partition ends the epoch-120 leases.'),
+      },
     },
-    partition: {
-      v2: "<b>V2.</b> SQLite has a partition row, but the coordinator leader's image does not. V2 treats the absence as topic deletion and can purge rows before the image that created the partition reaches this leader.",
-      candidate: `${chip('warn', 'candidate, not decided')} Reject calls for an unreconciled partition, and store the metadata offset in partition-created. Append topic-deleted only after the image reaches that offset.`,
-      readout: 'The missing value is an image position that proves absence means deletion rather than lag.',
+    lag: {
+      start: 500,
+      events: [[520, 'Broker 7 registers at epoch 520 and commits here at once.']],
+      at: x => x < 520 ? {
+        v2: bad('live broker retired', 'The image has no registration for broker 7, so v2 appends the unregistered form of broker-epoch-retired. Broker 7 is live and has already committed here, but it is rejected for good.'),
+        v3: ok('nothing appended', `<code>retiredThrough</code> would be ${x}, below epoch 520 in the row, so the leader appends nothing. Commits continue before and after the image catches up.`),
+      } : {
+        v2: ok('no change', 'The image shows broker 7 at epoch 520. Nothing needs retiring.'),
+        v3: ok('no change', 'The image shows broker 7 at epoch 520. Nothing needs retiring.'),
+      },
+    },
+    topic: {
+      start: 560,
+      events: [[590, 'Topic orders is created.'], [610, 'The old coordinator leader appends partition-created with metadataOffset 610.'], [650, 'Topic orders is deleted.']],
+      at: x => x < 590 ? {
+        v2: bad('live rows purged', 'The image doesn\'t contain the topic, so v2 appends topic-deleted. The coordinator purges the partition\'s batches and queues its objects while the topic is live. The delete is irreversible.'),
+        v3: ok('skipped', `The image is at ${x}, below <code>metadataOffset</code> 610, so the leader skips the topic until the next metadata update. Absence below the creation offset proves nothing.`),
+      } : x < 650 ? {
+        v2: ok('topic present', 'The image contains the topic, so nothing is deleted.'),
+        v3: ok('topic present', 'The image contains the topic, so nothing is deleted.'),
+      } : {
+        v2: ok('deleted', 'The image is past the deletion, and v2 appends topic-deleted, which is correct here.'),
+        v3: ok('deleted', `The image is at ${x}, at or past <code>metadataOffset</code> 610, and the topic is absent. Topic IDs are never reused, so the absence proves the deletion, and the leader appends topic-deleted.`),
+      },
     },
   };
+  const panel = (label, r) => `<h6>${label} ${chip(r.cls, r.title)}</h6><p class="small" style="margin:0">${r.text}</p>`;
   const render = () => {
-    const c = cases[sel.value];
-    $('#ie-v2').innerHTML = `<h6>V2 behavior ${chip('bad', 'edge case')}</h6><p class="small" style="margin:0">${c.v2}</p>`;
-    $('#ie-candidate').innerHTML = `<h6>Ticket 03 ${chip('warn', 'candidate options')}</h6><p class="small" style="margin:0">${c.candidate}</p>`;
-    show($('#ie-readout'), 'warn', c.readout + ' Ticket 03 remains open.');
+    const c = cases[sel.value], x = +xEl.value;
+    $('#ie-x-label').textContent = 'offset ' + x;
+    track.innerHTML = `<div class="bar-seg" style="left:0;width:${pos(x)}%;background:var(--accent)">image at ${x}</div>` +
+      c.events.map(([o]) => `<div class="bar-seg" style="left:calc(${pos(o)}% - 1px);width:3px;background:var(--ink)" title="offset ${o}"></div>`).join('');
+    $('#ie-events').innerHTML = c.events.map(([o, text]) =>
+      `<div>${chip(o <= x ? 'good' : 'info', o <= x ? 'in image' : 'ahead of image')} <span class="mono">${o}</span> ${text}</div>`).join('');
+    const r = c.at(x);
+    $('#ie-v2').innerHTML = panel('V2 behavior', r.v2);
+    $('#ie-v3').innerHTML = panel('V3 decision', r.v3);
+    show($('#ie-readout'), r.v2.cls === 'bad' ? 'warn' : '',
+      r.v2.cls === 'bad'
+        ? 'V2 reads absence from a lagging image as retirement or deletion. V3 compares the image offset with the offset the row carries, so it waits instead.'
+        : 'Here the image is far enough along, and both versions agree. Drag the offset into the gap before the next record to see them differ.');
   };
-  sel.addEventListener('change', render);
+  sel.addEventListener('change', () => { xEl.value = cases[sel.value].start; render(); });
+  xEl.addEventListener('input', render);
+  xEl.value = cases[sel.value].start;
   render();
 }
 
-/* ---------------------------------------------------------------- part 7: slowest part */
+/* ---------------------------------------------------------------- part 7: release entry states */
+function demoV3Entry() {
+  const v2El = $('#re-v2');
+  if (!v2El) return;
+  const v3El = $('#re-v3');
+  const labels = {
+    track: 'tracking part records', answered: 'finish report: answered', exception: 'finish report: exception', lease: 'lease ends',
+    ref: 'fence answers "referenced"', rel: 'fence answers "released"', report: 'cp1 release report',
+  };
+  let s;
+  const reset = () => {
+    s = {
+      v2: { state: 'none', note: 'No entry yet: the tracking part hasn\'t recorded.', dropped: false, overwritten: false },
+      v3: { state: 'none', note: 'No entry yet: the tracking part hasn\'t recorded.', fences: 0 },
+      history: [],
+    };
+  };
+  const stepV2 = (m, ev) => {
+    switch (ev) {
+      case 'track':
+        if (m.state === 'none') { m.state = 'waiting'; m.note = m.dropped ? 'The entry waits for a release that cp1 already sent and never resends.' : 'The entry waits for cp1.'; }
+        else m.note = 'Duplicate: no change.';
+        break;
+      case 'answered': case 'exception':
+        m.note = 'V2 has no finish report, so this event does nothing.';
+        break;
+      case 'lease':
+        m.note = m.state === 'released' ? 'No change.' : 'The lease end sends a fence to cp1.';
+        break;
+      case 'ref':
+        if (m.state === 'released') m.overwritten = true;
+        m.state = 'referenced';
+        m.note = m.overwritten ? '"Referenced" overwrote "released." Cp1 already reported and doesn\'t report again.' : 'Cp1 holds batches.';
+        break;
+      case 'rel':
+        m.state = 'released'; m.note = 'The fence answered released.';
+        break;
+      case 'report':
+        if (m.state === 'none') { m.dropped = true; m.note = 'No entry exists, so v2 drops the report. Cp1 appends release-accepted and never resends.'; }
+        else if (m.state === 'released') m.note = 'Duplicate: no change.';
+        else { m.state = 'released'; m.note = 'Release report recorded.'; }
+        break;
+    }
+  };
+  const stepV3 = (m, ev) => {
+    const st = m.state;
+    if (ev === 'track') {
+      if (st === 'none') { m.state = 'pending'; m.note = 'The participant set is recorded. Cp1 waits for a finish report.'; }
+      else if (st === 'released') m.note = 'The tracking part merges with the stored entry, and cp1 stays released.';
+      else m.note = 'Duplicate: no change.';
+      return;
+    }
+    if (st === 'released') { m.note = 'Released is terminal: no change.'; return; }
+    switch (ev) {
+      case 'answered':
+        if (st === 'pending') { m.state = 'held'; m.note = 'Cp1 answered, so it holds batches and owes a release report. No fence.'; }
+        else m.note = st === 'none' ? 'No participant set is recorded yet, so the report changes nothing here.' : 'No change.';
+        break;
+      case 'exception':
+        if (st === 'pending') { m.state = 'fencing'; m.fences++; m.note = 'Cp1 is an exception, so the tracking partition sends a range fence.'; }
+        else if (st === 'held') m.note = 'Held never goes back. The tracking partition skips the fence.';
+        else m.note = st === 'none' ? 'No participant set is recorded yet, so the report changes nothing here.' : 'No change: a fence is already out.';
+        break;
+      case 'lease':
+        if (st === 'pending' || st === 'none') { m.state = 'fencing'; m.fences++; m.note = st === 'none' ? 'The lease end fences the unrecorded sequence at every partition.' : 'The lease end sends a range fence to cp1.'; }
+        else if (st === 'held') m.note = 'Held stays held. The tracking partition skips the fence.';
+        else m.note = 'No change: a fence is already out.';
+        break;
+      case 'ref':
+        m.state = 'held'; m.note = 'The fence found cp1 holding batches. Cp1 owes a release report.';
+        break;
+      case 'rel':
+        m.state = 'released'; m.note = 'The fence answered released.';
+        break;
+      case 'report':
+        m.state = 'released';
+        m.note = st === 'none' ? 'The sequence is above the highest recorded one, so the tracking partition stores an early released entry.' : 'Release report recorded.';
+        break;
+    }
+  };
+  const stateChip = st => chip(st === 'released' ? 'good' : st === 'held' || st === 'referenced' ? 'info' : st === 'fencing' ? 'warn' : '', st === 'none' ? 'no entry' : st);
+  const render = () => {
+    const v2Leak = s.v2.state !== 'released' && (s.v2.dropped || s.v2.overwritten);
+    v2El.innerHTML = `<h6>V2 behavior ${stateChip(s.v2.state)}</h6><p class="small" style="margin:0 0 0.4rem">${s.v2.note}</p>` +
+      `<dl class="kv"><dt>blocks deletion</dt><dd>${s.v2.state === 'released' ? 'no' : 'yes'}</dd><dt>leak</dt><dd>${v2Leak ? 'yes' : 'no'}</dd></dl>`;
+    v3El.innerHTML = `<h6>V3 decision ${stateChip(s.v3.state)}</h6><p class="small" style="margin:0 0 0.4rem">${s.v3.note}</p>` +
+      `<dl class="kv"><dt>blocks deletion</dt><dd>${s.v3.state === 'released' ? 'no' : 'yes'}</dd><dt>fences sent to cp1</dt><dd>${s.v3.fences}</dd></dl>`;
+    $('#re-history').textContent = s.history.length ? 'Events so far: ' + s.history.map((e, i) => `${i + 1}. ${labels[e]}`).join(', ') + '.' : 'No events yet.';
+    const v3Text = {
+      none: 'No entry yet. Send the cp1 release report first to try the early-release case.',
+      pending: 'In v3, cp1 is pending until a finish report, a fence answer, or a release report arrives. <code>TrackingEntryOldestAgeMs</code> for pending shows an entry that never clears.',
+      fencing: 'In v3, a fence is out to cp1. <code>TrackingEntryOldestAgeMs</code> for fencing grows until it answers.',
+      held: 'In v3, cp1 holds batches and owes a release report. The tracking partition sends it no further fence.',
+      released: 'In v3, cp1 is released, so it no longer blocks deletion, and no later event can change that.',
+    }[s.v3.state];
+    show($('#re-readout'), v2Leak ? 'bad' : s.v3.state === 'released' ? 'good' : s.v3.state === 'fencing' ? 'warn' : '',
+      (v2Leak ? `<b class="bad">V2 leaks this object:</b> ${s.v2.dropped ? 'the early report was dropped, so the entry waits forever.' : '"referenced" overwrote "released," and cp1 never reports again.'} ` : '') + v3Text);
+  };
+  const apply = ev => { s.history.push(ev); stepV2(s.v2, ev); stepV3(s.v3, ev); render(); };
+  for (const ev of Object.keys(labels)) $('#re-' + ev).addEventListener('click', () => apply(ev));
+  const scenario = evs => { reset(); evs.forEach(ev => { s.history.push(ev); stepV2(s.v2, ev); stepV3(s.v3, ev); }); render(); };
+  $('#re-sc-early').addEventListener('click', () => scenario(['report', 'track', 'answered']));
+  $('#re-sc-late').addEventListener('click', () => scenario(['track', 'exception', 'report', 'ref']));
+  $('#re-reset').addEventListener('click', () => { reset(); render(); });
+  reset();
+  render();
+}
+
+/* ---------------------------------------------------------------- part 7: fence fan-out */
+function demoV3Storm() {
+  const evEl = $('#fx-event');
+  if (!evEl) return;
+  const nEl = $('#fx-n'), bEl = $('#fx-b'), dEl = $('#fx-d');
+  const render = () => {
+    const ev = evEl.value, n = +nEl.value, b = +bEl.value, d = +dEl.value;
+    $('#fx-b-label').textContent = b + ' brokers';
+    $('#fx-d-label').textContent = d + ' s';
+    dEl.disabled = ev !== 'outage';
+    $('#fx-d-wrap').style.opacity = ev === 'outage' ? '1' : '0.45';
+    let before, beforeText, afterText;
+    if (ev === 'outage') {
+      const exc = Math.round(b * d / 0.25);
+      before = exc + b;
+      beforeText = `About <b>${fmt(exc)}</b> exception ranges, one per recorded finish report while the partition is down (<code>B × D / 0.25</code>), plus about <b>${fmt(b)}</b> lease-end ranges from the brokers that abandon their ranges there. All of them wait for recovery.`;
+      afterText = `At most <b>${n - 1}</b> fence requests arrive at once, one from each other tracking partition, each carrying hull-merged ranges. The partition sends at most ${n - 1} more as a tracking partition.`;
+    } else if (ev === 'restart') {
+      before = b * n;
+      beforeText = `Each epoch end costs ${n} range fences, or ${2 * n} with a fallback range: <b>${fmt(before)}</b> in total, spread over the restart.`;
+      afterText = `Each restart's ${n} ranges merge into the pending request to each participant, so a participant has at most <b>${n - 1}</b> fence requests in flight.`;
+    } else {
+      const fenced = Math.round(b / 3);
+      before = fenced * n;
+      beforeText = `A fenced broker keeps its epoch, so nothing fires until the idle timers end the leases. Then about ${fmt(fenced)} broker${fenced === 1 ? '' : 's'} times ${n} partitions, <b>${fmt(before)}</b> range fences, arrive within seconds.`;
+      afterText = `The ranges travel in at most <b>${n - 1}</b> requests per participant at a time, one from each other tracking partition.`;
+    }
+    $('#fx-before').innerHTML = `<h6>Fence ranges ${chip(before > 1000 ? 'bad' : before > 100 ? 'warn' : 'info', fmt(before))}</h6><p class="small" style="margin:0">${beforeText}</p>`;
+    $('#fx-after').innerHTML = `<h6>Requests in flight per participant ${chip('good', 'at most ' + (n - 1))}</h6><p class="small" style="margin:0">${afterText}</p>`;
+    show($('#fx-readout'), ev === 'outage' && before > 1000 ? 'warn' : 'good',
+      ev === 'outage'
+        ? `The range count grows with the brokers and the outage length: ${fmt(before)} here. Batching keeps what lands on the recovering partition at ${n - 1} requests at a time, and <code>PendingFenceRangeCount</code> shows the backlog draining.`
+        : `Batching caps the request count at ${n - 1} per participant, whatever the broker count. <code>FenceRate</code> counts ranges by type, so the storm stays visible.`);
+  };
+  [bEl, dEl].forEach(el => el.addEventListener('input', render));
+  [evEl, nEl].forEach(el => el.addEventListener('change', render));
+  render();
+}
+
+/* ---------------------------------------------------------------- part 7: per-request completion */
 function demoV3Slowest() {
   const nEl = $('#sp-n'), failedEl = $('#sp-failed'), inputs = $('#sp-inputs'), gantt = $('#sp-gantt');
   if (!nEl) return;
+  const v2Btn = $('#sp-v2'), v3Btn = $('#sp-v3');
+  const DEADLINE = 2000;
+  let v3 = false;
   const values = Array.from({ length: 16 }, (_, i) => [20, 45, 120, 35][i % 4]);
   const buildInputs = () => {
     const n = +nEl.value;
@@ -3532,49 +4148,219 @@ function demoV3Slowest() {
   };
   const render = () => {
     const n = +nEl.value, failed = +failedEl.value;
-    const maxPart = Math.max(...values.slice(0, n));
-    const done = failed >= 0 ? 2000 : maxPart;
-    drawGantt(gantt, values.slice(0, n).map((lat, i) => ({
+    const done = i => (failed === i ? DEADLINE : values[i]);
+    const reqs = [
+      { name: 'A', cps: [0, 1] },
+      { name: 'B', cps: Array.from({ length: n }, (_, i) => i) },
+      { name: 'C', cps: [2] },
+    ];
+    const fileDone = Math.max(...reqs[1].cps.map(done));
+    const reqDone = r => (v3 ? Math.max(...r.cps.map(done)) : fileDone);
+    const rows = Array.from({ length: n }, (_, i) => ({
       label: `cp${i}`,
-      segs: [{ from: 0, to: failed === i ? 2000 : lat, color: failed === i ? 'var(--bad)' : 'var(--cp' + (i % 8) + ')', text: failed === i ? 'deadline' : lat + ' ms' }],
-    })), 2100, 500, ' ms');
-    const touched = Math.max(1, Math.round(n * 0.85));
-    show($('#sp-readout'), failed >= 0 ? 'warn' : '',
-      failed >= 0
-        ? `The cp${failed} part fails at the 2,000 ms deadline. File completion is the slowest answer, so about <b>${touched} of ${n}</b> file replies are affected under the 85% coverage simplification.`
-        : `Every part answers, and file completion is <b>${done} ms</b>, the maximum of ${n} part latencies. As N grows, most files touch most partitions, so the maximum matters more than the average. ` +
-          `The candidate choice between wording and per-batch completion remains open in ticket 04.`);
+      segs: [{ from: 0, to: done(i), color: failed === i ? 'var(--bad)' : cpColor(i), text: failed === i ? 'deadline' : values[i] + ' ms' }],
+    }));
+    for (const r of reqs) {
+      const t = reqDone(r);
+      rows.push({ label: `request ${r.name}`, segs: [{ from: 0, to: t, color: r.cps.includes(failed) ? 'var(--warn)' : 'var(--accent)', text: fmt(t) + ' ms', title: `request ${r.name}: ${r.cps.map(i => 'cp' + i).join(', ')}` }] });
+    }
+    drawGantt(gantt, rows, 2100, 500, ' ms');
+    const clear = reqs.filter(r => !r.cps.includes(failed)).map(r => r.name);
+    const names = list => list.length === 1 ? `request ${list[0]}` : `requests ${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`;
+    if (!v3) {
+      show($('#sp-readout'), failed >= 0 ? 'warn' : '',
+        `V2: every request completes with the file at <b>${fmt(fileDone)} ms</b>, the slowest of ${n} parts.` +
+        (failed >= 0 && clear.length ? ` ${names(clear)} ${clear.length === 1 ? 'holds' : 'hold'} no batch for cp${failed} and still ${clear.length === 1 ? 'waits' : 'wait'} for its deadline.` : ''));
+    } else {
+      const [a, b, c] = reqs.map(reqDone);
+      show($('#sp-readout'), failed >= 0 && clear.length ? 'good' : '',
+        `V3: request A completes at <b>${fmt(a)} ms</b>, B at <b>${fmt(b)} ms</b>, and C at <b>${fmt(c)} ms</b>. ` +
+        (failed >= 0
+          ? `Requests with a batch for cp${failed} complete at the deadline, with <code>KAFKA_STORAGE_ERROR</code> for those batches. ${clear.length ? `${names(clear)} ${clear.length === 1 ? "doesn't" : "don't"} wait for it.` : ''} `
+          : 'Each request waits only for the parts that hold its batches. ') +
+        `The file still finishes at ${fmt(fileDone)} ms, which drives <code>finishedThrough</code> and cleanup.`);
+    }
   };
   nEl.addEventListener('change', () => { buildInputs(); render(); });
   failedEl.addEventListener('change', render);
+  v2Btn.addEventListener('click', () => { v3 = false; setOn([v2Btn, v3Btn], v2Btn); render(); });
+  v3Btn.addEventListener('click', () => { v3 = true; setOn([v2Btn, v3Btn], v3Btn); render(); });
   buildInputs();
   render();
 }
 
 /* ---------------------------------------------------------------- part 7: fsync cost */
 function demoV3Fsync() {
-  const nEl = $('#fs-n'), rEl = $('#fs-r'), bEl = $('#fs-b'), msEl = $('#fs-ms'), emptyBtn = $('#fs-empty');
+  const nEl = $('#fs-n');
   if (!nEl) return;
+  const nnEl = $('#fs-nn'), rEl = $('#fs-r'), bEl = $('#fs-b'), msEl = $('#fs-ms'), emptyBtn = $('#fs-empty');
+  const v2Btn = $('#fs-v2'), v3Btn = $('#fs-v3');
+  let v3 = false;
+  const num = x => (Number.isInteger(x) ? fmt(x) : x.toFixed(1));
   const render = () => {
-    const n = Math.max(1, Math.min(8, Math.floor(+nEl.value) || 1));
+    const N = +nnEl.value;
+    const touched = Math.max(1, Math.min(N, Math.floor(+nEl.value) || 1));
     const r = +rEl.value, b = +bEl.value, ms = +msEl.value;
-    const empty = emptyBtn.classList.contains('on');
-    const parts = n + (empty ? 1 : 0);
-    const total = parts * r;
-    const perBrokerLow = total / b;
+    const emptyOn = emptyBtn.classList.contains('on');
+    const empty = emptyOn && touched < N;
+    const parts = touched + (empty ? 1 : 0);
+    const commitFlushes = parts * r;
+    const fenceFlushes = !v3 && empty ? (parts - 1) * r : 0;
+    const total = commitFlushes + fenceFlushes;
+    const low = (N * r) / b, high = N * r;
     $('#fs-ms-label').textContent = ms + ' ms';
-    $('#fs-count').innerHTML = `<h6>Log flushes per file ${chip('bad', `${total} against Postgres's 1`)}</h6>` +
-      `<dl class="kv"><dt>parts</dt><dd>${n} participant${n === 1 ? '' : 's'}${empty ? ' + 1 empty tracking part' : ''}</dd><dt>replication factor</dt><dd>${r}</dd><dt>cluster flushes</dt><dd>${parts} × ${r} = ${total}</dd><dt>per-broker range</dt><dd>${perBrokerLow.toFixed(1)} to ${total} per round</dd></dl>`;
+    $('#fs-count').innerHTML = `<h6>Log flushes per file ${chip(total > 12 ? 'bad' : total > 4 ? 'warn' : 'info', `${total} against PostgreSQL's 1`)}</h6>` +
+      `<dl class="kv"><dt>parts</dt><dd>${touched} participant${touched === 1 ? '' : 's'}${empty ? ' + 1 empty tracking part' : emptyOn ? ' (every partition is a participant, so the tracking part holds batches)' : ''}</dd>` +
+      `<dt>commit flushes</dt><dd>${parts} × ${r} = ${commitFlushes}</dd>` +
+      `<dt>commit-time fence flushes</dt><dd>${v3 ? 'none in v3' : empty ? `${parts - 1} × ${r} = ${fenceFlushes}` : 'none: the tracking part holds batches'}</dd>` +
+      `<dt>per broker per round</dt><dd>${num(low)} to ${high}, or ${num(low * 4)} to ${high * 4} per second</dd></dl>`;
     $('#fs-path').innerHTML = `<h6>Commit path ${chip('warn', 'two in a row')}</h6>` +
-      `<p class="small" style="margin:0">Leader log flush, then follower fetcher flushes before the high watermark advances.</p>` +
-      `<dl class="kv" style="margin-top:0.4rem"><dt>illustrative one-flush time</dt><dd>${ms} ms</dd><dt>illustrative series</dt><dd>2 × ${ms} = ${2 * ms} ms</dd><dt>measured latency</dt><dd>open; benchmark required</dd></dl>`;
+      `<p class="small" style="margin:0">Leader log flush on the runtime thread, then follower fetcher flushes before the high watermark advances.</p>` +
+      `<dl class="kv" style="margin-top:0.4rem"><dt>illustrative one-flush time</dt><dd>${ms} ms</dd><dt>illustrative series</dt><dd>2 × ${ms} = ${2 * ms} ms</dd><dt>measured latency</dt><dd>open; the first benchmark runs at 3 brokers</dd></dl>`;
     show($('#fs-readout'), total > 12 ? 'warn' : '',
-      `Ticket 12's research counts ${total} coordinator log flushes for this toy file, compared with one PostgreSQL WAL flush. ` +
-      `The ${b}-broker choice changes how replicas share the work, not the file's total. The empty-tracking fan-out and SQLite checkpoint work remain separate open questions.`);
+      v3
+        ? `V3 keeps the commit fan-out: ${commitFlushes} flush${commitFlushes === 1 ? '' : 'es'} for this file${empty ? ', with no commit-time fences for the empty tracking part' : ''}. ` +
+          (b === 3 ? `At 3 brokers, the smallest supported cluster, every broker hosts every coordinator replica, so each flushes at least ${num(low)} times per round. ` : `With ${b} brokers, replicas share the work, but the upper bound per broker stays ${high}. `) +
+          'The default N stays 8 until the partition-count benchmark at 3 brokers with N of 1, 2, 4, and 8.'
+        : `V2: ${total} flush${total === 1 ? '' : 'es'} for this file${fenceFlushes ? `, of which ${fenceFlushes} come from fencing every participant of the empty tracking part` : ''}, compared with one PostgreSQL WAL flush.`);
   };
+  nnEl.addEventListener('change', () => {
+    const N = +nnEl.value;
+    nEl.max = N;
+    nEl.value = Math.min(Math.max(1, Math.floor(+nEl.value) || 1), N);
+    render();
+  });
   [nEl, rEl, bEl, msEl].forEach(el => el.addEventListener('input', render));
   [rEl, bEl].forEach(el => el.addEventListener('change', render));
   emptyBtn.addEventListener('click', () => { emptyBtn.classList.toggle('on'); render(); });
+  v2Btn.addEventListener('click', () => { v3 = false; setOn([v2Btn, v3Btn], v2Btn); render(); });
+  v3Btn.addEventListener('click', () => { v3 = true; setOn([v2Btn, v3Btn], v3Btn); render(); });
+  nEl.max = +nnEl.value;
+  render();
+}
+
+/* ---------------------------------------------------------------- part 7: SQLite group apply */
+function demoV3Apply() {
+  const logEl = $('#ga-log');
+  if (!logEl) return;
+  const stopEl = $('#ga-stop'), v2Btn = $('#ga-v2'), v3Btn = $('#ga-v3');
+  const sizes = [600, 1400, 900, 5200, 300, 1100, 1700, 500, 2300, 400, 900, 700];
+  const CAP = 4096, TRIGGER = 1000;
+  const colors = ['var(--cp0)', 'var(--cp3)', 'var(--cp1)', 'var(--cp5)', 'var(--cp4)', 'var(--cp7)'];
+  let v3 = false;
+  const groupsOf = () => {
+    if (!v3) return sizes.map((_, i) => [i]);
+    const groups = [];
+    let cur = [], bytes = 0;
+    sizes.forEach((sz, i) => {
+      if (cur.length && bytes + sz > CAP) { groups.push(cur); cur = []; bytes = 0; }
+      cur.push(i);
+      bytes += sz;
+    });
+    if (cur.length) groups.push(cur);
+    return groups;
+  };
+  const mib = kib => (kib / 1024).toFixed(1) + ' MiB';
+  const render = () => {
+    const stop = +stopEl.value;
+    const end = stop < 0 ? sizes.length : stop;
+    const groups = groupsOf();
+    const groupOf = [];
+    groups.forEach((g, k) => g.forEach(i => { groupOf[i] = k; }));
+    logEl.innerHTML = '';
+    sizes.forEach((sz, i) => {
+      const cls = 'cell' + (i === stop ? ' lost' : i > stop && stop >= 0 ? ' unapplied' : '');
+      logEl.append(h('div', { class: cls, title: `r${i + 1}: ${fmt(sz)} KiB`, style: { width: `${1.9 + sz / 700}rem`, background: v3 ? colors[groupOf[i] % colors.length] : 'var(--faint)' } }, `r${i + 1}`));
+    });
+    const applied = groups.map(g => g.filter(i => i < end)).filter(g => g.length);
+    let wal = 0, peak = 0, ckpt = 0;
+    for (const g of applied) {
+      wal += g.reduce((sum, i) => sum + sizes[i], 0) / 4;
+      peak = Math.max(peak, wal);
+      if (wal >= TRIGGER) { ckpt++; wal = 0; }
+    }
+    $('#ga-legend').innerHTML = v3
+      ? groups.map((g, k) => `<span><span class="dot" style="background:${colors[k % colors.length]}"></span>group ${k + 1}: r${g[0] + 1}${g.length > 1 ? '–r' + (g[g.length - 1] + 1) : ''}, ${mib(g.reduce((sum, i) => sum + sizes[i], 0))}</span>`).join('')
+      : '<span><span class="dot" style="background:var(--faint)"></span>one transaction per record</span>';
+    const partial = v3 && stop >= 0 && groups[groupOf[stop]][0] < stop;
+    $('#ga-tx').innerHTML = `<h6>SQLite transactions ${chip(v3 ? 'good' : 'warn', fmt(applied.length))}</h6>` +
+      `<dl class="kv"><dt>applied through</dt><dd>${end === 0 ? 'nothing' : 'r' + end}</dd>` +
+      `<dt>stopping record</dt><dd>${stop < 0 ? 'none' : `r${stop + 1}${partial ? ', rolled back to its savepoint' : ''}`}</dd>` +
+      `<dt>after the stop</dt><dd>${stop < 0 ? 'nothing' : `${sizes.length - stop} records unapplied; they fail with NOT_COORDINATOR after the leader resigns`}</dd>` +
+      `<dt>largest group</dt><dd>${mib(Math.max(...groups.map(g => g.reduce((sum, i) => sum + sizes[i], 0))))}</dd></dl>`;
+    $('#ga-ckpt').innerHTML = `<h6>Checkpoints ${chip(v3 || !ckpt ? 'good' : 'bad', v3 ? '0 on the apply thread' : `${ckpt} on the apply thread`)}</h6>` +
+      `<dl class="kv"><dt>checkpoints</dt><dd>${ckpt}</dd><dt>runs on</dt><dd>${v3 ? 'the broker checkpoint thread, PASSIVE' : 'the thread whose commit crosses 1000 pages'}</dd>` +
+      `<dt>WAL pages at peak</dt><dd>${fmt(Math.round(peak))}</dd></dl>`;
+    show($('#ga-readout'), v3 ? 'good' : ckpt ? 'warn' : '',
+      v3
+        ? `V3 applies ${end} record${end === 1 ? '' : 's'} in ${applied.length} transaction${applied.length === 1 ? '' : 's'}. The 4 MiB cap closes a group before the record that would cross it, and r4 gets a group of its own. ` +
+          (partial ? `The stop at r${stop + 1} rolls back to its savepoint and commits its group through r${stop}, so the applied offset stays exact. ` : '') +
+          (ckpt ? `The checkpoint thread, not the apply thread, runs the ${ckpt} checkpoint${ckpt === 1 ? '' : 's'}, and the WAL peaks at ${fmt(Math.round(peak))} pages.` : 'The WAL stays under the 1000-page trigger, so no checkpoint runs.')
+        : `V2 applies ${end} record${end === 1 ? '' : 's'} in ${end} transaction${end === 1 ? '' : 's'}, and ${ckpt} automatic checkpoint${ckpt === 1 ? ' stalls' : 's stall'} the thread that applies and replies.`);
+  };
+  stopEl.addEventListener('change', render);
+  v2Btn.addEventListener('click', () => { v3 = false; setOn([v2Btn, v3Btn], v2Btn); render(); });
+  v3Btn.addEventListener('click', () => { v3 = true; setOn([v2Btn, v3Btn], v3Btn); render(); });
+  render();
+}
+
+/* ---------------------------------------------------------------- part 7: replication guard */
+function demoV3Rack() {
+  const racksEl = $('#rk-racks');
+  if (!racksEl) return;
+  const rfEl = $('#rk-rf'), overrideBtn = $('#rk-override'), boxes = $('#rk-boxes');
+  const brokers = ['b1', 'b2', 'b3', 'b4', 'b5', 'b6'];
+  const layouts = {
+    3: ['a', 'b', 'c', 'a', 'b', 'c'],
+    late: ['a', 'b', 'a', 'c', 'b', 'c'],
+    2: ['a', 'b', 'a', 'b', 'a', 'b'],
+    1: ['a', 'a', 'a', 'a', 'a', 'a'],
+    0: [null, null, null, null, null, null],
+  };
+  const current = [0, 1, 2];
+  const target = new Set([0, 3, 1]);
+  const labels = brokers.map((b, i) => {
+    const cb = h('input', { type: 'checkbox', 'aria-label': `${b} in the target replica set` });
+    cb.checked = target.has(i);
+    cb.addEventListener('change', () => { if (cb.checked) target.add(i); else target.delete(i); render(); });
+    const text = h('span', { class: 'mono' }, b);
+    boxes.append(h('label', null, cb, text));
+    return text;
+  });
+  const spread = (set, racks) => (racks[0] === null ? set.length : new Set(set.map(i => racks[i])).size);
+  const describe = (set, racks) => set.map(i => brokers[i] + (racks[i] ? ` (${racks[i]})` : '')).join(', ');
+  const render = () => {
+    const racks = layouts[racksEl.value];
+    labels.forEach((el, i) => { el.textContent = brokers[i] + (racks[i] ? ` (${racks[i]})` : ''); });
+    const distinct = racks[0] === null ? brokers.length : new Set(racks).size;
+    const maximal = Math.min(3, distinct);
+    const t = [...target].sort((a, b) => a - b);
+    const cur = spread(current, racks), tgt = spread(t, racks);
+    let cls, verdict, why;
+    if (t.length !== 3) {
+      cls = 'bad'; verdict = 'INVALID_REPLICATION_FACTOR';
+      why = `The target has ${t.length} replica${t.length === 1 ? '' : 's'}. The replica count is fixed at creation, so the controller rejects the change before it checks racks.`;
+    } else if (tgt < cur && tgt < maximal) {
+      cls = 'bad'; verdict = 'INVALID_REPLICA_ASSIGNMENT';
+      why = `The target spans ${tgt} rack${tgt === 1 ? '' : 's'}, fewer than the current ${cur} and fewer than maximal spread, ${maximal}, so the controller rejects it.`;
+    } else {
+      cls = 'good'; verdict = 'accepted';
+      why = tgt > cur ? `The target widens the spread from ${cur} to ${tgt} rack${tgt === 1 ? '' : 's'}.` : 'The target keeps the spread, so the move passes, including a move within a rack to decommission a broker.';
+    }
+    $('#rk-current').innerHTML = `<h6>Current replicas ${chip(cur < maximal ? 'warn' : 'info', `spans ${cur} of ${maximal}`)}</h6>` +
+      `<p class="small" style="margin:0">${describe(current, racks)}. Maximal spread here is <code>min(3, ${distinct})</code> = ${maximal}.${racks[0] === null ? ' With no rack declared, spread counts distinct brokers.' : ''}</p>`;
+    $('#rk-target').innerHTML = `<h6>Target ${chip(cls, verdict)}</h6><p class="small" style="margin:0">${t.length ? describe(t, racks) : 'no broker selected'}${t.length === 3 ? `, spanning ${tgt} rack${tgt === 1 ? '' : 's'}` : ''}.</p>`;
+    const rf = +rfEl.value, override = overrideBtn.classList.contains('on');
+    const startup = $('#rk-startup');
+    if (rf >= 3) { startup.className = 'chip good'; startup.textContent = 'startup passes'; }
+    else if (override) { startup.className = 'chip warn'; startup.textContent = 'starts with a warning; no clause 2 exception'; }
+    else { startup.className = 'chip bad'; startup.textContent = 'startup fails: below 3'; }
+    show($('#rk-readout'), cls === 'bad' ? 'bad' : cur < maximal ? 'warn' : 'good',
+      why + (cur < maximal ? ` The current set is below maximal spread because rack c registered after creation, so <code>CoordinatorPartitionsBelowRackSpread</code> counts this partition until a reassignment restores it.` : '') +
+      (maximal < 3 ? ` With fewer racks than the replication factor, creation still goes ahead and logs a warning.` : ''));
+  };
+  [racksEl, rfEl].forEach(el => el.addEventListener('change', render));
+  overrideBtn.addEventListener('click', () => { overrideBtn.classList.toggle('on'); render(); });
   render();
 }
 
@@ -3582,20 +4368,27 @@ function demoV3Fsync() {
 function demoV3Blast() {
   const nEl = $('#brt-n');
   if (!nEl) return;
+  const guardBtn = $('#brt-guard'), overBtn = $('#brt-override');
   const total = 10000;
+  let guard = true;
   const render = () => {
     const n = +nEl.value, affected = Math.ceil(total / n);
     $('#brt-classic').innerHTML = `<h6>Classic partition ${chip('info', 'baseline')}</h6>` +
-      `<p class="small" style="margin:0">One replica-set loss affects one partition: <b>1 of 10,000</b> (${(100 / total).toFixed(2)}%).</p>`;
-    $('#brt-footer').innerHTML = `<h6>Object footer ${chip('warn', 'candidate, not decided · ticket 09')}</h6>` +
-      `<p class="small" style="margin:0">A footer can inventory upload-time batches for the ${affected.toLocaleString('en-US')} partitions in this coordinator share. It cannot restore assigned offsets, commit outcomes, or later removals.</p>`;
-    $('#brt-soft').innerHTML = `<h6>Soft delete ${chip('warn', 'candidate, not decided · ticket 10')}</h6>` +
-      `<p class="small" style="margin:0">A provider recovery window can restore object bytes after a wrong delete, but it cannot recreate coordinator rows or decide which bytes are live.</p>`;
-    show($('#brt-readout'), 'warn',
-      `With N = ${n}, one coordinator partition's loss reaches <b>${affected.toLocaleString('en-US')} of ${total.toLocaleString('en-US')}</b> diskless partitions, or <b>${(100 / n).toFixed(2)}%</b>. ` +
-      `The footer and soft-delete cards are both candidates; tickets 09 and 10 still decide whether either path meets the new bar.`);
+      `<p class="small" style="margin:0">One replica-set loss affects one partition: <b>1 of 10,000</b> (0.01%). An unclean election or a recreated topic brings it back empty.</p>`;
+    $('#brt-v3').innerHTML = guard
+      ? `<h6>V3 ${chip('warn', 'accepted risk · ticket 11')}</h6><p class="small" style="margin:0"><b>${fmt(affected)}</b> partitions go offline until an empty restart, whose rules are open in ticket 19. They restart empty from offset 0. Objects the lost partition tracked leak, and no other partition's data is deleted.</p>`
+      : `<h6>V3 ${chip('bad', 'outside the bar')}</h6><p class="small" style="margin:0">With replication factor 1, one disk loses the coordinator partition. Clause 2's exception doesn't apply, which is why the override is internal and meant for tests and local development.</p>`;
+    $('#brt-footer').innerHTML = `<h6>Footer recovery ${chip('info', 'future work · ticket 09')}</h6>` +
+      `<p class="small" style="margin:0">A later version could rebuild the ${fmt(affected)} partitions from object footers at new offsets above a floor, with no acknowledged record lost. V3 writes no footer.</p>`;
+    show($('#brt-readout'), guard ? 'warn' : 'bad',
+      `With N = ${n}, one coordinator partition's loss reaches <b>${fmt(affected)} of ${fmt(total)}</b> diskless partitions, or <b>${(100 / n).toFixed(2)}%</b>. ` +
+      (guard
+        ? 'The enforced guard makes the loss rare, and clause 2\'s exception makes it acceptable. A larger N shrinks the share but adds parts and flushes to every commit.'
+        : 'The internal override removes the guard, so the bar no longer covers this cluster.'));
   };
   nEl.addEventListener('change', render);
+  guardBtn.addEventListener('click', () => { guard = true; setOn([guardBtn, overBtn], guardBtn); render(); });
+  overBtn.addEventListener('click', () => { guard = false; setOn([guardBtn, overBtn], overBtn); render(); });
   render();
 }
 
@@ -3604,28 +4397,31 @@ function demoV3Status() {
   const table = $('#sb-table'), statusEl = $('#sb-status'), reviewEl = $('#sb-review');
   if (!table) return;
   const rows = [
-    { ticket: '01', review: 'Fable', sources: ['fable'], severity: 'Critical', group: 'open', status: 'open', candidate: 'Resolved-through sequence, lease-end fencing, or batched committed reports.' },
-    { ticket: '02', review: 'Fable', sources: ['fable'], severity: 'Warning', group: 'open', status: 'open', candidate: 'Switch to the fallback immediately, start its timer on first use, or re-lease before the first append.' },
-    { ticket: '03', review: 'Fable', sources: ['fable'], severity: 'Warning', group: 'open', status: 'open', candidate: 'Retired-through epoch, unreconciled-partition rejection, and a metadata offset in partition-created.' },
-    { ticket: '04', review: 'Council and Fable', sources: ['council', 'fable'], severity: 'Warning', group: 'open', status: 'open', candidate: 'Correct story 83 and keep whole-file completion, or complete responses per batch.' },
-    { ticket: '05', review: 'Fable', sources: ['fable'], severity: 'Warning', group: 'blocked', status: 'blocked by 01', candidate: 'Terminal released state, unknown-sequence reports, batched reports, and an incomplete-entry gauge.' },
-    { ticket: '06', review: 'Council and Fable', sources: ['council', 'fable'], severity: 'Warning', group: 'blocked', status: 'blocked by 01', candidate: 'Coalesce fences per broker epoch, rate-limit them, or queue them behind normal commits.' },
-    { ticket: '07', review: 'Council · research', sources: ['council'], research: true, severity: 'Warning', group: 'research', status: 'research closed', candidate: 'Research: a same-upload footer is feasible; its recovery fields and procedure remain ticket 09.' },
-    { ticket: '08', review: 'Council · research', sources: ['council'], research: true, severity: 'Warning', group: 'research', status: 'research closed', candidate: 'Research: S3 versioning, GCS soft delete, and Azure blob soft delete retain deleted bytes.' },
-    { ticket: '09', review: 'Council', sources: ['council'], severity: 'Critical', group: 'blocked', status: 'blocked by 07', candidate: 'Choose footer fields, recovery scope, storage discovery, and the operator procedure.' },
-    { ticket: '10', review: 'Council', sources: ['council'], severity: 'Critical', group: 'blocked', status: 'blocked by 08', candidate: 'Require a recoverable-delete policy and define a deletion-rate cap with an alarm.' },
-    { ticket: '11', review: 'Council', sources: ['council'], severity: 'Warning', group: 'open', status: 'open', candidate: 'Enforce RF=3 and rack spread while defining a development-cluster exception.' },
-    { ticket: '12', review: 'Fable · research', sources: ['fable'], research: true, severity: 'Suggestion', group: 'research', status: 'research closed', candidate: 'Research: one file costs up to N × R log flushes; background checkpointing is feasible.' },
-    { ticket: '13', review: 'Fable', sources: ['fable'], severity: 'Suggestion', group: 'blocked', status: 'blocked by 12', candidate: 'Disable automatic checkpointing, checkpoint in the background, and group applies.' },
-    { ticket: '14', review: 'Fable', sources: ['fable'], severity: 'Suggestion', group: 'blocked', status: 'blocked by 12', candidate: 'Choose the default N from the supported cluster size and benchmark the smallest cluster first.' },
-    { ticket: '15', review: 'Council', sources: ['council'], severity: 'Warning', group: 'open', status: 'open', candidate: 'Admission cap, delegate retry budget, or neither, with priorities and a shedding metric.' },
-    { ticket: '16', review: 'Council', sources: ['council'], severity: 'Warning', group: 'blocked', status: 'blocked by 01, 13, 14, 15', candidate: 'Define workload scales and thresholds for commit, reads, co-tenancy, failover, snapshots, and partial failure.' },
-    { ticket: '17', review: 'Council and Fable', sources: ['council', 'fable'], severity: 'Warning', group: 'blocked', status: 'blocked by 01, 02, 03, 05, 06', candidate: 'Bounded model that reproduces v2 defects, checks invariants, and drops tails at every fsync point.' },
-    { ticket: '18', review: 'Council and Fable', sources: ['council', 'fable'], severity: 'Warning', group: 'blocked', status: 'blocked by 01–17', candidate: 'Rewrite failure modes, risks, metrics, tests, stories, and Terms after the other tickets settle.' },
+    { ticket: '01', review: 'Fable', sources: ['fable'], severity: 'Critical', group: 'decided', status: 'decided', text: 'Finish reports: fence only exceptions, missed sequences, and lease ends, and only after the broker finished the file.' },
+    { ticket: '02', review: 'Fable', sources: ['fable'], severity: 'Warning', group: 'decided', status: 'decided', text: 'Keepalives at half the idle timeout, an immediate switch after a fallback, and scoped lease releases.' },
+    { ticket: '03', review: 'Fable', sources: ['fable'], severity: 'Warning', group: 'decided', status: 'decided', text: 'retiredThrough from the image offset, a metadataOffset gate on topic-deleted, and COORDINATOR_LOAD_IN_PROGRESS for unreconciled partitions.' },
+    { ticket: '04', review: 'Council and Fable', sources: ['council', 'fable'], severity: 'Warning', group: 'decided', status: 'decided', text: 'Each produce request completes when the parts that hold its batches finish. Story 83 holds per request.' },
+    { ticket: '05', review: 'Fable', sources: ['fable'], severity: 'Warning', group: 'decided', status: 'decided', text: 'Released is terminal, early reports are stored, entries move forward through four states, reports are batched, and gauges show stuck entries.' },
+    { ticket: '06', review: 'Council and Fable', sources: ['council', 'fable'], severity: 'Warning', group: 'decided', status: 'decided', text: 'One batched fence request in flight per participant, and finishedThrough over the whole broker epoch.' },
+    { ticket: '07', review: 'Council · research', sources: ['council'], research: true, severity: 'Warning', group: 'research', status: 'research closed', text: 'A same-upload footer is feasible, and readers ignore trailing bytes. It can\'t hold offsets or commit outcomes.' },
+    { ticket: '08', review: 'Council · research', sources: ['council'], research: true, severity: 'Warning', group: 'research', status: 'research closed', text: 'S3 versioning, GCS soft delete, and Azure blob soft delete keep deletes recoverable. Object-write credentials can\'t check the setting.' },
+    { ticket: '09', review: 'Council', sources: ['council'], severity: 'Critical', group: 'future', status: 'future work', text: 'A footer of partition runs and an operator-triggered recovery, recorded as future work. Clause 2 takes the guard exception.' },
+    { ticket: '10', review: 'Council', sources: ['council'], severity: 'Critical', group: 'future', status: 'future work', text: 'A soft-delete requirement, probe, restore, and deletion-rate cap, recorded as future work. Six rows stay accepted risks.' },
+    { ticket: '11', review: 'Council', sources: ['council'], severity: 'Warning', group: 'decided', status: 'decided', text: 'Minimum replication factor 3 with an internal override, no narrowing of rack spread on reassignment, and a spread gauge.' },
+    { ticket: '12', review: 'Fable · research', sources: ['fable'], research: true, severity: 'Suggestion', group: 'research', status: 'research closed', text: 'One file costs up to N × R log flushes, and a background PASSIVE checkpoint is feasible.' },
+    { ticket: '13', review: 'Fable', sources: ['fable'], severity: 'Suggestion', group: 'decided', status: 'decided', text: 'PASSIVE checkpoints on a broker-wide thread, one transaction per high-watermark advance, and a follower-applier thread.' },
+    { ticket: '14', review: 'Fable', sources: ['fable'], severity: 'Suggestion', group: 'decided', status: 'decided', text: 'The default N stays 8, 3 brokers is the smallest cluster and the first benchmark, and the linger defaults to adaptive.' },
+    { ticket: '15', review: 'Council', sources: ['council'], severity: 'Warning', group: 'open', status: 'open · in progress', text: 'Session notes so far: existing broker in-flight limits, exponential backoff on retried RPCs, and a read pool off the shard queue.' },
+    { ticket: '16', review: 'Council', sources: ['council'], severity: 'Warning', group: 'blocked', status: 'waiting on 15', text: 'Workloads, scales, and thresholds. The partial-failure benchmark judges per-request latency.' },
+    { ticket: '17', review: 'Council and Fable', sources: ['council', 'fable'], severity: 'Warning', group: 'blocked', status: 'waiting on 19', text: 'A bounded model that reproduces v2 defects, checks invariants, and drops tails at every fsync point.' },
+    { ticket: '18', review: 'Council and Fable', sources: ['council', 'fable'], severity: 'Warning', group: 'blocked', status: 'waiting on 15, 16, 17, 19', text: 'Rewrite failure modes, risks, metrics, tests, stories, and Terms once the other tickets close.' },
+    { ticket: '19', review: 'Council · from ticket 11', sources: ['council'], severity: 'Warning', group: 'open', status: 'open', text: 'The empty restart: its trigger, how user partitions restart, and how the empty partition acts as participant and tracking partition.' },
   ];
+  const statusClass = { decided: 'good', research: 'good', future: 'info', open: 'warn', blocked: '' };
   const matchesReview = (row, filter) => filter === 'all' ||
-    filter === 'research' && row.research ||
-    filter !== 'research' && row.sources.includes(filter);
+    (filter === 'research' && row.research) ||
+    (filter === 'both' && row.sources.length === 2) ||
+    (filter !== 'research' && filter !== 'both' && row.sources.includes(filter));
   const render = () => {
     const status = statusEl.value, review = reviewEl.value;
     const visible = rows.filter(row => (status === 'all' || row.group === status) && matchesReview(row, review));
@@ -3634,11 +4430,11 @@ function demoV3Status() {
       h('td', { class: 'mono' }, row.ticket),
       h('td', null, row.review),
       h('td', { html: chip(row.severity === 'Critical' ? 'bad' : row.severity === 'Warning' ? 'warn' : 'info', row.severity) }),
-      h('td', { html: chip(row.group === 'research' ? 'good' : row.group === 'blocked' ? 'warn' : 'info', row.status) }),
-      h('td', { class: 'small' }, row.candidate))));
+      h('td', { html: chip(statusClass[row.group], row.status) }),
+      h('td', { class: 'small' }, row.text))));
     $('#sb-count').textContent = `${visible.length} of ${rows.length} tickets`;
     show($('#sb-readout'), visible.length ? '' : 'warn',
-      visible.length ? `Showing ${visible.length} ticket${visible.length === 1 ? '' : 's'}; the rows describe candidate options, not selected open-ticket designs.` : 'No tickets match both filters.');
+      visible.length ? `Showing ${visible.length} ticket${visible.length === 1 ? '' : 's'}.` : 'No tickets match both filters.');
   };
   statusEl.addEventListener('change', render);
   reviewEl.addEventListener('change', render);
@@ -3687,14 +4483,28 @@ function buildGlossary() {
     ['Tracking partition', 'The coordinator partition that leases a broker\'s sequences, tracks its objects, and deletes them. Chapter 20.'],
     ['User partition', 'A partition of a normal diskless topic, such as <i>orders-0</i>.'],
     ['WAL object', 'An object in storage that holds batches from many partitions, uploaded by one broker. Chapter 2.'],
-    ['Admission cap (review term)', 'A limit on work accepted by a coordinator leader when queues and retries consume its capacity. Ticket 15.'],
-    ['Blast radius (v3)', 'The share of diskless user partitions affected by losing one coordinator partition. With N coordinator partitions, one replica-set loss reaches about 1/N. Part 7.'],
-    ['Deletion-rate cap (v3)', 'A limit on how many object deletions one tracking partition may issue in a period, with an alarm when the queue exceeds it. Ticket 10.'],
-    ['Kafka parity (v3)', 'The new data-loss bar: survive every failure a classic topic survives, bound a classic-level loss within one coordinator partition, and never let one partition loss delete or resurrect another partition\'s data. Part 7.'],
-    ['Object footer (v3)', 'Trailing upload bytes that identify upload-time batches and partitions for a possible recovery path. It cannot contain offsets or later coordinator decisions. Ticket 09.'],
-    ['Resolved-through sequence (candidate)', 'A sequence carried by a later tracking part or lease request below which the tracking partition may treat unresolved work as settled. Ticket 01.'],
-    ['Retired-through epoch (candidate)', 'The highest broker epoch a retirement record closes, so a later epoch from the same broker ID can commit. Ticket 03.'],
-    ['Soft delete (v3)', 'Object-storage behavior that makes deleted bytes recoverable for a retention window without changing the live key seen by Inkless. Ticket 10.'],
+    ['Abandoned range (v3)', 'A range the broker never uses again, because it switched to a range at another partition or never got the range confirmed. Chapter 33.'],
+    ['Admission cap (review term)', 'A limit on work accepted by a coordinator leader when queues and retries consume its capacity. Ticket 15, still open. Chapter 43.'],
+    ['Answered (v3)', 'A participant whose last reply came from a recorded file-committed record, including an all-fail commit. Chapter 32.'],
+    ['Blast radius (v3)', 'The share of diskless user partitions affected by losing one coordinator partition. With N coordinator partitions, one replica-set loss reaches about 1/N. Chapter 31.'],
+    ['Deletion-rate cap (future work)', 'A limit on the keys one tracking partition deletes per second, relative to its upload rate. Ticket 10 records it as future work. Chapter 42.'],
+    ['Empty restart (open)', 'The operator procedure that brings a coordinator partition back with no state after every replica loses its storage. Ticket 19. Chapter 41.'],
+    ['Entry state (v3)', 'Pending, fencing, held, or released: the state of one participant\'s tracking entry. It only moves forward, and released is terminal. Chapter 35.'],
+    ['Exception (v3)', 'A participant whose part got no recorded answer: an early rejection, <code>NOT_COORDINATOR</code> or an unknown outcome at the deadline, or a part never sent. Chapter 32.'],
+    ['Finish report (v3)', '<code>finishedThrough</code> plus at most one exception range per participant, carried on tracking parts, lease requests, and keepalives. Chapter 32.'],
+    ['Finished file (v3)', 'A file whose every part, the tracking part included, committed, got a non-retriable rejection, or passed its commit deadline. Chapter 32.'],
+    ['<code>finishedThrough</code> (v3)', 'Every file of the broker epoch with a sequence at or below this value is finished. Chapters 32 and 36.'],
+    ['Follower applier (v3)', 'One thread per broker that applies the coordinator logs the broker follows, so the replica fetcher never writes to SQLite. Chapter 39.'],
+    ['Kafka parity (v3)', 'The data-loss bar: survive every failure a classic topic survives, bound a classic-level loss within one coordinator partition, and never let one partition\'s loss delete or resurrect another\'s data, with two named exceptions. Chapter 31.'],
+    ['Keepalive (v3)', 'A lease request for a range the broker already holds, sent after half the idle timeout without an answer. Chapter 33.'],
+    ['Lease release (v3)', 'The request that ends a broker\'s abandoned ranges at one tracking partition, up to a range end <code>b</code>. Chapter 33.'],
+    ['Maximal spread (v3)', 'Replicas that span <code>min(replication factor, distinct racks among registered brokers)</code> racks. Chapter 40.'],
+    ['<code>metadataOffset</code> (v3)', 'The image offset stored in partition-created. Topic-deleted waits until the leader\'s image reaches it. Chapter 34.'],
+    ['Object footer (future work)', 'Trailing upload bytes that name an object\'s partition runs with offset hints, for a recovery after losing a replica set. Ticket 09. Chapter 41.'],
+    ['<code>retiredThrough</code> (v3)', 'The highest broker epoch a broker-epoch-retired record closes, taken from the leader\'s image. Commits at or below it get stale-epoch. Chapter 34.'],
+    ['Soft delete (future work)', 'Object-storage behavior that keeps deleted bytes recoverable for a window. Ticket 10 records a 7-day requirement as future work. Chapter 42.'],
+    ['Unreconciled partition (v3)', 'A user partition that a call names before the leader holds its partition-created record. The call gets <code>COORDINATOR_LOAD_IN_PROGRESS</code>. Chapter 34.'],
+    ['Urgent finish report (v3)', 'A finish report with an exception range, or one that covers a file whose tracking part wasn\'t recorded. A quiet broker sends it within one commit interval. Chapter 33.'],
   ];
   for (const [t, d] of terms) tb.append(h('tr', null, h('td', { html: `<b>${t}</b>` }), h('td', { html: d })));
 }
@@ -3702,8 +4512,9 @@ function buildGlossary() {
 /* ---------------------------------------------------------------- start */
 [buildToc, demoXzone, demoWal, demoSeq, demoApply, demoOverlay, demoFlush, demoSnap, demoHash, demoFanout,
   demoCrash, demoScan, demoV1, demoSkew, demoRow, demoKey, demoLease, demoRace, demoLife,
-  demoBarrier, demoGuard, demoElect, demoSkip, demoV3Empty, demoV3Lease, demoV3Image, demoV3Slowest,
-  demoV3Fsync, demoV3Blast, demoV3Status, buildGlossary].forEach(fn => {
+  demoBarrier, demoGuard, demoElect, demoSkip, demoV3Empty, demoV3Lease, demoV3Image, demoV3Entry,
+  demoV3Storm, demoV3Slowest, demoV3Fsync, demoV3Apply, demoV3Rack, demoV3Blast, demoV3Status,
+  buildGlossary].forEach(fn => {
   try { fn(); } catch (err) { console.error(fn.name, err); }
 });
 
