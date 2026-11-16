@@ -119,8 +119,11 @@ class InklessClassicToDisklessSwitchTest(Test):
             if self.verifier.control_plane_was_blocked:
                 # Postgres keeps the sessions that brokers closed during the outage. Stop
                 # the brokers first, so every session left from their addresses is stale.
-                self.kafka.stop()
-                self.verifier.terminate_broker_sessions()
+                # A broker that doesn't stop must not skip the cleanup.
+                try:
+                    self.kafka.stop(clean_shutdown=False)
+                finally:
+                    self.verifier.terminate_broker_sessions()
 
     # -----------------------------------------------------------------------
     # Cluster setup
