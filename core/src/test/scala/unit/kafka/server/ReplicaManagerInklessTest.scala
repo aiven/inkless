@@ -8762,6 +8762,71 @@ class ReplicaManagerInklessTest {
     }
   }
 
+  // The local log holds offsets 700 to 899 and the WAL is pruned up to 800. A client lookup hides a match at or
+  // past the high watermark, so a high watermark of 700 leaves offsets 700 to 799 that neither search answers
+  // from. A replica lookup is bounded by the log end offset, and a high watermark past the WAL start leaves no gap.
+  @ParameterizedTest(name = "testFetchOffsetSpecificTimestampOnConsolidatingReplicaComparesItsHighWatermarkWithTheWalStart " +
+    "with recordTimestamp: {0}, highWatermark: {1}, replicaId: {2}")
+  @CsvSource(Array(
+    "12000, 700, -1, OFFSET_NOT_AVAILABLE",
+    "1, 700, -1, OFFSET_NOT_AVAILABLE",
+    "1, 850, -1, NONE",
+    "1, 700, 2, NONE"))
+  def testFetchOffsetSpecificTimestampOnConsolidatingReplicaComparesItsHighWatermarkWithTheWalStart(recordTimestamp: Long,
+                                                                                                   highWatermark: Long,
+                                                                                                   replicaId: Int,
+                                                                                                   expectedError: Errors): Unit = {
+    val controlPlane = walStartControlPlane()
+    withConsolidatingReplica(controlPlane) { (replicaManager, log) =>
+      log.truncateFullyAndStartAt(700L, Optional.empty[java.lang.Long]())
+      log.appendAsFollower(TestUtils.records(
+        (700L until 900L).map(i => new SimpleRecord(recordTimestamp, s"record-$i".getBytes)),
+        baseOffset = 700L, partitionLeaderEpoch = 0), 0)
+      log.updateHighWatermark(highWatermark)
+      assertEquals(900L, log.logEndOffset)
+      assertEquals(highWatermark, log.highWatermark)
+      val deferralsBefore = yammerMeterCount(deferredListOffsetsRateMeter)
+
+      val response = listOffsetsByTimestamp(replicaManager, consolidatingTp, timestamp = 11000L, replicaId = replicaId)
+
+      assertEquals(expectedError.code, response.errorCode)
+      val expectedDeferrals = if (expectedError == Errors.NONE) 0L else 1L
+      assertEquals(deferralsBefore + expectedDeferrals, yammerMeterCount(deferredListOffsetsRateMeter))
+      if (expectedError == Errors.NONE) assertEquals(1000L, response.offset)
+    }
+  }
+
+  // The control plane has no entry for a partition whose switch is pending, so the local log answers. The
+  // metadata transformer sends clients to any in-sync replica, so an in-sync follower answers too.
+  @ParameterizedTest(name = "testFetchOffsetOnConsolidatingTopicUsesTheLocalLogWhileTheSwitchIsPending " +
+    "with timestamp: {0}, inSync: {1}")
+  @CsvSource(Array(
+    "-1, true, NONE, 8",
+    "-2, true, NONE, 3",
+    "-1, false, NOT_LEADER_OR_FOLLOWER, -1"))
+  def testFetchOffsetOnConsolidatingTopicUsesTheLocalLogWhileTheSwitchIsPending(timestamp: Long,
+                                                                               inSync: Boolean,
+                                                                               expectedError: Errors,
+                                                                               expectedOffset: Long): Unit = {
+    val controlPlane = mock(classOf[ControlPlane])
+    withConsolidatingReplica(controlPlane) { (replicaManager, log) =>
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(consolidatingTp))
+        .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
+      when(replicaManager.inklessMetadataView().isReplicaInIsr(consolidatingTp, replicaManager.config.brokerId))
+        .thenReturn(inSync)
+      log.truncateFullyAndStartAt(3L, Optional.empty[java.lang.Long]())
+      log.appendAsFollower(TestUtils.records(
+        (3L until 10L).map(i => new SimpleRecord(s"record-$i".getBytes)), baseOffset = 3L, partitionLeaderEpoch = 0), 0)
+      log.updateHighWatermark(8L)
+
+      val response = listOffsetsByTimestamp(replicaManager, consolidatingTp, timestamp = timestamp)
+
+      assertEquals(expectedError.code, response.errorCode)
+      assertEquals(expectedOffset, response.offset)
+      verify(controlPlane, never()).listOffsets(any())
+    }
+  }
+
   // A tier-state rebuild truncates the local log past the WAL start and clears the leader epoch cache before it
   // restores the cache from remote storage. Until then the remote search has no epoch to start from and reads
   // nothing below the local log start, so the local log doesn't count as reaching the WAL start.
@@ -8916,7 +8981,8 @@ class ReplicaManagerInklessTest {
   private def listOffsetsByTimestamp(replicaManager: ReplicaManager,
                                      tp: TopicPartition,
                                      timestamp: Long,
-                                     currentLeaderEpoch: Int = ListOffsetsResponse.UNKNOWN_EPOCH): ListOffsetsPartitionResponse = {
+                                     currentLeaderEpoch: Int = ListOffsetsResponse.UNKNOWN_EPOCH,
+                                     replicaId: Int = ListOffsetsRequest.CONSUMER_REPLICA_ID): ListOffsetsPartitionResponse = {
     val topics = Seq(new ListOffsetsTopic()
       .setName(tp.topic)
       .setPartitions(util.List.of(new ListOffsetsPartition()
@@ -8925,7 +8991,7 @@ class ReplicaManagerInklessTest {
         .setCurrentLeaderEpoch(currentLeaderEpoch))))
     @volatile var responseTopics: util.Collection[ListOffsetsTopicResponse] = null
     replicaManager.fetchOffset(topics, Set.empty, IsolationLevel.READ_UNCOMMITTED,
-      ListOffsetsRequest.CONSUMER_REPLICA_ID, "client", 0, 7.toShort,
+      replicaId, "client", 0, 7.toShort,
       (e, p) => new ListOffsetsPartitionResponse().setPartitionIndex(p.partitionIndex).setErrorCode(e.code)
         .setOffset(ListOffsetsResponse.UNKNOWN_OFFSET),
       (r: util.Collection[ListOffsetsTopicResponse]) => responseTopics = r)
