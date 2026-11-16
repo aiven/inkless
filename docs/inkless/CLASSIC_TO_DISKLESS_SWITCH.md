@@ -196,7 +196,12 @@ The leader ends such a transaction without the transaction coordinator:
 
 When the producer ends the transaction or the transaction times out, the coordinator sends `WriteTxnMarkers` to the partition. The broker answers `UNSUPPORTED_FOR_MESSAGE_FORMAT` for a diskless topic and logs a warning. The coordinator then stops waiting for the partition and completes the transaction, and the `transactional.id` is usable again.
 
-The `ABORT` markers on the switched partition don't depend on the coordinator's decision. If the producer commits a transaction that was open at the switch, the commit succeeds and the other partitions of the transaction commit, but the switched partition keeps its `ABORT` marker. A consumer with `isolation.level=read_committed` doesn't get them. To keep a transaction atomic, end the transactions that write to a topic before you switch it.
+The `ABORT` markers on the switched partition don't depend on the coordinator's decision. If the producer commits a transaction that was open at the switch, the commit succeeds and the other partitions of the transaction commit, but the switched partition keeps its `ABORT` marker. A consumer with `isolation.level=read_committed` doesn't get the records of that transaction from the switched partition.
+
+A commit that returns to the producer before the switch isn't enough to avoid this outcome. The coordinator sends the `EndTxn` response to the producer before it sends the markers to the partitions, so the partition can still have an undecided transaction when `commitTransaction()` returns. To keep the transactions on a topic atomic, do these steps before you switch it:
+
+1. Stop the transactional producers that write to the topic.
+2. Wait until the coordinator completes their transactions. For each `transactional.id`, `kafka-transactions.sh describe` reports a `TransactionState` of `CompleteCommit` or `CompleteAbort` and no `TopicPartitions`.
 
 ## Switch phases
 
