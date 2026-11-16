@@ -4378,6 +4378,27 @@ class PartitionTest extends AbstractPartitionTest {
   }
 
   @Test
+  def testSealedLeaderAbortAdvancesHighWatermarkWhenLeaderIsTheOnlyIsrMember(): Unit = {
+    val leaderEpoch = 1
+    partition = setupPartitionWithMocks(leaderEpoch, isLeader = true)
+    val log = partition.localLogOrException
+
+    appendTransactionalRecords(log, leaderEpoch, 137L, 5.toShort, 0,
+      new SimpleRecord("k1".getBytes, "v1".getBytes)
+    )
+
+    partition.seal()
+    makeLeader(None, leaderEpoch + 1, Array(brokerId), Array(brokerId, remoteReplicaId),
+      partition.getPartitionEpoch + 1, isNew = false)
+    assertEquals(log.logEndOffset, log.highWatermark)
+
+    partition.abortOngoingTransactionsAsSealedLeader()
+
+    assertEquals(log.logEndOffset, log.highWatermark,
+      "No follower fetch advances the high watermark past the ABORT marker when the leader is the only ISR member")
+  }
+
+  @Test
   def testAbortOngoingTransactionsAsSealedLeaderRequiresSeal(): Unit = {
     partition = setupPartitionWithMocks(leaderEpoch = 1, isLeader = true)
 

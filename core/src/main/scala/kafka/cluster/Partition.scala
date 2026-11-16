@@ -360,6 +360,9 @@ class Partition(val topicPartition: TopicPartition,
       if (leaderLog.producerStateManager().firstUndecidedOffset().isPresent) {
         abortOngoingTransactions(leaderLog)
         rollActiveSegmentOfSealedLog(leaderLog)
+        // With an ISR of only this leader, no follower fetch advances the high watermark past the
+        // markers, and the switch waits for HW == LEO.
+        maybeIncrementLeaderHW(leaderLog)
       }
     }
   })
