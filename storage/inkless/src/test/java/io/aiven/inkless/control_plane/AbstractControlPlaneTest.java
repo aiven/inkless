@@ -643,9 +643,6 @@ public abstract class AbstractControlPlaneTest {
         assertThat(controlPlane.advanceCrossTierLogStartOffset(List.of(
             new AdvanceCrossTierLogStartOffsetRequest(EXISTING_TOPIC_1_ID, 0, 8)
         ))).containsExactly(AdvanceCrossTierLogStartOffsetResponse.unknownTopicOrPartition());
-        assertThat(controlPlane.repairDisklessLog(List.of(
-            new RepairDisklessLogRequest(EXISTING_TOPIC_1_ID, EXISTING_TOPIC_1, 0, 50)
-        ))).containsExactly(new RepairDisklessLogResponse(false));
         assertThat(controlPlane.pruneDisklessLogs(List.of(
             new PruneDisklessLogsRequest(EXISTING_TOPIC_1_ID_PARTITION_0, 9)
         ), 0)).containsExactly(new PruneDisklessLogsResponse(
@@ -2716,44 +2713,6 @@ public abstract class AbstractControlPlaneTest {
                 GetProducerStateResponse.success(List.of()),
                 GetProducerStateResponse.success(List.of())
             );
-        }
-    }
-
-    @Nested
-    class RepairDisklessLog {
-        private static final String NEW_TOPIC = "topic-new";
-        private static final Uuid NEW_TOPIC_ID = new Uuid(31, 31);
-
-        @Test
-        void reportsNotFoundWhenMissing() {
-            final var responses = controlPlane.repairDisklessLog(List.of(
-                new RepairDisklessLogRequest(NEW_TOPIC_ID, NEW_TOPIC, 0, 100)
-            ));
-            assertThat(responses).containsExactly(new RepairDisklessLogResponse(false));
-            assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(NEW_TOPIC_ID, 0))))
-                .containsExactly(GetLogInfoResponse.unknownTopicOrPartition());
-        }
-
-        @Test
-        void updatesExistingDisklessStartOffset() {
-            controlPlane.initDisklessLog(List.of(
-                new InitDisklessLogRequest(NEW_TOPIC_ID, NEW_TOPIC, 0, 50, 100, List.of())
-            ));
-
-            final var responses = controlPlane.repairDisklessLog(List.of(
-                new RepairDisklessLogRequest(NEW_TOPIC_ID, NEW_TOPIC, 0, 80)
-            ));
-            assertThat(responses).containsExactly(new RepairDisklessLogResponse(true));
-            assertThat(controlPlane.getLogInfo(List.of(new GetLogInfoRequest(NEW_TOPIC_ID, 0))))
-                .containsExactly(GetLogInfoResponse.success(50, 100, 80, 0));
-        }
-
-        @Test
-        void updatesExistingTopic() {
-            final var responses = controlPlane.repairDisklessLog(List.of(
-                new RepairDisklessLogRequest(EXISTING_TOPIC_1_ID, EXISTING_TOPIC_1, 0, 0)
-            ));
-            assertThat(responses).containsExactly(new RepairDisklessLogResponse(true));
         }
     }
 
