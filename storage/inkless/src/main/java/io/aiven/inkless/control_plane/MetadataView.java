@@ -33,10 +33,34 @@ public interface MetadataView {
 
     Uuid getTopicId(String topicName);
 
+    /**
+     * Checks whether the topic has the {@code diskless.enable=true} topic override.
+     *
+     * <p>Only the topic override counts, so an unset key is false.
+     * When the broker default makes a new topic diskless, the controller writes the override for that topic.
+     * Callers can make this call for each partition, since it doesn't copy the topic config.
+     *
+     * @return True if the topic override is {@code true}, ignoring case; false otherwise.
+     * @throws IllegalArgumentException if the override is a value such as {@code " true"},
+     *     which isn't {@code true} or {@code false}, ignoring case, so the topic type is unknown.
+     */
     boolean isDisklessTopic(String topicName);
 
+    /**
+     * Checks whether the topic has the {@code remote.storage.enable=true} topic override.
+     * The same rules apply as for {@link #isDisklessTopic(String)}.
+     *
+     * @return True if the topic override is {@code true}, ignoring case; false otherwise.
+     */
     boolean isRemoteStorageEnabled(String topicName);
 
+    /**
+     * Checks whether the topic is diskless with remote storage enabled.
+     * Both overrides come from the same metadata snapshot, so a concurrent config change can't mix two snapshots.
+     *
+     * @return True if both {@link #isDisklessTopic(String)} and {@link #isRemoteStorageEnabled(String)}
+     *     are true on the same snapshot; false otherwise.
+     */
     boolean isConsolidatingDisklessTopic(String topicName);
 
     /**
