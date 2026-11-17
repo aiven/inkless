@@ -133,6 +133,8 @@ If the broker is stale, the controller rejects the request. A lower leader epoch
 
 The controller applies the same limit of 123,361 producer state entries to the records of one request. It rejects a partition whose entries don't fit with `RECORD_LIST_TOO_LARGE` and doesn't write a record for it. The broker retries that partition in a later request. A metadata batch over the Raft batch size fails the whole request and makes the active controller resign. The limit prevents the controller from passing such a batch to the Raft client.
 
+The producer states stay in the metadata of the partition, and every metadata snapshot writes them in the record of the partition. The snapshot writer starts a new batch when the next record doesn't fit in 4 MiB. Without that split, the records of several switched partitions exceed the Raft batch size in one snapshot batch, and the snapshot fails.
+
 ### Step 5: initialize the diskless log
 
 After the final offset is committed to the metadata log, brokers receive a new metadata delta with `classicToDisklessStartOffset >= 0`. The local leader then initializes the diskless log on the control plane using the authoritative data from metadata, not the earlier controller response.
