@@ -12133,6 +12133,7 @@ class ReplicaManagerInklessTest {
 
     val metadataCache: KRaftMetadataCache = mock(classOf[KRaftMetadataCache])
     when(metadataCache.topicConfig(anyString())).thenReturn(new Properties())
+    when(metadataCache.currentImage()).thenReturn(MetadataImage.EMPTY)
     when(metadataCache.topicIdsToNames()).thenReturn(Map(switchedTopicId -> switchedTopic).asJava)
     when(metadataCache.metadataVersion()).thenReturn(MetadataVersion.MINIMUM_VERSION)
     when(metadataCache.hasAliveBroker(anyInt)).thenAnswer { invocation =>
