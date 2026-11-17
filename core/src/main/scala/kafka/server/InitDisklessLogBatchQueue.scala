@@ -195,7 +195,8 @@ abstract class RetriableInitDisklessLogBatchQueue[S <: InitDisklessLogState](
         }
       )
     } catch {
-      case NonFatal(_) =>
+      case NonFatal(e) =>
+        warn(s"Failed to send a batch for ${sendableByTp.keySet}, scheduling retry for all states in batch", e)
         sendableByTp.asScala.foreach { case (tp, attempt) =>
           enqueueRetryOrFail(tp, attempt)
         }

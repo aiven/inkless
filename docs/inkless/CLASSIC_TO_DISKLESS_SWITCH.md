@@ -131,11 +131,13 @@ After the final offset is committed to the metadata log, brokers receive a new m
 The leader calls the control-plane `InitDisklessLog` API with:
 
 * topic ID, topic name, and partition
-* local classic log start offset
+* local log start offset, or the committed `classicToDisklessStartOffset` if the local log starts past it
 * committed `classicToDisklessStartOffset`
 * committed producer states
 
 Control-plane initialization is batched and retried on transient failures. An `INVALID_REQUEST` response from the control plane is treated as success because it means the diskless log is already initialized.
+
+If the leader can't build the request of a partition, it logs the error and retries that partition alone. The leader still sends the other partitions of the batch to the control plane.
 
 Once control-plane initialization succeeds, produce requests can use the diskless append path from the committed start offset onward. If `classicPrefixInRemoteStorage` is already `true`, `InitDisklessLogManager` removes the partition from tracking. Otherwise `InitDisklessLogManager` keeps tracking the partition for the next step.
 

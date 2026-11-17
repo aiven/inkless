@@ -16,7 +16,7 @@
  */
 package kafka.server
 
-import io.aiven.inkless.control_plane.{ControlPlane, InitDisklessLogProducerState => CpProducerState, InitDisklessLogResponse => CpInitResponse}
+import io.aiven.inkless.control_plane.{ControlPlane, InitDisklessLogProducerState => CpProducerState, InitDisklessLogRequest => CpInitRequest, InitDisklessLogResponse => CpInitResponse}
 import kafka.cluster.Partition
 import org.apache.kafka.clients.ClientResponse
 import org.apache.kafka.common.{TopicPartition, Uuid}
@@ -37,6 +37,7 @@ import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.{AfterEach, BeforeEach, Test}
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
+import org.mockito.ArgumentCaptor
 import org.mockito.ArgumentMatchers.{any, anyLong}
 import org.mockito.Mockito._
 import org.mockito.invocation.InvocationOnMock
@@ -1442,6 +1443,79 @@ class InitDisklessLogManagerTest {
     fireLinger()
 
     verify(controlPlane, times(1)).initDisklessLog(any())
+    assertTrue(manager.getTrackedPartitions.isEmpty)
+  }
+
+  // Starts the control-plane init of a partition whose seal is committed and whose flag is set.
+  private def startInitOnControlPlane(partition: Partition, seal: Long): Unit = {
+    manager.initOnControlPlane(
+      partition = partition,
+      topicId = topicId,
+      topicName = partition.topicPartition.topic(),
+      classicToDisklessStartOffset = seal,
+      producerStates = util.List.of(),
+      classicPrefixInRemoteStorage = true
+    )
+  }
+
+  @Test
+  def testLogStartOffsetPastSealDoesNotBlockOtherPartitionsInTheBatch(): Unit = {
+    // Given a partition whose log start is past the seal and a healthy partition in the same batch
+    val tp1 = new TopicPartition("test-topic", 1)
+    val pastSeal = mockPartition(tp = tp0, hw = 300, leo = 300)
+    when(pastSeal.log.get.logStartOffset).thenReturn(150L)
+    val healthy = mockPartition(tp = tp1, hw = 100, leo = 100)
+    val requests = ArgumentCaptor.forClass(classOf[util.List[CpInitRequest]])
+    // The control plane already has the first partition, as in phase 2, and creates the second one.
+    when(controlPlane.initDisklessLog(requests.capture()))
+      .thenReturn(util.List.of(CpInitResponse.alreadyInitialized(), CpInitResponse.success()))
+
+    // When both reach the control-plane init
+    startInitOnControlPlane(pastSeal, seal = 100L)
+    startInitOnControlPlane(healthy, seal = 100L)
+    fireLinger()
+
+    // Then one call carries both partitions, and the log start of the first one is the seal
+    verify(controlPlane, times(1)).initDisklessLog(any())
+    val sent = requests.getValue.asScala.map(r => r.partition() -> r).toMap
+    assertEquals(Set(0, 1), sent.keySet)
+    assertEquals(100L, sent(0).logStartOffset())
+    assertEquals(100L, sent(0).disklessStartOffset())
+    assertEquals(0L, sent(1).logStartOffset())
+
+    // And both partitions leave the tracking
+    assertTrue(manager.getTrackedPartitions.isEmpty)
+  }
+
+  @Test
+  def testRequestBuildFailureRetriesOnlyThatPartition(): Unit = {
+    // Given a partition whose request can't be built and a healthy partition in the same batch
+    val tp1 = new TopicPartition("test-topic", 1)
+    val broken = mockPartition(tp = tp0, hw = 100, leo = 100)
+    val brokenLog = broken.log.get
+    when(brokenLog.logStartOffset).thenThrow(new RuntimeException("log read failed"))
+    val healthy = mockPartition(tp = tp1, hw = 100, leo = 100)
+    val requests = ArgumentCaptor.forClass(classOf[util.List[CpInitRequest]])
+    when(controlPlane.initDisklessLog(requests.capture())).thenReturn(util.List.of(CpInitResponse.success()))
+
+    // When both reach the control-plane init
+    startInitOnControlPlane(broken, seal = 100L)
+    startInitOnControlPlane(healthy, seal = 100L)
+    fireLinger()
+
+    // Then the healthy partition reaches the control plane and the other one stays tracked
+    verify(controlPlane, times(1)).initDisklessLog(any())
+    assertEquals(Seq(1), requests.getValue.asScala.map(_.partition()).toSeq)
+    assertEquals(Set(tp0), manager.getTrackedPartitions)
+    assertState[AwaitingMetadata](tp0)
+
+    // When the request can be built again
+    doReturn(0L).when(brokenLog).logStartOffset
+    fireRetry()
+
+    // Then the retry sends only that partition
+    verify(controlPlane, times(2)).initDisklessLog(any())
+    assertEquals(Seq(0), requests.getValue.asScala.map(_.partition()).toSeq)
     assertTrue(manager.getTrackedPartitions.isEmpty)
   }
 

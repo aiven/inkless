@@ -30,6 +30,7 @@ import org.apache.kafka.storage.internals.log.UnifiedLog
 import java.util
 import scala.jdk.CollectionConverters._
 import scala.jdk.OptionConverters._
+import scala.util.control.NonFatal
 
 sealed trait InitDisklessLogState extends Logging {
   def partition: Partition
@@ -368,6 +369,13 @@ object SendingFlagToController {
 
 object AwaitingMetadata {
 
+  /**
+   * Returns the start offset of the classic prefix `[logStartOffset, seal)`. If the local log start is past
+   * the seal, the classic prefix is empty and starts at the seal. The control plane rejects a log start
+   * offset past the seal.
+   */
+  private def classicLogStartOffset(log: UnifiedLog, seal: Long): Long = Math.min(log.logStartOffset, seal)
+
   def sendBatch(
     states: Iterable[AwaitingMetadata],
     destination: ControlPlane,
@@ -397,14 +405,21 @@ object AwaitingMetadata {
               state.warn(s"Partition ${state.tp} has no log while applying diskless metadata, scheduling retry")
               retryOutcomeByIndex += index -> retriable(state)
             case Some(log) =>
-              requests.add(new CpInitRequest(
-                state.topicId,
-                metadata.topicName,
-                state.tp.partition(),
-                log.logStartOffset,
-                metadata.classicToDisklessStartOffset,
-                metadata.producerStates
-              ))
+              // An exception here makes the caller retry the whole batch. Only this partition must retry.
+              try {
+                requests.add(new CpInitRequest(
+                  state.topicId,
+                  metadata.topicName,
+                  state.tp.partition(),
+                  classicLogStartOffset(log, metadata.classicToDisklessStartOffset),
+                  metadata.classicToDisklessStartOffset,
+                  metadata.producerStates
+                ))
+              } catch {
+                case NonFatal(e) =>
+                  state.error(s"Failed to build the control-plane InitDisklessLog request for ${state.tp}, scheduling retry", e)
+                  retryOutcomeByIndex += index -> retriable(state)
+              }
           }
       }
     }
