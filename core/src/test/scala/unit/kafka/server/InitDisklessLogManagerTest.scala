@@ -1033,6 +1033,38 @@ class InitDisklessLogManagerTest {
   }
 
   @Test
+  def testLateControllerCompletionOfReplacedStateLeavesTheReplacementAlone(): Unit = {
+    // Given a partition of a deleted topic whose InitDisklessLog request is in flight
+    manager.registerPartition(mockPartition(hw = 100, leo = 100), topicId)
+    val replaced = manager.getInitState(tp0).get.asInstanceOf[SendingToController]
+    fireLinger()
+    assertEquals(1, channelManager.requests.size())
+
+    // And a topic with the same name that replaces it
+    val newTopicId = Uuid.randomUuid()
+    manager.registerPartition(mockPartition(hw = 20, leo = 20), newTopicId)
+    val replacement = manager.getInitState(tp0).get
+    assertEquals(newTopicId, replacement.topicId)
+
+    // When the success of the old request arrives after the replacement. The queue completes a promise
+    // outside its lock, so the response thread can run this after the metadata thread replaced the state.
+    manager.onSendingToControllerCompleted(tp0, replaced, accepted = true)
+
+    // Then the replacement still waits for its own request
+    assertSame(replacement, manager.getInitState(tp0).get)
+
+    // And only the response to that request advances it
+    channelManager.requests.poll().complete(makeSuccessResponse(topicId, 0))
+    assertSame(replacement, manager.getInitState(tp0).get)
+    fireLinger()
+    assertEquals(1, channelManager.requests.size())
+    val request = channelManager.requests.poll()
+    assertEquals(newTopicId, request.requestData.topics().get(0).topicId())
+    request.complete(makeSuccessResponse(newTopicId, 0))
+    assertState[AwaitingMetadata](tp0)
+  }
+
+  @Test
   def testUnsealedPartitionIsSkipped(): Unit = {
     // Given a partition that is not sealed
     val partition = mock(classOf[Partition])
