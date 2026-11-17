@@ -4889,10 +4889,14 @@ class ReplicaManager(val config: KafkaConfig,
             // The intervening window is harmless because the topic is already fully switched to
             // diskless, so produces route to the diskless path and never append to the classic
             // local log; seal() here just marks the partition sealed for the HW restore below.
+            // appendRecords rejects a produce to a pending switch before it reaches the partition.
             partition.makeLeader(info.partition, isNew, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
             partition.seal()
             if (isSwitchPending) {
+              // The broker loaded a pending switch with no Partition yet, such as after a restart.
+              // It drives the switch like the active-switch branch above.
               partition.abortOngoingTransactionsAsSealedLeader()
+              initDisklessLogManager.foreach(_.registerPartition(partition, info.topicId()))
             }
             changedPartitions.add(partition)
           } catch {

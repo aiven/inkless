@@ -373,7 +373,7 @@ class Partition(val topicPartition: TopicPartition,
         log.roll()
       } catch {
         case e: java.io.IOException =>
-          throw new KafkaStorageException(s"Failed to roll active segment while sealing " +
+          throw new KafkaStorageException(s"Failed to roll active segment after sealing " +
             s"partition $topicPartition for diskless switch", e)
       }
     }
@@ -419,7 +419,7 @@ class Partition(val topicPartition: TopicPartition,
         RequestLocal.noCaching(), VerificationGuard.SENTINEL, TransactionVersion.TV_0.featureLevel())
       stateChangeLogger.info(s"Aborted ongoing transaction for producer $producerId " +
         s"(epoch=$producerEpoch, txnFirstOffset=$txnFirstOffset) " +
-        s"on partition $topicPartition before sealing for diskless switch")
+        s"on partition $topicPartition after sealing for diskless switch")
     }
   }
 
