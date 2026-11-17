@@ -53,6 +53,7 @@ sequenceDiagram
 
     Leader->>Leader: seal() local classic log
     Leader->>Leader: makeLeader() with bumped epoch
+    Leader->>Leader: Abort open transactions
     Leader->>InitManager: registerPartition()
 
     InitManager->>Leader: Wait until HW == LEO
@@ -88,9 +89,11 @@ Setting the leader to the current leader bumps the leader epoch, which forces th
 
 When a leader broker applies the metadata delta for a diskless topic with `classicToDisklessStartOffset = -2`, it seals the existing local `Partition` before calling `makeLeader`.
 
-Sealing happens under the `leaderIsrUpdateLock` write lock. If there are undecided transactions, the broker aborts them first; then it marks the partition sealed. Once sealed, `appendRecordsToLeader` rejects classic produce requests with `ReplicaNotAvailableException`, so the local LEO cannot increase.
+Sealing happens under the `leaderIsrUpdateLock` write lock. Once sealed, `appendRecordsToLeader` rejects classic produce requests with `ReplicaNotAvailableException`, so clients can't increase the local LEO.
 
 If the metadata delta also elects a new leader for the partition, the new leader seals before it is placed in the leader role. This prevents the new leader from accepting classic writes during the switch.
+
+After `makeLeader`, the leader aborts every undecided transaction in its log. It appends one `ABORT` marker per open transaction and rolls the active segment again, so the markers are in a closed segment. For more information, see [Open transactions at the switch](#open-transactions-at-the-switch).
 
 ### Step 3: propose the final start offset
 
@@ -182,6 +185,25 @@ When a broker applies a newly committed seal offset, it reconciles the local cla
 A broker answers `ListOffsets` from its local classic log while the switch is pending, because the control plane has no entry for the partition yet. The leader and the in-sync followers answer client requests, because the metadata routing sends clients to any alive ISR member. A replica outside the ISR answers `NOT_LEADER_OR_FOLLOWER`. After the controller commits the final start offset and until the leader initializes the control plane, `ListOffsets` for the latest offset fails with the retriable `UNKNOWN_TOPIC_OR_PARTITION`. On a consolidating topic, `ListOffsets` for the earliest offset fails the same way.
 
 If leadership changes while the switch is pending, the new leader seals and re-drives the `InitDisklessLog` controller request. If leadership changes after the controller commits the final offset, the new leader skips the controller step and initializes the control plane directly from metadata. If the flag is still unset, the new leader also rolls its active segment when that segment holds part of the classic prefix, so the remote log manager can copy it. The new leader then watches the upload itself, as in [Step 6](#step-6-request-the-classicprefixinremotestorage-flag).
+
+## Open transactions at the switch
+
+Diskless topics don't support transactions. After the switch starts, the brokers reject `AddPartitionsToTxn` for the topic with `INVALID_TOPIC_EXCEPTION`, and the diskless produce path rejects a transactional batch with `INVALID_REQUEST`. A transaction can still be open on a partition at the switch: it added the partition and wrote to it while the topic was classic.
+
+The leader ends such a transaction without the transaction coordinator:
+
+* Only the leader writes the `ABORT` markers. A follower seals without aborting and replicates the leader's markers. Its log then contains only records that the leader wrote. If a sealed follower becomes the leader while the switch is pending, it aborts the transactions that are still undecided in its log.
+* The leader writes the markers after `makeLeader`, in the leader epoch in which it leads. A marker in an earlier epoch is a record that the leader of that epoch didn't write.
+* The leader proposes the seal offset only after `HW == LEO`. The classic prefix then includes the markers, and the ISR has replicated them.
+
+When the producer ends the transaction or the transaction times out, the coordinator sends `WriteTxnMarkers` to the partition. The broker answers `UNSUPPORTED_FOR_MESSAGE_FORMAT` for a diskless topic and logs a warning. The coordinator then stops waiting for the partition and completes the transaction, and the `transactional.id` is usable again.
+
+The `ABORT` markers on the switched partition don't depend on the coordinator's decision. If the producer commits a transaction that was open at the switch, the commit succeeds and the other partitions of the transaction commit, but the switched partition keeps its `ABORT` marker. A consumer with `isolation.level=read_committed` doesn't get the records of that transaction from the switched partition.
+
+A commit that returns to the producer before the switch isn't enough to avoid this outcome. The coordinator sends the `EndTxn` response to the producer before it sends the markers to the partitions, so the partition can still have an undecided transaction when `commitTransaction()` returns. To keep the transactions on a topic atomic, do these steps before you switch it:
+
+1. Stop the transactional producers that write to the topic.
+2. Wait until the coordinator completes their transactions. For each `transactional.id`, `kafka-transactions.sh describe` reports a `TransactionState` of `CompleteCommit` or `CompleteAbort` and no `TopicPartitions`.
 
 ## Switch phases
 

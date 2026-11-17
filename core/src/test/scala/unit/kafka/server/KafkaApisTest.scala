@@ -3716,7 +3716,7 @@ class KafkaApisTest extends Logging {
     val topic = "topic"
     val topicPartition = new TopicPartition(topic, 0)
     val (_, request) = createWriteTxnMarkersRequest(util.List.of(topicPartition))
-    val expectedErrors = Map(topicPartition -> Errors.INVALID_TOPIC_EXCEPTION).asJava
+    val expectedErrors = Map(topicPartition -> Errors.UNSUPPORTED_FOR_MESSAGE_FORMAT).asJava
     val capturedResponse: ArgumentCaptor[WriteTxnMarkersResponse] = ArgumentCaptor.forClass(classOf[WriteTxnMarkersResponse])
 
     val kafkaApis = createKafkaApis(inklessSharedState = Some(createInklessSharedStateWithTopic(topic)))
