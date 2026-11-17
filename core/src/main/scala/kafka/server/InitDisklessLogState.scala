@@ -220,7 +220,9 @@ object SendingToController {
    * control plane needs only that batch to check the next sequence of a producer. The producer continues,
    * but the control plane no longer recognizes a retry of an older batch as a duplicate. If the producers
    * still don't fit, the ones that wrote last keep their entry. A producer without an entry must bump its
-   * epoch before the control plane accepts its next batch.
+   * epoch before the control plane accepts its next batch. The control plane doesn't store any state for
+   * that producer: it appends a retry of a batch that starts at sequence 0 again, and it accepts a batch
+   * from an older epoch.
    */
   private def extractProducerStates(
     state: SendingToController,
