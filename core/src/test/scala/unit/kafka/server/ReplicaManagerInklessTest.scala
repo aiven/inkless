@@ -22,7 +22,7 @@ import io.aiven.inkless.common.SharedState
 import io.aiven.inkless.config.InklessConfig
 import io.aiven.inkless.consolidation.{ConsolidatedDisklessLogPruner, ConsolidationFetcherManager, DisklessLeaderEndPoint}
 import io.aiven.inkless.consume.{ConcatenatedRecords, FetchHandler, FetchOffsetHandler}
-import io.aiven.inkless.control_plane.{AdvanceCrossTierLogStartOffsetResponse, BatchInfo, BatchMetadata, ControlPlane, ControlPlaneException, FindBatchResponse, PruneDisklessLogsRequest, RepairDisklessLogRequest, RepairDisklessLogResponse, DeleteRecordsResponse => CpDeleteRecordsResponse, ListOffsetsRequest => CpListOffsetsRequest, ListOffsetsResponse => CpListOffsetsResponse}
+import io.aiven.inkless.control_plane.{AdvanceCrossTierLogStartOffsetResponse, BatchInfo, BatchMetadata, ControlPlane, ControlPlaneException, FindBatchResponse, PruneDisklessLogsRequest, DeleteRecordsResponse => CpDeleteRecordsResponse, ListOffsetsRequest => CpListOffsetsRequest, ListOffsetsResponse => CpListOffsetsResponse}
 import io.aiven.inkless.delete.ConsolidatedDisklessLogPrunerMetrics
 import io.aiven.inkless.produce.AppendHandler
 import kafka.cluster.Partition
@@ -228,125 +228,6 @@ class ReplicaManagerInklessTest {
         .thenReturn(42L)
 
       assertEquals(42L, replicaManager.classicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
-    } finally {
-      replicaManager.shutdown(checkpointHW = false)
-    }
-  }
-
-  private def stubLeaderPartition(replicaManager: ReplicaManager, tp: TopicIdPartition): Unit = {
-    val mockPartition = mock(classOf[Partition])
-    when(mockPartition.isLeader).thenReturn(true)
-    doReturn(Some(mockPartition)).when(replicaManager).onlinePartition(tp.topicPartition())
-  }
-
-  @Test
-  def testRepairDisklessLogWritesSealToControlPlane(): Unit = {
-    val cp = mock(classOf[ControlPlane])
-    val replicaManager = spy(createReplicaManager(
-      List(disklessTopicPartition.topic()), controlPlane = Some(cp),
-      topicIdMapping = Map(disklessTopicPartition.topic() -> disklessTopicPartition.topicId())))
-    try {
-      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
-        .thenReturn(100L)
-      when(cp.repairDisklessLog(any())).thenReturn(java.util.List.of(new RepairDisklessLogResponse(true)))
-      stubLeaderPartition(replicaManager, disklessTopicPartition)
-
-      assertEquals(Errors.NONE, replicaManager.repairDisklessLog(disklessTopicPartition.topicPartition()))
-
-      val expected = new RepairDisklessLogRequest(
-        disklessTopicPartition.topicId(), disklessTopicPartition.topic(), disklessTopicPartition.partition(), 100L)
-      verify(cp).repairDisklessLog(java.util.List.of(expected))
-    } finally {
-      replicaManager.shutdown(checkpointHW = false)
-    }
-  }
-
-  @Test
-  def testRepairDisklessLogReturnsUnknownTopicOrPartitionWhenNoEntry(): Unit = {
-    val cp = mock(classOf[ControlPlane])
-    val replicaManager = spy(createReplicaManager(List(disklessTopicPartition.topic()), controlPlane = Some(cp)))
-    try {
-      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
-        .thenReturn(100L)
-      // The control plane has no entry to repair (init never ran through the switch flow).
-      when(cp.repairDisklessLog(any())).thenReturn(java.util.List.of(new RepairDisklessLogResponse(false)))
-      stubLeaderPartition(replicaManager, disklessTopicPartition)
-
-      assertEquals(Errors.UNKNOWN_TOPIC_OR_PARTITION, replicaManager.repairDisklessLog(disklessTopicPartition.topicPartition()))
-    } finally {
-      replicaManager.shutdown(checkpointHW = false)
-    }
-  }
-
-  @Test
-  def testRepairDisklessLogReturnsErrorWhenControlPlaneFails(): Unit = {
-    val cp = mock(classOf[ControlPlane])
-    val replicaManager = spy(createReplicaManager(List(disklessTopicPartition.topic()), controlPlane = Some(cp)))
-    try {
-      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
-        .thenReturn(100L)
-      when(cp.repairDisklessLog(any())).thenThrow(new ControlPlaneException("boom"))
-      stubLeaderPartition(replicaManager, disklessTopicPartition)
-
-      assertEquals(Errors.UNKNOWN_SERVER_ERROR, replicaManager.repairDisklessLog(disklessTopicPartition.topicPartition()))
-    } finally {
-      replicaManager.shutdown(checkpointHW = false)
-    }
-  }
-
-  @Test
-  def testRepairDisklessLogRejectsNonDisklessTopic(): Unit = {
-    val cp = mock(classOf[ControlPlane])
-    val replicaManager = spy(createReplicaManager(List.empty, controlPlane = Some(cp)))
-    try {
-      assertEquals(Errors.INVALID_REQUEST, replicaManager.repairDisklessLog(disklessTopicPartition.topicPartition()))
-      verify(cp, never()).repairDisklessLog(any())
-    } finally {
-      replicaManager.shutdown(checkpointHW = false)
-    }
-  }
-
-  @Test
-  def testRepairDisklessLogRejectsUnswitchedPartition(): Unit = {
-    val cp = mock(classOf[ControlPlane])
-    val replicaManager = spy(createReplicaManager(List(disklessTopicPartition.topic()), controlPlane = Some(cp)))
-    try {
-      assertEquals(Errors.INVALID_REQUEST, replicaManager.repairDisklessLog(disklessTopicPartition.topicPartition()))
-      verify(cp, never()).repairDisklessLog(any())
-    } finally {
-      replicaManager.shutdown(checkpointHW = false)
-    }
-  }
-
-  @Test
-  def testRepairDisklessLogRejectsWhenNotLeader(): Unit = {
-    val cp = mock(classOf[ControlPlane])
-    val replicaManager = spy(createReplicaManager(List(disklessTopicPartition.topic()), controlPlane = Some(cp)))
-    try {
-      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
-        .thenReturn(100L)
-      val mockPartition = mock(classOf[Partition])
-      when(mockPartition.isLeader).thenReturn(false)
-      doReturn(Some(mockPartition)).when(replicaManager).onlinePartition(disklessTopicPartition.topicPartition())
-
-      assertEquals(Errors.NOT_LEADER_OR_FOLLOWER, replicaManager.repairDisklessLog(disklessTopicPartition.topicPartition()))
-      verify(cp, never()).repairDisklessLog(any())
-    } finally {
-      replicaManager.shutdown(checkpointHW = false)
-    }
-  }
-
-  @Test
-  def testRepairDisklessLogRejectsWhenPartitionNotOnline(): Unit = {
-    val cp = mock(classOf[ControlPlane])
-    val replicaManager = spy(createReplicaManager(List(disklessTopicPartition.topic()), controlPlane = Some(cp)))
-    try {
-      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
-        .thenReturn(100L)
-      doReturn(None).when(replicaManager).onlinePartition(disklessTopicPartition.topicPartition())
-
-      assertEquals(Errors.NOT_LEADER_OR_FOLLOWER, replicaManager.repairDisklessLog(disklessTopicPartition.topicPartition()))
-      verify(cp, never()).repairDisklessLog(any())
     } finally {
       replicaManager.shutdown(checkpointHW = false)
     }
@@ -13165,6 +13046,113 @@ class ReplicaManagerInklessTest {
       } finally {
         replicaManager.shutdown(checkpointHW = false)
         verify(consolidationCtor.constructed().get(0)).shutdown()
+      }
+    } finally {
+      consolidationCtor.close()
+    }
+  }
+
+  @Test
+  def testRearmAfterLoweringMinIsrLetsAStuckPendingSwitchReachTheSeal(): Unit = {
+    // A pending switch stalls when the ISR drops below min.insync.replicas after the leader sealed with
+    // its high watermark below its log end offset: the high watermark can't advance, so the leader never
+    // proposes the seal. Lowering min.insync.replicas alone doesn't recompute the high watermark, because
+    // nothing appends or fetches while the switch is pending. The rearm record bumps the leader epoch,
+    // and the makeLeader it triggers advances the high watermark to the log end offset.
+    val topicName = disklessTopicPartition.topic()
+    val topicId = disklessTopicPartition.topicId
+    val tp = disklessTopicPartition.topicPartition()
+    val brokerId = 1
+    val lostReplica = 2
+    val leo = 10L
+    val staleHw = 5L
+
+    val logProps = new Properties()
+    logProps.put(TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG, "2")
+
+    val mockIdlm = mock(classOf[InitDisklessLogManager])
+    val mockReplicaFetcherManager = mock(classOf[ReplicaFetcherManager])
+    when(mockReplicaFetcherManager.removeFetcherForPartitions(any()))
+      .thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+
+    val ctorInit: MockedConstruction.MockInitializer[ConsolidationFetcherManager] = {
+      case (mock, _) =>
+        when(mock.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    }
+    val consolidationCtor = mockConstruction(classOf[ConsolidationFetcherManager], ctorInit)
+    try {
+      val replicaManager = spy(createReplicaManager(
+        List(topicName),
+        disklessRemoteStorageConsolidationEnabled = true,
+        consolidatingDisklessTopics = Set(topicName),
+        mockReplicaFetcherManager = Some(mockReplicaFetcherManager),
+        initDisklessLogManager = Some(mockIdlm),
+        defaultLogConfig = Some(new LogConfig(logProps))
+      ))
+      try {
+        val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+        populateLocalLogAtLeoAndCheckpointedHwm(replicaManager, tp, log, leo = leo, hw = staleHw)
+
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp))
+          .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
+
+        // The other replica already left the ISR, so the ISR is below min.insync.replicas=2.
+        val onlineDelta = new TopicsDelta(TopicsImage.EMPTY)
+        onlineDelta.replay(new TopicRecord().setName(topicName).setTopicId(topicId))
+        val onlineRecord = new PartitionRecord()
+          .setPartitionId(0)
+          .setTopicId(topicId)
+          .setReplicas(util.Arrays.asList(brokerId, lostReplica))
+          .setIsr(util.List.of(brokerId))
+          .setLeader(brokerId)
+          .setLeaderEpoch(0)
+          .setPartitionEpoch(0)
+        onlineRecord.unknownTaggedFields().add(
+          InitDisklessLogFields.encodeClassicToDisklessStartOffset(
+            PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING))
+        onlineDelta.replay(onlineRecord)
+        val onlineImage = imageFromTopics(onlineDelta.apply())
+        replicaManager.applyDelta(onlineDelta, onlineImage)
+
+        def partition: Partition =
+          replicaManager.getPartition(tp).asInstanceOf[HostedPartition.Online[Partition]].partition
+        def rearmRecord(): PartitionChangeRecord = {
+          // The record that AlterDisklessSwitch writes: same leader, pending seal.
+          val record = new PartitionChangeRecord().setTopicId(topicId).setPartitionId(0).setLeader(brokerId)
+          record.unknownTaggedFields().add(
+            InitDisklessLogFields.encodeClassicToDisklessStartOffset(
+              PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING))
+          record
+        }
+
+        // The pending switch seals and registers, but the high watermark stays below the log end offset.
+        val pendingDelta = new TopicsDelta(onlineImage.topics())
+        pendingDelta.replay(rearmRecord())
+        val pendingImage = imageFromTopics(pendingDelta.apply())
+        replicaManager.applyDelta(pendingDelta, pendingImage)
+        verify(mockIdlm, times(1)).registerPartition(any(classOf[Partition]), ArgumentMatchers.eq(topicId))
+        assertTrue(partition.isUnderMinIsr)
+        assertEquals(staleHw, partition.localLogOrException.highWatermark)
+        assertEquals(leo, partition.localLogOrException.logEndOffset)
+
+        // Lowering min.insync.replicas updates the log config but doesn't move the high watermark.
+        val lowerMinIsr = new Properties()
+        lowerMinIsr.put(TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG, "1")
+        replicaManager.logManager.updateTopicConfig(topicName, lowerMinIsr,
+          isRemoteLogStorageSystemEnabled = false, wasRemoteLogEnabled = false)
+        assertFalse(partition.isUnderMinIsr)
+        assertEquals(staleHw, partition.localLogOrException.highWatermark)
+
+        // Rearm: the leader seals and registers again, and its high watermark reaches the sealed log end
+        // offset, so the leader can propose the seal.
+        val rearmDelta = new TopicsDelta(pendingImage.topics())
+        rearmDelta.replay(rearmRecord())
+        replicaManager.applyDelta(rearmDelta, imageFromTopics(rearmDelta.apply()))
+        verify(mockIdlm, times(2)).registerPartition(any(classOf[Partition]), ArgumentMatchers.eq(topicId))
+        assertEquals(leo, partition.localLogOrException.highWatermark)
+        assertEquals(leo, partition.localLogOrException.logEndOffset)
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
       }
     } finally {
       consolidationCtor.close()
