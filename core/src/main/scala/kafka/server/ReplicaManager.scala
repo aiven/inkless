@@ -4880,7 +4880,12 @@ class ReplicaManager(val config: KafkaConfig,
           partition.seal()
           partition.makeLeader(info.partition, false, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
 
-          if (info.partition.classicToDisklessStartOffset == PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING) {
+          if (isSwitchPending) {
+            // Abort AFTER makeLeader so the markers carry the leader epoch in which this broker leads.
+            // The seal already blocks produce, and registerPartition waits for HW == LEO, so the
+            // proposed seal offset covers the markers. Abort only while the switch is pending: a
+            // committed seal offset fixes the classic prefix, and a leader must not append to it.
+            partition.abortOngoingTransactionsAsSealedLeader()
             initDisklessLogManager.foreach(_.registerPartition(partition, info.topicId()))
           }
           changedPartitions.add(partition)
@@ -4902,8 +4907,15 @@ class ReplicaManager(val config: KafkaConfig,
             // The intervening window is harmless because the topic is already fully switched to
             // diskless, so produces route to the diskless path and never append to the classic
             // local log; seal() here just marks the partition sealed for the HW restore below.
+            // appendRecords rejects a produce to a pending switch before it reaches the partition.
             partition.makeLeader(info.partition, isNew, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
             partition.seal()
+            if (isSwitchPending) {
+              // The broker loaded a pending switch with no Partition yet, such as after a restart.
+              // It drives the switch like the active-switch branch above.
+              partition.abortOngoingTransactionsAsSealedLeader()
+              initDisklessLogManager.foreach(_.registerPartition(partition, info.topicId()))
+            }
             changedPartitions.add(partition)
           } catch {
             case e: KafkaStorageException =>
@@ -4975,6 +4987,8 @@ class ReplicaManager(val config: KafkaConfig,
             try {
               val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
               val isNewLeaderEpoch = partition.makeFollower(info.partition, isNew, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
+              // A follower seals without aborting open transactions. It replicates the leader's
+              // ABORT markers, so its log contains only records that the leader wrote.
               partition.seal()
               changedPartitions.add(partition)
               val isOutOfIsr = !info.partition.isr.contains(config.brokerId)
