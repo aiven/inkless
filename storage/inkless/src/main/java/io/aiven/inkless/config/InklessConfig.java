@@ -26,6 +26,7 @@ import org.apache.kafka.common.network.ListenerName;
 import java.lang.reflect.InvocationTargetException;
 import java.time.Duration;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -71,6 +72,18 @@ public class InklessConfig extends AbstractConfig {
     private static final int PRODUCE_UPLOAD_BACKOFF_MS_DEFAULT = 10;
 
     public static final String STORAGE_PREFIX = "storage.";
+    public static final String STORAGE_ROLE_FETCH = "fetch";
+    public static final String STORAGE_ROLE_PRODUCE = "produce";
+    public static final String STORAGE_ROLE_BACKGROUND = "background";
+    // S3 DeleteObjects requests hold up to 1000 keys and consolidation cold reads are large.
+    // The background role needs longer S3 and GCS timeouts than the produce and fetch paths.
+    private static final Map<String, Map<String, String>> STORAGE_ROLE_DEFAULTS = Map.of(
+        STORAGE_ROLE_BACKGROUND, Map.of(
+            "s3.api.call.timeout", "30000",
+            "s3.api.call.attempt.timeout", "10000",
+            "gcs.read.timeout", "10000"
+        )
+    );
 
     public static final String STORAGE_BACKEND_CLASS_CONFIG = STORAGE_PREFIX + "backend.class";
     private static final String STORAGE_BACKEND_CLASS_DOC = "The storage backend implementation class";
@@ -773,11 +786,31 @@ public class InklessConfig extends AbstractConfig {
     }
 
     public StorageBackend storage(final Metrics metrics) {
+        return storage(metrics, null);
+    }
+
+    /**
+     * Creates a storage backend configured from {@code storage.*}. Keys under
+     * {@code storage.<role>.*} override the shared {@code storage.*} keys for that role only.
+     * Such a key is {@code storage.background.s3.api.call.timeout}. A role can also have defaults
+     * that apply when neither {@code storage.*} nor {@code storage.<role>.*} sets the key.
+     *
+     * @param role one of the {@code STORAGE_ROLE_*} names, or null for the shared configuration
+     */
+    public StorageBackend storage(final Metrics metrics, final String role) {
         try {
             @SuppressWarnings("unchecked")
             final Class<? extends StorageBackend> storageClass = (Class<? extends StorageBackend>) getClass(STORAGE_BACKEND_CLASS_CONFIG);
             final StorageBackend storage = storageClass.getDeclaredConstructor(Metrics.class).newInstance(metrics);
-            storage.configure(this.originalsWithPrefix(STORAGE_PREFIX));
+            final Map<String, Object> storageConfigs = new HashMap<>();
+            if (role != null) {
+                storageConfigs.putAll(STORAGE_ROLE_DEFAULTS.getOrDefault(role, Map.of()));
+            }
+            storageConfigs.putAll(originalsWithPrefix(STORAGE_PREFIX));
+            if (role != null) {
+                storageConfigs.putAll(originalsWithPrefix(STORAGE_PREFIX + role + "."));
+            }
+            storage.configure(storageConfigs);
             return storage;
         } catch (NoSuchMethodException | InvocationTargetException | InstantiationException |
                  IllegalAccessException e) {

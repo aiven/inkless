@@ -582,3 +582,18 @@ What the gauge counts, and what it misses:
 - Resource isolation prevents cascading failures
 
 > **Key insight**: End-to-end latency may not improve in absolute terms, but **severe degradation and instability are removed entirely**. The system becomes predictable and controllable.
+
+## Object storage client settings
+
+Each broker creates object storage clients for the roles `fetch`, `produce`, and `background`. The `fetch` role serves both the hot path and the lagging consumer path. The `background` role serves the file cleaner deletes and the consolidation cold reads. The shared `inkless.storage.*` settings apply to these clients.
+
+The `background` role defaults to `s3.api.call.timeout=30000` and `s3.api.call.attempt.timeout=10000`, so large `DeleteObjects` requests have time to finish. For GCS, the `background` role defaults to `gcs.read.timeout=10000`. The `fetch` and `produce` roles keep the shared defaults: 2000 and 1000 for S3, and 1000 for the GCS read timeout. Azure Blob Storage has no timeout setting, so the `background` role has no default for it.
+
+To change a setting for one role, set the same key under `inkless.storage.<role>.`. The precedence, from lowest to highest, is the role default, the shared `inkless.storage.*` key, and the `inkless.storage.<role>.*` key. Role names must match exactly: the broker ignores an unknown role.
+
+The following settings give the `background` role longer S3 timeouts than the defaults and leave the produce and fetch roles on the shared values:
+
+```properties
+inkless.storage.background.s3.api.call.attempt.timeout=20000
+inkless.storage.background.s3.api.call.timeout=60000
+```
