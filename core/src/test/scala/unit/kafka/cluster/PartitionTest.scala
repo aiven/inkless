@@ -42,7 +42,7 @@ import org.mockito.invocation.InvocationOnMock
 
 import java.lang.{Long => JLong}
 import java.nio.ByteBuffer
-import java.util.Optional
+import java.util.{Optional, OptionalInt}
 import java.util.concurrent.{ConcurrentHashMap, CountDownLatch, Semaphore}
 import kafka.server.metadata.KRaftMetadataCache
 import kafka.server.share.DelayedShareFetch
@@ -4284,10 +4284,11 @@ class PartitionTest extends AbstractPartitionTest {
     assertTrue(log.firstUnstableOffset().isPresent)
 
     partition.seal()
+    partition.abortOngoingTransactionsAsSealedLeader()
 
     assertTrue(partition.isSealed)
     assertFalse(log.hasOngoingTransaction(producerId, producerEpoch),
-      "Ongoing transaction should have been aborted by seal")
+      "The sealed leader should have aborted the ongoing transaction")
     assertTrue(log.producerStateManager().firstUndecidedOffset().isEmpty,
       "There should be no undecided transactions after aborting")
   }
@@ -4314,6 +4315,7 @@ class PartitionTest extends AbstractPartitionTest {
     assertTrue(log.hasOngoingTransaction(pid2, epoch))
 
     partition.seal()
+    partition.abortOngoingTransactionsAsSealedLeader()
 
     assertTrue(partition.isSealed)
     assertFalse(log.hasOngoingTransaction(pid1, epoch))
@@ -4356,9 +4358,88 @@ class PartitionTest extends AbstractPartitionTest {
     val leoBeforeSeal = log.logEndOffset
 
     partition.seal()
+    partition.abortOngoingTransactionsAsSealedLeader()
 
     assertTrue(log.logEndOffset > leoBeforeSeal,
-      "LEO should have increased due to the ABORT marker appended during seal")
+      "LEO should have increased due to the ABORT marker that the sealed leader appended")
+  }
+
+  @Test
+  def testSealOnFollowerDoesNotAppendAbortMarkers(): Unit = {
+    val leaderEpoch = 1
+    partition = setupPartitionWithMocks(leaderEpoch, isLeader = false)
+    val log = partition.localLogOrException
+
+    val producerId = 137L
+    val producerEpoch: Short = 5
+
+    appendTransactionalRecords(log, leaderEpoch, producerId, producerEpoch, 0,
+      new SimpleRecord("k1".getBytes, "v1".getBytes)
+    )
+    val leoBeforeSeal = log.logEndOffset
+
+    partition.seal()
+    partition.abortOngoingTransactionsAsSealedLeader()
+
+    assertTrue(partition.isSealed)
+    assertEquals(leoBeforeSeal, log.logEndOffset,
+      "A follower must not append an ABORT marker: it replicates the leader's markers")
+    assertTrue(log.hasOngoingTransaction(producerId, producerEpoch))
+  }
+
+  @Test
+  def testSealedFollowerAbortsInNewLeaderEpochWhenItBecomesLeader(): Unit = {
+    val followerEpoch = 1
+    val newLeaderEpoch = followerEpoch + 1
+    partition = setupPartitionWithMocks(followerEpoch, isLeader = false)
+    val log = partition.localLogOrException
+
+    val producerId = 137L
+    val producerEpoch: Short = 5
+
+    appendTransactionalRecords(log, followerEpoch, producerId, producerEpoch, 0,
+      new SimpleRecord("k1".getBytes, "v1".getBytes)
+    )
+    val markerOffset = log.logEndOffset
+
+    partition.seal()
+    val replicas = Array(brokerId, remoteReplicaId)
+    makeLeader(None, newLeaderEpoch, replicas, replicas, partition.getPartitionEpoch + 1, isNew = false)
+    partition.abortOngoingTransactionsAsSealedLeader()
+
+    assertFalse(log.hasOngoingTransaction(producerId, producerEpoch))
+    assertEquals(markerOffset + 1, log.logEndOffset)
+    assertEquals(OptionalInt.of(newLeaderEpoch), log.leaderEpochCache.epochForOffset(markerOffset),
+      "The ABORT marker must carry the leader epoch in which this broker leads")
+    assertEquals(0, log.activeSegment.size, "The marker must be in a closed segment")
+  }
+
+  @Test
+  def testSealedLeaderAbortAdvancesHighWatermarkWhenLeaderIsTheOnlyIsrMember(): Unit = {
+    val leaderEpoch = 1
+    partition = setupPartitionWithMocks(leaderEpoch, isLeader = true)
+    val log = partition.localLogOrException
+
+    appendTransactionalRecords(log, leaderEpoch, 137L, 5.toShort, 0,
+      new SimpleRecord("k1".getBytes, "v1".getBytes)
+    )
+
+    partition.seal()
+    makeLeader(None, leaderEpoch + 1, Array(brokerId), Array(brokerId, remoteReplicaId),
+      partition.getPartitionEpoch + 1, isNew = false)
+    assertEquals(log.logEndOffset, log.highWatermark)
+
+    partition.abortOngoingTransactionsAsSealedLeader()
+
+    assertEquals(log.logEndOffset, log.highWatermark,
+      "No follower fetch advances the high watermark past the ABORT marker when the leader is the only ISR member")
+  }
+
+  @Test
+  def testAbortOngoingTransactionsAsSealedLeaderRequiresSeal(): Unit = {
+    partition = setupPartitionWithMocks(leaderEpoch = 1, isLeader = true)
+
+    assertThrows(classOf[IllegalStateException], () => partition.abortOngoingTransactionsAsSealedLeader())
   }
 
   @Test

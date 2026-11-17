@@ -1810,8 +1810,13 @@ class KafkaApis(val requestChannel: RequestChannel,
       val currentErrors = new ConcurrentHashMap[TopicPartition, Errors]()
       marker.partitions.forEach { partition =>
         if (inklessSharedState.exists(s => s.metadata().isDisklessTopic(partition.topic()))) {
-          warn("Attempt to call WriteTxnMarkersRequest with diskless topic")
-          currentErrors.put(partition, Errors.INVALID_TOPIC_EXCEPTION)
+          // Only a transaction that was open when the topic switched from classic to diskless gets here.
+          // The leader aborted it in the classic log when it sealed the partition. With
+          // UNSUPPORTED_FOR_MESSAGE_FORMAT, the transaction coordinator stops waiting for this partition
+          // and completes the transaction. Its completion handler doesn't handle INVALID_TOPIC_EXCEPTION.
+          warn(s"Dropping the ${marker.transactionResult} marker of producer $producerId for diskless partition $partition. " +
+            "The classic-to-diskless switch aborted the open transactions of the partition.")
+          currentErrors.put(partition, Errors.UNSUPPORTED_FOR_MESSAGE_FORMAT)
         } else {
           replicaManager.onlinePartition(partition) match {
             case Some(_) =>
