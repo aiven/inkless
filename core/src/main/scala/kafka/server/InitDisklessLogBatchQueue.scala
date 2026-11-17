@@ -24,6 +24,7 @@ import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.message.{InitDisklessLogResponseData, SetClassicPrefixInRemoteStorageResponseData}
 import org.apache.kafka.common.requests.{InitDisklessLogRequest, InitDisklessLogResponse, SetClassicPrefixInRemoteStorageRequest, SetClassicPrefixInRemoteStorageResponse}
 import org.apache.kafka.common.utils.ExponentialBackoff
+import org.apache.kafka.metadata.InitDisklessLogFields
 import org.apache.kafka.server.common.{ControllerRequestCompletionHandler, NodeToControllerChannelManager}
 import org.apache.kafka.server.util.Scheduler
 
@@ -62,7 +63,8 @@ abstract class RetriableInitDisklessLogBatchQueue[S <: InitDisklessLogState](
   lingerMs: Long,
   retryPeriodMs: Long,
   maxRetryTimeMs: Long,
-  onRetry: () => Unit = () => ()
+  onRetry: () => Unit = () => (),
+  maxBatchWeight: Long = Long.MaxValue
 ) extends Logging {
   import InitDisklessLogBatchQueue._
 
@@ -84,6 +86,9 @@ abstract class RetriableInitDisklessLogBatchQueue[S <: InitDisklessLogState](
   }
 
   protected def shouldSend(state: S): Boolean
+
+  /** Returns what `state` adds to the weight of a batch, which holds at most `maxBatchWeight`. */
+  protected def weight(state: S): Long = 0L
 
   /**
    * Sends one batch and returns parsed per-partition outcomes.
@@ -150,6 +155,8 @@ abstract class RetriableInitDisklessLogBatchQueue[S <: InitDisklessLogState](
       return
     }
 
+    deferOverflow(sendableByTp)
+
     val sendableStates: Seq[S] = sendableByTp.values().asScala.map(_.state).toList
     val keyToTp = sendableByTp.asScala.map { case (tp, attempt) =>
       ((attempt.state.topicId, tp.partition), tp)
@@ -201,6 +208,55 @@ abstract class RetriableInitDisklessLogBatchQueue[S <: InitDisklessLogState](
           enqueueRetryOrFail(tp, attempt)
         }
         finishTask()
+    }
+  }
+
+  /**
+   * Moves the states that don't fit in `maxBatchWeight` from `sendableByTp` back to the queue, ahead of the
+   * states that arrived in the meantime. The first state always stays. Every batch then sends at least
+   * one state. A deferral isn't a retry and keeps the attempt number.
+   */
+  private def deferOverflow(sendableByTp: util.LinkedHashMap[TopicPartition, Attempt]): Unit = {
+    if (maxBatchWeight == Long.MaxValue) return
+
+    val deferredByTp = new util.LinkedHashMap[TopicPartition, Attempt]()
+    var batchWeight = 0L
+    var kept = 0
+    val entries = sendableByTp.entrySet().iterator()
+    while (entries.hasNext) {
+      val entry = entries.next()
+      val stateWeight =
+        try weight(entry.getValue.state)
+        catch {
+          case NonFatal(e) =>
+            // The send reports a state it can't read. Counting it as empty keeps this task alive.
+            warn(s"Failed to compute the batch weight of ${entry.getKey}", e)
+            0L
+        }
+      if (kept > 0 && batchWeight + stateWeight > maxBatchWeight) {
+        deferredByTp.put(entry.getKey, entry.getValue)
+        entries.remove()
+      } else {
+        batchWeight += stateWeight
+        kept += 1
+      }
+    }
+    if (deferredByTp.isEmpty) return
+
+    info(s"Deferring ${deferredByTp.size} of ${deferredByTp.size + kept} states to a later batch " +
+      s"because this one holds at most a weight of $maxBatchWeight")
+    withQueueLock {
+      val arrivedByTp = queuedByTp
+      queuedByTp = new util.LinkedHashMap[TopicPartition, Attempt]()
+      deferredByTp.asScala.foreach { case (tp, attempt) =>
+        // A missing promise means `remove(tp)` canceled the state after this task took it from the queue.
+        if (resultPromiseByTp.containsKey(tp)) queuedByTp.put(tp, attempt)
+      }
+      arrivedByTp.asScala.foreach { case (tp, arrived) =>
+        // A state that arrived for a deferred partition is fresher, and it takes the deferred position.
+        val attemptNumber = Option(queuedByTp.get(tp)).map(_.attemptNumber).getOrElse(0)
+        queuedByTp.put(tp, Attempt(arrived.state, Math.max(arrived.attemptNumber, attemptNumber)))
+      }
     }
   }
 
@@ -283,7 +339,8 @@ class SendingToControllerBatchQueue(
   lingerMs: Long,
   retryPeriodMs: Long,
   maxRetryTimeMs: Long,
-  onRetry: () => Unit = () => ()
+  onRetry: () => Unit = () => (),
+  maxProducerStateEntries: Int = InitDisklessLogFields.MAX_PRODUCER_STATE_ENTRIES
 ) extends RetriableInitDisklessLogBatchQueue[SendingToController](
   scheduler = scheduler,
   brokerId = brokerId,
@@ -291,9 +348,14 @@ class SendingToControllerBatchQueue(
   lingerMs = lingerMs,
   retryPeriodMs = retryPeriodMs,
   maxRetryTimeMs = maxRetryTimeMs,
-  onRetry = onRetry
+  onRetry = onRetry,
+  // The controller rejects the partitions of a request whose producer state entries exceed this limit.
+  maxBatchWeight = maxProducerStateEntries
 ) {
   logIdent = s"[SendingToControllerBatchQueue] "
+
+  override protected def weight(state: SendingToController): Long =
+    SendingToController.producerStateEntryCount(state, maxProducerStateEntries)
 
   override protected def shouldSend(state: SendingToController): Boolean = {
     if (!state.partition.isLeader) {
@@ -313,7 +375,12 @@ class SendingToControllerBatchQueue(
     brokerEpoch: Long,
     onBatchComplete: Either[String, Iterable[ParsedResponse]] => Unit
   ): Unit = {
-    val requestData = SendingToController.buildRequestData(states, brokerId, brokerEpoch)
+    val requestData = SendingToController.buildRequestData(states, brokerId, brokerEpoch, maxProducerStateEntries)
+    if (requestData.topics().isEmpty) {
+      // The broker built no entry. The queue retries every state that doesn't get an outcome.
+      onBatchComplete(Right(Seq.empty))
+      return
+    }
     val request = new InitDisklessLogRequest.Builder(requestData)
     controllerChannelManager.sendRequest(request, new ControllerRequestCompletionHandler {
       override def onComplete(response: ClientResponse): Unit = {

@@ -111,6 +111,13 @@ Once HW catches up to LEO, the partition moves to `SendingToController`. The bro
 
 At this point `HW == LEO`, so the proposed start offset is the sealed LEO and is safely replicated to the ISR.
 
+The producer states contain one entry per retained batch of each active producer. One request contains at most 123,361 entries. The controller writes the records of a request as one metadata batch, and this limit keeps the entries within half of the 8 MiB that the Raft client accepts in a batch. The broker applies the limit in two ways:
+
+* If the ready partitions exceed the limit together, the broker sends them in several requests. A partition that waits for a later request doesn't count as a retry.
+* If one partition exceeds the limit, the broker sends only the newest batch of each producer. The control plane needs only that batch to check the next sequence of a producer. A retry of an older batch then fails with `OUT_OF_ORDER_SEQUENCE_NUMBER`, because the control plane no longer recognizes it as a duplicate. If the producers still don't fit, the broker keeps the producers whose newest batch has the highest offset and drops the others. The control plane rejects the next batch of a dropped producer with `OUT_OF_ORDER_SEQUENCE_NUMBER` until the producer bumps its epoch. The broker logs a warning with the number of producers it dropped.
+
+If the broker can't build the request entry of a partition, it logs the error and retries that partition alone. The broker still sends the other partitions of the batch to the controller.
+
 ### Step 4: persist the final start offset
 
 The controller handles `InitDisklessLog` as a serialized write operation. For each partition, it validates that:
@@ -123,6 +130,8 @@ The controller handles `InitDisklessLog` as a serialized write operation. For ea
 If validation succeeds, the controller writes a `PartitionChangeRecord` containing the final `classicToDisklessStartOffset` and the producer states. These values are encoded as tagged fields on the partition change record.
 
 If the broker is stale, the controller rejects the request. A lower leader epoch is a permanent failure for that broker's attempt; retriable controller or transport failures are retried by the broker.
+
+The controller applies the same limit of 123,361 producer state entries to the records of one request. It rejects a partition whose entries don't fit with `RECORD_LIST_TOO_LARGE` and doesn't write a record for it. The broker retries that partition in a later request. A metadata batch over the Raft batch size fails the whole request and makes the active controller resign. The limit prevents the controller from passing such a batch to the Raft client.
 
 ### Step 5: initialize the diskless log
 

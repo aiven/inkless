@@ -22,6 +22,7 @@ import kafka.server.InitDisklessLogManager._
 import kafka.utils.Logging
 import org.apache.kafka.common.{TopicPartition, Uuid}
 import org.apache.kafka.common.utils.Time
+import org.apache.kafka.metadata.InitDisklessLogFields
 import org.apache.kafka.server.common.NodeToControllerChannelManager
 import org.apache.kafka.server.metrics.KafkaMetricsGroup
 import org.apache.kafka.server.util.Scheduler
@@ -38,7 +39,8 @@ class InitDisklessLogManager(
   scheduler: Scheduler,
   brokerId: Int,
   brokerEpochSupplier: () => Long,
-  time: Time = Time.SYSTEM
+  time: Time = Time.SYSTEM,
+  maxProducerStateEntries: Int = InitDisklessLogFields.MAX_PRODUCER_STATE_ENTRIES
 ) extends Logging {
 
   this.logIdent = s"[InitDisklessLogManager broker=$brokerId] "
@@ -72,7 +74,8 @@ class InitDisklessLogManager(
     lingerMs = lingerMs,
     retryPeriodMs = retryPeriodMs,
     maxRetryTimeMs = maxRetryTimeMs,
-    onRetry = () => metrics.markRetried()
+    onRetry = () => metrics.markRetried(),
+    maxProducerStateEntries = maxProducerStateEntries
   )
   private val awaitingMetadataQueue = new AwaitingMetadataBatchQueue(
     controlPlane = controlPlane,

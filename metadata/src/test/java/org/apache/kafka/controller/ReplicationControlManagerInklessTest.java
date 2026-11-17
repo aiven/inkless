@@ -59,12 +59,14 @@ import org.apache.kafka.common.metadata.PartitionChangeRecord;
 import org.apache.kafka.common.metadata.TopicRecord;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
+import org.apache.kafka.common.protocol.MessageUtil;
 import org.apache.kafka.common.requests.ApiError;
 import org.apache.kafka.controller.ReplicationControlManagerTest.ReplicationControlTestContext;
 import org.apache.kafka.metadata.InitDisklessLogFields;
 import org.apache.kafka.metadata.LeaderRecoveryState;
 import org.apache.kafka.metadata.PartitionRegistration;
 import org.apache.kafka.metadata.Replicas;
+import org.apache.kafka.raft.KafkaRaftClient;
 import org.apache.kafka.server.common.ApiMessageAndVersion;
 import org.apache.kafka.server.common.MetadataVersion;
 import org.apache.kafka.server.common.TopicIdPartition;
@@ -98,6 +100,7 @@ import static org.apache.kafka.common.protocol.Errors.INVALID_REPLICA_ASSIGNMENT
 import static org.apache.kafka.common.protocol.Errors.INVALID_REQUEST;
 import static org.apache.kafka.common.protocol.Errors.NONE;
 import static org.apache.kafka.common.protocol.Errors.NOT_CONTROLLER;
+import static org.apache.kafka.common.protocol.Errors.RECORD_LIST_TOO_LARGE;
 import static org.apache.kafka.common.protocol.Errors.UNKNOWN_TOPIC_ID;
 import static org.apache.kafka.common.protocol.Errors.UNKNOWN_TOPIC_OR_PARTITION;
 import static org.apache.kafka.controller.ControllerRequestContextUtil.anonymousContextFor;
@@ -4686,6 +4689,134 @@ public class ReplicationControlManagerInklessTest {
             assertEquals(5000L, updatedPartition.disklessProducerStates.get(0).batchMaxTimestamp());
             assertEquals(2L, updatedPartition.disklessProducerStates.get(1).producerId());
             assertEquals(3L, updatedPartition.disklessProducerStates.get(2).producerId());
+        }
+
+        private InitDisklessLogRequestData.PartitionData partitionDataWithProducerStates(
+            int partitionId,
+            int leaderEpoch,
+            int entries
+        ) {
+            InitDisklessLogRequestData.PartitionData partitionData = new InitDisklessLogRequestData.PartitionData()
+                .setPartitionId(partitionId)
+                .setDisklessStartOffset(50L)
+                .setLeaderEpoch(leaderEpoch);
+            for (int i = 0; i < entries; i++) {
+                partitionData.producerStates().add(new InitDisklessLogRequestData.ProducerState()
+                    .setProducerId(i)
+                    .setProducerEpoch((short) 0)
+                    .setBaseSequence(0)
+                    .setLastSequence(0)
+                    .setAssignedOffset(i)
+                    .setBatchMaxTimestamp(1000L));
+            }
+            return partitionData;
+        }
+
+        private static long serializedSize(List<ApiMessageAndVersion> records) {
+            return records.stream()
+                .mapToLong(record ->
+                    MessageUtil.toVersionPrefixedByteBuffer(record.version(), record.message()).remaining())
+                .sum();
+        }
+
+        @Test
+        public void testInitDisklessLogDefersPartitionsOverTheMetadataBatchLimit() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder().build();
+            ReplicationControlManager replicationControl = ctx.replicationControl;
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            int numPartitions = 6;
+            int[][] assignments = new int[numPartitions][];
+            Arrays.fill(assignments, new int[] {0, 1, 2});
+            Uuid topicId = ctx.createTestTopic("foo", assignments).topicId();
+
+            // Two partitions fit in the limit and a third doesn't. All six exceed the Raft batch size.
+            int entriesPerPartition = InitDisklessLogFields.MAX_PRODUCER_STATE_ENTRIES * 2 / 5;
+            InitDisklessLogRequestData.TopicData topicData = new InitDisklessLogRequestData.TopicData()
+                .setTopicId(topicId);
+            for (int partitionId = 0; partitionId < numPartitions; partitionId++) {
+                markSwitchPending(ctx, topicId, partitionId);
+                topicData.partitions().add(partitionDataWithProducerStates(
+                    partitionId, replicationControl.getPartition(topicId, partitionId).leaderEpoch, entriesPerPartition));
+            }
+            InitDisklessLogRequestData request = new InitDisklessLogRequestData()
+                .setBrokerId(0)
+                .setBrokerEpoch(defaultBrokerEpoch(0));
+            request.topics().add(topicData);
+            ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.ALTER_PARTITION);
+
+            List<ApiMessageAndVersion> allRecords = new ArrayList<>();
+            for (int round = 0; round < numPartitions / 2; round++) {
+                ControllerResult<InitDisklessLogResponseData> result =
+                    replicationControl.initDisklessLog(requestContext, request);
+
+                // Each request commits the next two partitions and defers the ones after them.
+                assertEquals(2, result.records().size());
+                assertTrue(serializedSize(result.records()) < KafkaRaftClient.MAX_BATCH_SIZE_BYTES / 2 + 1024);
+                for (InitDisklessLogResponseData.PartitionResponse response :
+                        result.response().topics().get(0).partitions()) {
+                    int partitionId = response.partitionId();
+                    short expected;
+                    if (partitionId < 2 * round) {
+                        // An earlier request already committed the seal.
+                        expected = INVALID_REQUEST.code();
+                    } else if (partitionId < 2 * round + 2) {
+                        expected = NONE.code();
+                    } else {
+                        expected = RECORD_LIST_TOO_LARGE.code();
+                    }
+                    assertEquals(expected, response.errorCode(), "partition " + partitionId + " in round " + round);
+                }
+                ctx.replay(result.records());
+                allRecords.addAll(result.records());
+            }
+
+            assertTrue(serializedSize(allRecords) > KafkaRaftClient.MAX_BATCH_SIZE_BYTES);
+            for (int partitionId = 0; partitionId < numPartitions; partitionId++) {
+                PartitionRegistration partition = replicationControl.getPartition(topicId, partitionId);
+                assertEquals(50L, partition.classicToDisklessStartOffset);
+                assertEquals(entriesPerPartition, partition.disklessProducerStates.size());
+            }
+        }
+
+        @Test
+        public void testInitDisklessLogRejectsPartitionOverTheProducerStateLimit() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder().build();
+            ReplicationControlManager replicationControl = ctx.replicationControl;
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            Uuid topicId = ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}}).topicId();
+            markSwitchPending(ctx, topicId, 0);
+            int leaderEpoch = replicationControl.getPartition(topicId, 0).leaderEpoch;
+            ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.ALTER_PARTITION);
+
+            // One entry over the limit: the controller writes no record and keeps the switch pending.
+            InitDisklessLogRequestData tooLarge = new InitDisklessLogRequestData()
+                .setBrokerId(0)
+                .setBrokerEpoch(defaultBrokerEpoch(0));
+            tooLarge.topics().add(new InitDisklessLogRequestData.TopicData().setTopicId(topicId));
+            tooLarge.topics().get(0).partitions().add(partitionDataWithProducerStates(
+                0, leaderEpoch, InitDisklessLogFields.MAX_PRODUCER_STATE_ENTRIES + 1));
+            ControllerResult<InitDisklessLogResponseData> rejected =
+                replicationControl.initDisklessLog(requestContext, tooLarge);
+            assertEquals(List.of(), rejected.records());
+            assertEquals(RECORD_LIST_TOO_LARGE.code(),
+                rejected.response().topics().get(0).partitions().get(0).errorCode());
+            assertEquals(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING,
+                replicationControl.getPartition(topicId, 0).classicToDisklessStartOffset);
+
+            // At the limit: the controller accepts the partition, and its record fits in a Raft batch.
+            InitDisklessLogRequestData atLimit = new InitDisklessLogRequestData()
+                .setBrokerId(0)
+                .setBrokerEpoch(defaultBrokerEpoch(0));
+            atLimit.topics().add(new InitDisklessLogRequestData.TopicData().setTopicId(topicId));
+            atLimit.topics().get(0).partitions().add(partitionDataWithProducerStates(
+                0, leaderEpoch, InitDisklessLogFields.MAX_PRODUCER_STATE_ENTRIES));
+            ControllerResult<InitDisklessLogResponseData> accepted =
+                replicationControl.initDisklessLog(requestContext, atLimit);
+            assertEquals(1, accepted.records().size());
+            assertEquals(NONE.code(), accepted.response().topics().get(0).partitions().get(0).errorCode());
+            assertTrue(serializedSize(accepted.records()) < KafkaRaftClient.MAX_BATCH_SIZE_BYTES / 2 + 1024);
         }
 
         @Test

@@ -368,6 +368,197 @@ class InitDisklessLogManagerTest {
     captured.complete(makeSuccessResponse(topicId, 0))
   }
 
+  // Replaces the manager with one that allows `maxEntries` producer state entries per request.
+  private def useProducerStateLimit(maxEntries: Int): Unit = {
+    manager.shutdown()
+    manager = new InitDisklessLogManager(
+      controllerChannelManager = channelManager,
+      controlPlane = controlPlane,
+      scheduler = scheduler,
+      brokerId = brokerId,
+      brokerEpochSupplier = () => brokerEpoch,
+      time = mockTime,
+      maxProducerStateEntries = maxEntries
+    )
+  }
+
+  private def setActiveProducers(partition: Partition, entries: ProducerStateEntry*): Unit = {
+    val producers = new util.LinkedHashMap[java.lang.Long, ProducerStateEntry]()
+    entries.foreach(entry => producers.put(entry.producerId(), entry))
+    when(partition.log.get.producerStateManager().activeProducers()).thenReturn(producers)
+  }
+
+  private def partitionIdsOf(request: InitDisklessLogRequestData): Seq[Int] =
+    request.topics().asScala.flatMap(_.partitions().asScala.map(_.partitionId())).toSeq
+
+  // Accepts every InitDisklessLog request until the queue is empty, and returns the requests in send order.
+  // MockScheduler doesn't cancel a rescheduled task, so the test can't tell whether the queue sends a deferred
+  // partition before or after the response to the request in flight. The order of the requests is the same.
+  private def acceptRequestsUntilIdle(): Seq[InitDisklessLogRequestData] = {
+    val sent = mutable.ArrayBuffer[InitDisklessLogRequestData]()
+    fireLinger()
+    while (!channelManager.requests.isEmpty) {
+      while (!channelManager.requests.isEmpty) {
+        val captured = channelManager.requests.poll()
+        sent += captured.requestData
+        captured.complete(makeBatchSuccessResponse(topicId, partitionIdsOf(captured.requestData)))
+      }
+      fireLinger()
+    }
+    sent.toSeq
+  }
+
+  @Test
+  def testRequestsAreSplitByProducerStateEntries(): Unit = {
+    // Given three ready partitions with two producer state entries each, and room for four per request
+    useProducerStateLimit(4)
+    val tp1 = new TopicPartition("test-topic", 1)
+    val tp2 = new TopicPartition("test-topic", 2)
+    Seq(tp0, tp1, tp2).foreach { tp =>
+      val partition = mockPartition(tp = tp, hw = 100, leo = 100)
+      setActiveProducers(partition, mockProducerEntry(7L, 0.toShort,
+        new BatchMetadata(4, 54, 4, 1000L),
+        new BatchMetadata(9, 59, 4, 2000L)))
+      manager.registerPartition(partition, topicId)
+    }
+    val retriedBefore = meterCount(InitDisklessLogManager.InitRetriedPerSecMetricName)
+
+    // When the controller accepts every request
+    val requests = acceptRequestsUntilIdle()
+
+    // Then the first request has the two partitions that fit and the next one has the third,
+    // without counting a retry
+    assertEquals(Seq(Seq(0, 1), Seq(2)), requests.map(partitionIdsOf))
+    requests.foreach { request =>
+      assertTrue(request.topics().asScala.flatMap(_.partitions().asScala).map(_.producerStates().size()).sum <= 4)
+    }
+    assertState[AwaitingMetadata](tp0)
+    assertState[AwaitingMetadata](tp1)
+    assertState[AwaitingMetadata](tp2)
+    assertEquals(retriedBefore, meterCount(InitDisklessLogManager.InitRetriedPerSecMetricName))
+  }
+
+  @Test
+  def testPartitionOverTheLimitKeepsTheNewestBatchOfEachProducer(): Unit = {
+    // Given a partition with six producer state entries, room for four, and a second small partition
+    useProducerStateLimit(4)
+    val tp1 = new TopicPartition("test-topic", 1)
+    val large = mockPartition(tp = tp0, hw = 100, leo = 100)
+    setActiveProducers(large,
+      mockProducerEntry(1L, 0.toShort, new BatchMetadata(4, 14, 4, 1000L), new BatchMetadata(9, 19, 4, 2000L)),
+      mockProducerEntry(2L, 3.toShort, new BatchMetadata(2, 32, 2, 3000L), new BatchMetadata(5, 35, 2, 4000L)),
+      mockProducerEntry(3L, 1.toShort, new BatchMetadata(0, 50, 0, 5000L), new BatchMetadata(1, 51, 0, 6000L)))
+    val small = mockPartition(tp = tp1, hw = 100, leo = 100)
+    setActiveProducers(small, mockProducerEntry(9L, 0.toShort, new BatchMetadata(0, 70, 0, 7000L)))
+    manager.registerPartition(large, topicId)
+    manager.registerPartition(small, topicId)
+
+    // When the controller accepts every request
+    val requests = acceptRequestsUntilIdle()
+
+    // Then the large partition goes alone, with the newest batch of every producer
+    assertEquals(Seq(Seq(0), Seq(1)), requests.map(partitionIdsOf))
+    val producerStates = requests.head.topics().get(0).partitions().get(0).producerStates().asScala
+      .map(ps => (ps.producerId(), ps.producerEpoch(), ps.baseSequence(), ps.lastSequence(), ps.assignedOffset(), ps.batchMaxTimestamp()))
+      .toSet
+    assertEquals(Set(
+      (1L, 0.toShort, 5, 9, 15L, 2000L),
+      (2L, 3.toShort, 3, 5, 33L, 4000L),
+      (3L, 1.toShort, 1, 1, 51L, 6000L)
+    ), producerStates)
+
+    // And the small partition follows in its own request, with all its producer state
+    assertEquals(1, requests(1).topics().get(0).partitions().get(0).producerStates().size())
+    assertState[AwaitingMetadata](tp0)
+    assertState[AwaitingMetadata](tp1)
+  }
+
+  @Test
+  def testPartitionOverTheLimitKeepsTheProducersThatWroteLast(): Unit = {
+    // Given a partition with three producers and room for two entries
+    useProducerStateLimit(2)
+    val partition = mockPartition(hw = 400, leo = 400)
+    setActiveProducers(partition,
+      mockProducerEntry(1L, 0.toShort, new BatchMetadata(4, 104, 4, 1000L)),
+      mockProducerEntry(2L, 0.toShort, new BatchMetadata(4, 304, 4, 3000L)),
+      mockProducerEntry(3L, 0.toShort, new BatchMetadata(1, 201, 1, 2000L), new BatchMetadata(3, 203, 1, 2500L)))
+    manager.registerPartition(partition, topicId)
+
+    // When the batch fires
+    fireLinger()
+
+    // Then the request carries the newest batch of the two producers with the highest offsets
+    val request = channelManager.requests.poll()
+    val producerStates = request.requestData.topics().get(0).partitions().get(0).producerStates().asScala
+      .map(ps => (ps.producerId(), ps.baseSequence(), ps.lastSequence(), ps.assignedOffset()))
+      .toSet
+    assertEquals(Set((2L, 0, 4, 300L), (3L, 2, 3, 202L)), producerStates)
+    request.complete(makeSuccessResponse(topicId, 0))
+    assertState[AwaitingMetadata](tp0)
+  }
+
+  @Test
+  def testControllerSizeRejectionIsRetried(): Unit = {
+    // Given two partitions in one request
+    val tp1 = new TopicPartition("test-topic", 1)
+    manager.registerPartition(mockPartition(tp = tp0, hw = 100, leo = 100), topicId)
+    manager.registerPartition(mockPartition(tp = tp1, hw = 100, leo = 100), topicId)
+    fireLinger()
+
+    // When the controller accepts the first one and has no room in the metadata batch for the second
+    val response = new InitDisklessLogResponseData().setTopics(util.List.of(
+      new InitDisklessLogResponseData.TopicResponse()
+        .setTopicId(topicId)
+        .setPartitions(util.List.of(
+          new InitDisklessLogResponseData.PartitionResponse().setPartitionId(0).setErrorCode(Errors.NONE.code()),
+          new InitDisklessLogResponseData.PartitionResponse().setPartitionId(1).setErrorCode(Errors.RECORD_LIST_TOO_LARGE.code())
+        ))
+    ))
+    pollAndComplete(response)
+
+    // Then the second one stays queued and the retry sends it alone
+    assertState[AwaitingMetadata](tp0)
+    assertState[SendingToController](tp1)
+    fireRetry()
+    assertEquals(1, channelManager.requests.size())
+    val retry = channelManager.requests.poll()
+    assertEquals(Seq(1), partitionIdsOf(retry.requestData))
+    retry.complete(makeSuccessResponse(topicId, 1))
+    assertState[AwaitingMetadata](tp1)
+  }
+
+  @Test
+  def testRequestEntryBuildFailureRetriesOnlyThatPartition(): Unit = {
+    // Given a partition whose producer state can't be read and a healthy partition
+    val tp1 = new TopicPartition("test-topic", 1)
+    val broken = mockPartition(tp = tp0, hw = 100, leo = 100)
+    val producerStateManager = broken.log.get.producerStateManager()
+    when(producerStateManager.activeProducers()).thenThrow(new RuntimeException("producer state read failed"))
+    val healthy = mockPartition(tp = tp1, hw = 100, leo = 100)
+    manager.registerPartition(broken, topicId)
+    manager.registerPartition(healthy, topicId)
+
+    // When the batch fires
+    fireLinger()
+
+    // Then the request carries only the healthy partition
+    assertEquals(1, channelManager.requests.size())
+    val first = channelManager.requests.poll()
+    assertEquals(Seq(1), partitionIdsOf(first.requestData))
+    first.complete(makeSuccessResponse(topicId, 1))
+    assertState[AwaitingMetadata](tp1)
+    assertState[SendingToController](tp0)
+
+    // And the other partition goes out once its producer state can be read
+    doReturn(new util.HashMap[java.lang.Long, ProducerStateEntry]()).when(producerStateManager).activeProducers()
+    fireRetry()
+    assertEquals(1, channelManager.requests.size())
+    val retry = channelManager.requests.poll()
+    assertEquals(Seq(0), partitionIdsOf(retry.requestData))
+    retry.complete(makeSuccessResponse(topicId, 0))
+    assertState[AwaitingMetadata](tp0)
+  }
+
   @Test
   def testDuplicateRegisterPartitionInWaitingForHWStaysWaiting(): Unit = {
     // Given a partition registered with HW < LEO
