@@ -7314,6 +7314,50 @@ class ReplicaManagerInklessTest {
   }
 
   // Build a follower delta where `brokerId` is a follower of `leaderId` for the given topic.
+  @Test
+  def testApplyDeltaRegistersPendingSwitchLeaderWithoutExistingPartition(): Unit = {
+    // A leader that loads a pending switch with no Partition yet, such as after a restart, must
+    // seal and register, or nothing proposes the seal offset until the next leader epoch.
+    val topicName = "switched-topic"
+    val topicId = Uuid.randomUuid()
+    val tp = new TopicPartition(topicName, 0)
+    val brokerId = 1
+
+    val mockIdlm = mock(classOf[InitDisklessLogManager])
+    val replicaManager = spy(createReplicaManager(List(topicName), initDisklessLogManager = Some(mockIdlm)))
+    try {
+      val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+      populateLocalLogAtLeoAndCheckpointedHwm(replicaManager, tp, log, leo = 10L, hw = 10L)
+
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp))
+        .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
+
+      val delta = new TopicsDelta(TopicsImage.EMPTY)
+      delta.replay(new TopicRecord().setName(topicName).setTopicId(topicId))
+      val partitionRecord = new PartitionRecord()
+        .setPartitionId(0)
+        .setTopicId(topicId)
+        .setReplicas(util.Arrays.asList(brokerId, brokerId + 1))
+        .setIsr(util.Arrays.asList(brokerId, brokerId + 1))
+        .setLeader(brokerId)
+        .setLeaderEpoch(0)
+        .setPartitionEpoch(0)
+      partitionRecord.unknownTaggedFields().add(
+        InitDisklessLogFields.encodeClassicToDisklessStartOffset(
+          PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING))
+      delta.replay(partitionRecord)
+      assertTrue(replicaManager.onlinePartition(tp).isEmpty, "The partition must not exist before the delta")
+      replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))
+
+      val onlinePartition = replicaManager.getPartition(tp).asInstanceOf[HostedPartition.Online[Partition]].partition
+      assertTrue(onlinePartition.isLeader, "Partition should be leader")
+      assertTrue(onlinePartition.isSealed, "Partition should be sealed")
+      verify(mockIdlm).registerPartition(ArgumentMatchers.eq(onlinePartition), ArgumentMatchers.eq(topicId))
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
   private def disklessFollowerDelta(
     topicName: String,
     topicId: Uuid,

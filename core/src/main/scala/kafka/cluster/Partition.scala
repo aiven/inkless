@@ -324,35 +324,60 @@ class Partition(val topicPartition: TopicPartition,
 
   /**
    * Seal this Partition so that no more records can be appended locally.
-   * After aborting in-flight transactions, the active segment is force-rolled so the
-   * boundary [base_active, LEO) becomes a closed tiering candidate. Without this roll,
-   * an idle switched topic never copies its classic tail to remote (KC-234) because
-   * RemoteLogManager only tiers closed segments.
-   * @throws KafkaStorageException If transaction abortion or segment rolling fails due to an I/O error.
+   * The active segment is force-rolled so the boundary [base_active, LEO) becomes a closed
+   * tiering candidate. Without this roll, an idle switched topic never copies its classic
+   * tail to remote (KC-234) because RemoteLogManager only tiers closed segments.
+   * Sealing doesn't abort open transactions. Only the leader does, with
+   * [[abortOngoingTransactionsAsSealedLeader]], and a follower replicates the leader's markers.
+   * @throws KafkaStorageException If segment rolling fails due to an I/O error.
    */
   def seal(): Unit = inWriteLock[Exception](leaderIsrUpdateLock, () => {
     if (!_sealed) {
-      val leaderLog = localLogOrException
-      if (leaderLog.producerStateManager().firstUndecidedOffset().isPresent) {
-        abortOngoingTransactions(leaderLog)
-      }
+      val localLog = localLogOrException
       _sealed = true
-      // Force-roll the active segment so the boundary becomes a closed tiering candidate.
       // The empty new segment [seal, seal) stays as the active segment (truncateTo(seal) is
       // only called when LEO > seal, which is not the case here); it is harmless — no records,
       // not tiered by RLM, and reused if the switch is aborted.
-      if (leaderLog.activeSegment().size() > 0) {
-        try {
-          leaderLog.roll()
-        } catch {
-          case e: java.io.IOException =>
-            throw new KafkaStorageException(s"Failed to roll active segment while sealing " +
-              s"partition $topicPartition for diskless switch", e)
-        }
-      }
-      stateChangeLogger.info(s"Sealed partition $topicPartition for diskless switch with LEO ${leaderLog.logEndOffset}")
+      rollActiveSegmentOfSealedLog(localLog)
+      stateChangeLogger.info(s"Sealed partition $topicPartition for diskless switch with LEO ${localLog.logEndOffset}")
     }
   })
+
+  /**
+   * Aborts every undecided transaction in the sealed log of this leader, then rolls the
+   * active segment so the markers are in a closed segment.
+   * Call it after `makeLeader`: the markers must carry the leader epoch in which this broker
+   * leads. A marker in an earlier epoch is a record that the leader of that epoch didn't write.
+   * It doesn't depend on whether `seal()` ran in this call sequence, because a replica that
+   * sealed as a follower can become the leader with an open transaction in its log.
+   * @throws KafkaStorageException If transaction abortion or segment rolling fails due to an I/O error.
+   */
+  def abortOngoingTransactionsAsSealedLeader(): Unit = inWriteLock[Exception](leaderIsrUpdateLock, () => {
+    if (!_sealed) {
+      throw new IllegalStateException(s"Partition $topicPartition must be sealed before the leader aborts its open transactions")
+    }
+    leaderLogIfLocal.foreach { leaderLog =>
+      if (leaderLog.producerStateManager().firstUndecidedOffset().isPresent) {
+        abortOngoingTransactions(leaderLog)
+        rollActiveSegmentOfSealedLog(leaderLog)
+        // With an ISR of only this leader, no follower fetch advances the high watermark past the
+        // markers, and the switch waits for HW == LEO.
+        maybeIncrementLeaderHW(leaderLog)
+      }
+    }
+  })
+
+  private def rollActiveSegmentOfSealedLog(log: UnifiedLog): Unit = {
+    if (log.activeSegment().size() > 0) {
+      try {
+        log.roll()
+      } catch {
+        case e: java.io.IOException =>
+          throw new KafkaStorageException(s"Failed to roll active segment after sealing " +
+            s"partition $topicPartition for diskless switch", e)
+      }
+    }
+  }
 
   /**
    * Unseal this Partition so classic appends are accepted again. Used when a classic-to-diskless
@@ -369,6 +394,7 @@ class Partition(val topicPartition: TopicPartition,
    * Abort all ongoing transactions by appending ABORT markers directly to the log.
    * Diskless topics do not support transactions, so any in-flight transaction must
    * be resolved before the switch from classic to diskless proceeds.
+   * The append bypasses `appendRecordsToLeader`, which rejects every append to a sealed partition.
    * @throws KafkaStorageException If transaction abortion fails due to an I/O error.
    */
   private def abortOngoingTransactions(leaderLog: UnifiedLog): Unit = {
@@ -393,7 +419,7 @@ class Partition(val topicPartition: TopicPartition,
         RequestLocal.noCaching(), VerificationGuard.SENTINEL, TransactionVersion.TV_0.featureLevel())
       stateChangeLogger.info(s"Aborted ongoing transaction for producer $producerId " +
         s"(epoch=$producerEpoch, txnFirstOffset=$txnFirstOffset) " +
-        s"on partition $topicPartition before sealing for diskless switch")
+        s"on partition $topicPartition after sealing for diskless switch")
     }
   }
 
