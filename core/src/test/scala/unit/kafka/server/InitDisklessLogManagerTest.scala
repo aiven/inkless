@@ -771,6 +771,76 @@ class InitDisklessLogManagerTest {
   }
 
   @Test
+  def testDeletedPartitionInAwaitingMetadataStopsRetrying(): Unit = {
+    // Given a partition whose control-plane init keeps failing with a retriable error
+    val partition = mockPartition(hw = 100, leo = 100)
+    when(controlPlane.initDisklessLog(any())).thenReturn(util.List.of(new CpInitResponse(Errors.NOT_CONTROLLER)))
+    manager.initOnControlPlane(
+      partition = partition,
+      topicId = topicId,
+      topicName = tp0.topic(),
+      classicToDisklessStartOffset = 100L,
+      producerStates = util.List.of(),
+      classicPrefixInRemoteStorage = true
+    )
+    fireLinger()
+    assertState[AwaitingMetadata](tp0)
+    verify(controlPlane, times(1)).initDisklessLog(any())
+    assertEquals(1L, gaugeValue(InitDisklessLogManager.InFlightPartitionsMetricName))
+
+    // When the broker deletes the partition, as ReplicaManager.applyDelta does
+    when(partition.log).thenReturn(None)
+    manager.removePartition(tp0)
+
+    // Then the partition leaves the tracking and the retries stop
+    assertTrue(manager.getTrackedPartitions.isEmpty)
+    assertEquals(0L, gaugeValue(InitDisklessLogManager.InFlightPartitionsMetricName))
+    fireRetry()
+    mockTime.sleep(manager.maxRetryTimeMs)
+    scheduler.tick()
+    verify(controlPlane, times(1)).initDisklessLog(any())
+  }
+
+  @Test
+  def testRegisterPartitionReplacesEntryOfDeletedTopicWithSameName(): Unit = {
+    // Given a tracked entry in AwaitingMetadata for a topic that no longer exists
+    val deletedPartition = mockPartition(hw = 100, leo = 100)
+    when(controlPlane.initDisklessLog(any())).thenReturn(util.List.of(new CpInitResponse(Errors.NOT_CONTROLLER)))
+    manager.initOnControlPlane(
+      partition = deletedPartition,
+      topicId = topicId,
+      topicName = tp0.topic(),
+      classicToDisklessStartOffset = 100L,
+      producerStates = util.List.of(),
+      classicPrefixInRemoteStorage = true
+    )
+    fireLinger()
+    assertState[AwaitingMetadata](tp0)
+    verify(controlPlane, times(1)).initDisklessLog(any())
+
+    // When a topic with the same name and another topic ID starts its switch
+    val newTopicId = Uuid.randomUuid()
+    val newPartition = mockPartition(hw = 20, leo = 20)
+    manager.registerPartition(newPartition, newTopicId)
+
+    // Then the new topic replaces the old entry and sends its own InitDisklessLog request
+    assertState[SendingToController](tp0)
+    assertEquals(Some(newTopicId), manager.getInitState(tp0).map(_.topicId))
+    fireLinger()
+    assertEquals(1, channelManager.requests.size())
+    val request = channelManager.requests.poll()
+    assertEquals(newTopicId, request.requestData.topics().get(0).topicId())
+    assertEquals(20L, request.requestData.topics().get(0).partitions().get(0).disklessStartOffset())
+    request.complete(makeSuccessResponse(newTopicId, 0))
+    assertState[AwaitingMetadata](tp0)
+
+    // And the old entry's control-plane retries stop
+    mockTime.sleep(manager.maxRetryTimeMs)
+    scheduler.tick()
+    verify(controlPlane, times(1)).initDisklessLog(any())
+  }
+
+  @Test
   def testUnsealedPartitionIsSkipped(): Unit = {
     // Given a partition that is not sealed
     val partition = mock(classOf[Partition])

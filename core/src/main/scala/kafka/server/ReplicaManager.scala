@@ -4155,6 +4155,9 @@ class ReplicaManager(val config: KafkaConfig,
               s"we got an unexpected ${e.getClass.getName} exception: ${e.getMessage}")
           }
         }
+        // The init tracking is keyed by topic name. An entry that outlives its partition retries forever
+        // and blocks the switch of a later topic with the same name.
+        initDisklessLogManager.foreach(manager => localChanges.deletes.forEach(tp => manager.removePartition(tp)))
       }
 
       // Handle partitions which we are now the leader or follower for.

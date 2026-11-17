@@ -150,6 +150,11 @@ class InitDisklessLogManager(
     })
 
     val tp = partition.topicPartition
+    // An entry with another topic ID belongs to a deleted topic that had the same name. Keeping it
+    // would skip the init of this topic.
+    if (Option(tracked.get(tp)).exists(_.topicId != topicId)) {
+      removePartition(tp)
+    }
     val inserted = tracked.putIfAbsent(tp, waitingState) == null
 
     // Evaluate immediately for both new and already tracked entries:

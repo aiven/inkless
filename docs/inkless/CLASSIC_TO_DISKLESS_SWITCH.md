@@ -186,6 +186,8 @@ A broker answers `ListOffsets` from its local classic log while the switch is pe
 
 If leadership changes while the switch is pending, the new leader seals and re-drives the `InitDisklessLog` controller request. If leadership changes after the controller commits the final offset, the new leader skips the controller step and initializes the control plane directly from metadata. If the flag is still unset, the new leader also rolls its active segment when that segment holds part of the classic prefix, so the remote log manager can copy it. The new leader then watches the upload itself, as in [Step 6](#step-6-request-the-classicprefixinremotestorage-flag).
 
+If a broker deletes a partition, it also removes the partition from `InitDisklessLogManager`, whatever its state. This covers a topic deletion and a reassignment that takes the replica away from the broker. The manager tracks partitions by topic name, so an entry of a deleted topic would otherwise block the switch of a later topic with the same name.
+
 ## Open transactions at the switch
 
 Diskless topics don't support transactions. After the switch starts, the brokers reject `AddPartitionsToTxn` for the topic with `INVALID_TOPIC_EXCEPTION`, and the diskless produce path rejects a transactional batch with `INVALID_REQUEST`. A transaction can still be open on a partition at the switch: it added the partition and wrote to it while the topic was classic.
