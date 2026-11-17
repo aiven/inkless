@@ -146,11 +146,6 @@ public class AvailabilityGatedControlPlane implements ControlPlane {
     }
 
     @Override
-    public List<RepairDisklessLogResponse> repairDisklessLog(final List<RepairDisklessLogRequest> requests) {
-        return delegate().repairDisklessLog(requests);
-    }
-
-    @Override
     public List<DeleteRecordsResponse> deleteRecords(final List<DeleteRecordsRequest> requests) {
         return delegate().deleteRecords(requests);
     }

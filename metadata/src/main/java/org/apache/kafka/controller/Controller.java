@@ -461,10 +461,8 @@ public interface Controller extends AclMutator, AutoCloseable {
     );
 
     /**
-     * Override the classic-to-diskless switch state of a single partition. Unlike
-     * {@link #initDisklessLog}, this is an operator-driven write that does not require the caller
-     * to be the partition leader: a non-negative seal offset forces (re-)sealing, {@code -1} aborts
-     * the switch and reverts the partition to classic, and {@code -2} re-arms the switch as pending.
+     * Alters the classic-to-diskless switch of a single partition for an operator: {@code -2} re-arms a
+     * pending switch, and a seal of at least {@code 0} lowers a committed seal in phase 1.
      *
      * @param context       The controller request context.
      * @param request       The AlterDisklessSwitch request data.

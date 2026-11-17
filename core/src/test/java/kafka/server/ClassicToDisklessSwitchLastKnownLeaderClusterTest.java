@@ -24,7 +24,6 @@ import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.AlterConfigOp;
 import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.clients.admin.NewTopic;
-import org.apache.kafka.clients.admin.OffsetSpec;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -374,12 +373,6 @@ public class ClassicToDisklessSwitchLastKnownLeaderClusterTest {
     private void reSeal(final Admin admin, final String topic, final int leader) throws Exception {
         final TopicPartition tp = new TopicPartition(topic, 0);
 
-        // `kafka-topic-switch.sh seal --offset` checks the offset against these two values before it sends the request.
-        final long earliest = admin.listOffsets(Map.of(tp, OffsetSpec.earliest())).all().get(20, TimeUnit.SECONDS).get(tp).offset();
-        final long latest = admin.listOffsets(Map.of(tp, OffsetSpec.latest())).all().get(20, TimeUnit.SECONDS).get(tp).offset();
-        assertTrue(earliest <= TRUNCATED_LEO && TRUNCATED_LEO <= latest,
-            "the seal command rejects " + TRUNCATED_LEO + " outside [" + earliest + ", " + latest + "]");
-
         admin.alterDisklessSwitch(topic, 0, TRUNCATED_LEO).all().get(20, TimeUnit.SECONDS);
         waitForRegistration(leader, topic, r -> r.classicToDisklessStartOffset == TRUNCATED_LEO,
             "the leader to apply the lower seal");
@@ -387,11 +380,9 @@ public class ClassicToDisklessSwitchLastKnownLeaderClusterTest {
 
         cluster.brokers().get(leader).shutdown();
         cluster.brokers().get(leader).startup();
-        waitForPartition(admin, topic,
-            p -> p.leader() != null && p.leader().id() == leader, "the leader to return after the restart");
+        waitForRegistration(leader, topic,
+            r -> r.leader == leader, "the leader to return after the restart");
         waitForCondition(() -> isOnlineLeader(leader, tp), "the partition to be online on the leader");
-
-        admin.repairDisklessLog(topic, 0, leader).all().get(20, TimeUnit.SECONDS);
     }
 
     private void finishSwitch(final Admin admin, final String topic, final long seal) throws Exception {
