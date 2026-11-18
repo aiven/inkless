@@ -1839,7 +1839,7 @@ class ReplicaManagerInklessTest {
   }
 
   private def stubHostedDisklessPartitions(replicaManager: ReplicaManager, tps: TopicIdPartition*): Unit =
-    when(replicaManager.inklessMetadataView().getDisklessPartitionCount).thenReturn(tps.size)
+    when(replicaManager.inklessMetadataView().getDisklessReplicaCount(replicaManager.config.brokerId)).thenReturn(tps.size)
 
   @ParameterizedTest(name = "testRecordClientBytesInByTopicType with diskless: {0}")
   @ValueSource(booleans = Array(true, false))

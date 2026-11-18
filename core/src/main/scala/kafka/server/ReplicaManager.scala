@@ -537,8 +537,8 @@ class ReplicaManager(val config: KafkaConfig,
       inklessSharedState.isDefined && _inklessMetadataView.isDisklessTopic(topic)
 
     val classicLeaders = leaderPartitionsIterator.count(partition => !Topic.isInternal(partition.topic) && !isDiskless(partition.topic))
-    val disklessPartitions = if (inklessSharedState.isDefined) _inklessMetadataView.getDisklessPartitionCount else 0
-    new PartitionRateTracker.Hosted(classicLeaders, disklessPartitions, topicPartition =>
+    val disklessReplicas = if (inklessSharedState.isDefined) _inklessMetadataView.getDisklessReplicaCount(localBrokerId) else 0
+    new PartitionRateTracker.Hosted(classicLeaders, disklessReplicas, topicPartition =>
       if (isDiskless(topicPartition.topic)) PartitionRateTracker.Placement.DISKLESS
       else onlinePartition(topicPartition) match {
         case Some(partition) if partition.isLeader => PartitionRateTracker.Placement.CLASSIC_LEADER

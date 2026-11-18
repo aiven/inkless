@@ -24,7 +24,7 @@ import org.apache.kafka.common.config.{ConfigResource, TopicConfig}
 import org.apache.kafka.common.network.ListenerName
 import org.apache.kafka.common.{Node, TopicIdPartition, TopicPartition, Uuid}
 import org.apache.kafka.image.MetadataImage
-import org.apache.kafka.metadata.{KRaftMetadataCache, PartitionRegistration}
+import org.apache.kafka.metadata.{KRaftMetadataCache, PartitionRegistration, Replicas}
 import org.apache.kafka.storage.internals.log.LogConfig
 
 import java.util
@@ -85,13 +85,13 @@ class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConf
     topicPartitions(isConsolidating)
 
   /**
-   * Returns the number of partitions of all diskless topics.
+   * Returns the number of diskless partitions whose replicas include the given broker.
    */
-  def getDisklessPartitionCount: Int = {
+  def getDisklessReplicaCount(brokerId: Int): Int = {
     val image = metadataCache.currentImage()
     image.topics().topicsByName().values().stream()
       .filter(topic => isDiskless(topicOverrides(image, topic.name())))
-      .mapToInt(_.partitions().size())
+      .mapToInt(_.partitions().values().stream().filter(p => Replicas.contains(p.replicas, brokerId)).count().toInt)
       .sum()
   }
 
