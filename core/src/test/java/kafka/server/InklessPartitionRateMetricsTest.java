@@ -142,7 +142,7 @@ public class InklessPartitionRateMetricsTest {
             final String diskless = "topicType=diskless";
             assertEquals(1L, gauge("ActivePartitionsBytes" + direction, diskless).longValue(), direction);
             assertTrue(gauge("PartitionBytes" + direction + "RateSum", diskless).doubleValue() > 0.0, direction);
-            assertEquals(1L, gauge("PartitionsByBytes" + direction + "Rate", diskless + ",le=\"+Inf\"").longValue(), direction);
+            assertEquals(1L, gauge("PartitionsByBytes" + direction + "Rate", diskless + ",le=Inf").longValue(), direction);
         }
         final String classic = "topicType=classic";
         assertEquals(1L, gauge("ActivePartitionsBytesIn", classic).longValue());

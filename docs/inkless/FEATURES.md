@@ -222,7 +222,7 @@ The classic series of `ActivePartitionsBytesOut` have a `role` tag with the valu
 The metrics answer these questions for one broker and one topic type:
 
 - How unequal are the partition rates? Compare `P99` and `Max` with `P50`. If `Max` is close to the sum, most of the client traffic of the broker goes to one partition.
-- How many partitions exceed a rate? Subtract the `PartitionsByBytesInRate` bucket at that bound from the `+Inf` bucket: `+Inf` minus `le=1048576` counts the partitions over 1 MiB/s.
+- How many partitions exceed a rate? Subtract the `PartitionsByBytesInRate` bucket at that bound from the `le=Inf` bucket: `le=Inf` minus `le=1048576` counts the partitions over 1 MiB/s.
 - How many classic partitions roll segments by size? With a 128 MiB segment and a 24 h time roll, the partitions over `le=1536` fill a segment first.
 - How many hosted partitions are idle? Subtract `ActivePartitionsBytesIn` from `HostedPartitions`. For classic bytes out, use the `role=leader` series.
 - How many classic partitions do consumers fetch from this broker as a follower? Read the `role=follower` series of `ActivePartitionsBytesOut`.
