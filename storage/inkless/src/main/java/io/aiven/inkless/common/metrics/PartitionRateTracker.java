@@ -54,8 +54,8 @@ import java.util.function.Supplier;
  *   For each partition with bytes, it calls the placement function once and records the rates in reused histograms.
  *   It allocates a constant amount, whatever the number of partitions, plus what the placement function allocates.</li>
  *   <li>Gauges: a JMX read gets one field of the last snapshot. A read doesn't take a lock: each snapshot is immutable.</li>
- *   <li>Memory: one counter for both directions of each partition with client bytes, kept until the partition is
- *   no longer hosted.
+ *   <li>Memory: one counter for both directions of each partition with client bytes in the last interval.
+ *   The snapshot expires the counter after an interval without bytes, or when the broker no longer hosts the partition.
  *   Each of the four histograms grows to fit the largest rate it records, and a reset keeps that size.
  *   At 1% precision, a histogram that recorded rates from 1 byte per minute to 64 MiB/s takes about 35 KB.</li>
  * </ul>
@@ -244,6 +244,11 @@ public final class PartitionRateTracker implements Closeable {
     private final Time time;
     private final Supplier<Hosted> hostedSupplier;
     private final Map<TopicPartition, Counter> counters = new ConcurrentHashMap<>();
+
+    // Visible for testing
+    int trackedPartitionCount() {
+        return counters.size();
+    }
     private final Accumulator classicIn = new Accumulator();
     private final Accumulator classicOut = new Accumulator();
     private final Accumulator disklessIn = new Accumulator();
@@ -277,6 +282,7 @@ public final class PartitionRateTracker implements Closeable {
      * Turns the byte counts into rates and publishes them.
      * A partition that gets its first bytes during an interval counts them over the whole interval,
      * so its first rate is lower than its real rate.
+     * The snapshot expires the entry of a partition with no bytes in either direction during the interval.
      */
     public void snapshot() {
         final Hosted hosted = hostedSupplier.get();
@@ -291,17 +297,21 @@ public final class PartitionRateTracker implements Closeable {
         final Iterator<Map.Entry<TopicPartition, Counter>> iterator = counters.entrySet().iterator();
         while (iterator.hasNext()) {
             final Map.Entry<TopicPartition, Counter> entry = iterator.next();
+            final Counter counter = entry.getValue();
+            final long in = counter.bytesIn.sum();
+            final long out = counter.bytesOut.sum();
+            if (in == counter.lastBytesIn && out == counter.lastBytesOut) {
+                iterator.remove();
+                continue;
+            }
             final Placement placement = hosted.placement().apply(entry.getKey());
             if (placement == Placement.NOT_HOSTED) {
                 iterator.remove();
                 continue;
             }
-            final Counter counter = entry.getValue();
             final boolean diskless = placement == Placement.DISKLESS;
-            final long in = counter.bytesIn.sum();
             addRate(diskless ? disklessIn : classicIn, placement, in - counter.lastBytesIn, elapsedMs);
             counter.lastBytesIn = in;
-            final long out = counter.bytesOut.sum();
             addRate(diskless ? disklessOut : classicOut, placement, out - counter.lastBytesOut, elapsedMs);
             counter.lastBytesOut = out;
         }

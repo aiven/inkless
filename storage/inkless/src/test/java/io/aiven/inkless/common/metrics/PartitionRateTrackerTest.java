@@ -293,6 +293,28 @@ class PartitionRateTrackerTest {
     }
 
     @Test
+    void snapshotExpiresAnEntryAfterAnIntervalWithoutBytes() {
+        final List<TopicPartition> placed = new ArrayList<>();
+        final PartitionRateTracker counting = new PartitionRateTracker(time, () -> new PartitionRateTracker.Hosted(0, 1, tp -> {
+            placed.add(tp);
+            return Placement.DISKLESS;
+        }));
+        counting.record(Direction.IN, diskless, 1);
+        counting.snapshot();
+        placed.clear();
+        time.sleep(WINDOW_MS);
+        counting.snapshot();
+
+        assertThat(placed).isEmpty();
+        assertThat(counting.trackedPartitionCount()).isZero();
+        counting.record(Direction.IN, diskless, 60_000);
+        time.sleep(WINDOW_MS);
+        counting.snapshot();
+        assertThat(counting.trackedPartitionCount()).isEqualTo(1);
+        assertThat(counting.currentSnapshot().of(Direction.IN, true).total()).isEqualTo(1000.0);
+    }
+
+    @Test
     void zeroByteRecordDoesNotCreateAnEntry() {
         final List<TopicPartition> placed = new ArrayList<>();
         final PartitionRateTracker counting = new PartitionRateTracker(time, () -> new PartitionRateTracker.Hosted(0, 0, tp -> {
