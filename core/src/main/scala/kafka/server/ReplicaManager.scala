@@ -4768,15 +4768,16 @@ class ReplicaManager(val config: KafkaConfig,
       val isConsolidatingDisklessTopic = consolidationActiveFor(tp)
       val existingPartition = onlinePartition(tp)
       // A pending classic-to-diskless switch must always seal+register below, even for a
-      // consolidating topic (where isConsolidatingDisklessTopic is already true), or the
-      // consolidating branch would claim the partition, skip the seal, and strand the switch
-      // in CLASSIC_TO_DISKLESS_SWITCH_PENDING. Consolidation starts later: the seal commit starts
-      // phase 1, where isConsolidatingDisklessTopic stays false, and the classicPrefixInRemoteStorage
-      // commit bumps the leader epoch, re-entering this method via localChanges.leaders in phase 2.
+      // consolidating topic (where isConsolidatingDisklessTopic is already true) and even in the
+      // first delta after a restart, when no Partition exists yet. Otherwise the consolidating
+      // branch would claim the partition, skip the seal, and strand the switch in
+      // CLASSIC_TO_DISKLESS_SWITCH_PENDING until the next leader epoch. Consolidation starts later:
+      // the seal commit starts phase 1, where isConsolidatingDisklessTopic stays false, and the
+      // classicPrefixInRemoteStorage commit bumps the leader epoch, re-entering this method via
+      // localChanges.leaders in phase 2.
       val isSwitchPending =
         info.partition.classicToDisklessStartOffset == PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING
-      val isPendingSwitchOfExistingPartition = existingPartition.isDefined && isSwitchPending
-      if ((!isDiskless || isConsolidatingDisklessTopic) && !isPendingSwitchOfExistingPartition) {
+      if ((!isDiskless || isConsolidatingDisklessTopic) && !isSwitchPending) {
         getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
           try {
             val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
@@ -4805,7 +4806,7 @@ class ReplicaManager(val config: KafkaConfig,
               markPartitionOffline(tp)
           }
         }
-      } else if (existingPartition.isDefined && (isSwitchPending || !isConsolidatingDisklessTopic)) {
+      } else if (isSwitchPending || (existingPartition.isDefined && !isConsolidatingDisklessTopic)) {
         // Classic-to-diskless switch. The controller writes the diskless.enable=true
         // ConfigRecord and the per-partition PartitionChangeRecord (with
         // classicToDisklessStartOffset = CLASSIC_TO_DISKLESS_SWITCH_PENDING) in the
@@ -4819,26 +4820,41 @@ class ReplicaManager(val config: KafkaConfig,
           return
         }
 
-        val partition = existingPartition.get
         try {
           val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
-          // Seal BEFORE makeLeader so:
-          // - if this broker was already the leader, no further classic append can succeed after this point
-          // - if this broker is being newly elected leader, the partition is sealed before
-          //   it is ever placed in the leader role, guaranteeing that no produce request
-          //   can be processed against the classic log by the new leader.
-          partition.seal()
-          partition.makeLeader(info.partition, false, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
-
-          if (isSwitchPending) {
-            // Abort AFTER makeLeader so the markers carry the leader epoch in which this broker leads.
-            // The seal already blocks produce, and registerPartition waits for HW == LEO, so the
-            // proposed seal offset covers the markers. Abort only while the switch is pending: a
-            // committed seal offset fixes the classic prefix, and a leader must not append to it.
-            partition.abortOngoingTransactionsAsSealedLeader()
-            initDisklessLogManager.foreach(_.registerPartition(partition, info.topicId()))
+          val leaderPartition = existingPartition match {
+            case Some(partition) =>
+              // Seal BEFORE makeLeader so:
+              // - if this broker was already the leader, no further classic append can succeed after this point
+              // - if this broker is being newly elected leader, the partition is sealed before
+              //   it is ever placed in the leader role, guaranteeing that no produce request
+              //   can be processed against the classic log by the new leader.
+              partition.seal()
+              partition.makeLeader(info.partition, false, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
+              Some(partition)
+            case None =>
+              // First delta after a restart while the switch is pending. The local log only becomes
+              // available after makeLeader, so the seal follows it. Produce can't append to the
+              // classic log in between, because it answers REPLICA_NOT_AVAILABLE for a pending
+              // partition before it reaches the log.
+              getOrCreatePartition(tp, delta, info.topicId).map { case (partition, isNew) =>
+                partition.makeLeader(info.partition, isNew, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
+                partition.seal()
+                partition
+              }
           }
-          changedPartitions.add(partition)
+
+          leaderPartition.foreach { partition =>
+            if (isSwitchPending) {
+              // Abort AFTER makeLeader so the markers carry the leader epoch in which this broker leads.
+              // The seal already blocks produce, and registerPartition waits for HW == LEO, so the
+              // proposed seal offset covers the markers. Abort only while the switch is pending: a
+              // committed seal offset fixes the classic prefix, and a leader must not append to it.
+              partition.abortOngoingTransactionsAsSealedLeader()
+              initDisklessLogManager.foreach(_.registerPartition(partition, info.topicId()))
+            }
+            changedPartitions.add(partition)
+          }
         } catch {
           case e: KafkaStorageException =>
             stateChangeLogger.info(s"Skipped the become-leader state change for transitioning partition $tp " +
@@ -4847,7 +4863,8 @@ class ReplicaManager(val config: KafkaConfig,
         }
       } else if (logManager.getLog(tp).isDefined && !isConsolidatingDisklessTopic) {
         // Post-restart: diskless topic still has classic data on local disk (offsets < disklessStartOffset).
-        // Create the Partition so classic data remains accessible for reads.
+        // Create the Partition so classic data remains accessible for reads. A pending switch never
+        // reaches this branch: the branch above handles it, so the seal here is always committed.
         getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
           try {
             val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)
@@ -4857,15 +4874,8 @@ class ReplicaManager(val config: KafkaConfig,
             // The intervening window is harmless because the topic is already fully switched to
             // diskless, so produces route to the diskless path and never append to the classic
             // local log; seal() here just marks the partition sealed for the HW restore below.
-            // appendRecords rejects a produce to a pending switch before it reaches the partition.
             partition.makeLeader(info.partition, isNew, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
             partition.seal()
-            if (isSwitchPending) {
-              // The broker loaded a pending switch with no Partition yet, such as after a restart.
-              // It drives the switch like the active-switch branch above.
-              partition.abortOngoingTransactionsAsSealedLeader()
-              initDisklessLogManager.foreach(_.registerPartition(partition, info.topicId()))
-            }
             changedPartitions.add(partition)
           } catch {
             case e: KafkaStorageException =>
