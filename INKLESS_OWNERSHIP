@@ -38,7 +38,7 @@ config/inkless/**                                        @aiven/inkless
 docker/inkless/**                                        @aiven/inkless
 docker/examples/docker-compose-files/inkless/**          @aiven/inkless
 inkless-benchmarks/**                                    @aiven/inkless
-jmh-benchmarks/src/main/java/org/apache/kafka/jmh/metadata/InklessMetadataViewTopicFlagBenchmark.java  @aiven/inkless
+jmh-benchmarks/src/main/java/**/Inkless*.java           @aiven/inkless  # Inkless JMH benchmarks
 inkless-sync/**                                          @aiven/inkless
 tests/kafkatest/tests/inkless/**                         @aiven/inkless
 tests/kafkatest/services/inkless/**                      @aiven/inkless

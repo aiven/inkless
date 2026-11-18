@@ -34,6 +34,7 @@ import org.openjdk.jmh.annotations.Scope;
 import org.openjdk.jmh.annotations.Setup;
 import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.TearDown;
+import org.openjdk.jmh.annotations.Threads;
 import org.openjdk.jmh.annotations.Warmup;
 import org.openjdk.jmh.infra.Blackhole;
 
@@ -64,6 +65,8 @@ import io.aiven.inkless.common.metrics.PartitionRateTracker;
 @State(Scope.Benchmark)
 @Fork(value = 1, jvmArgs = {"-Xms2g", "-Xmx2g", "-XX:+UseG1GC", "-XX:MaxGCPauseMillis=20",
     "-XX:InitiatingHeapOccupancyPercent=35", "-XX:+ExplicitGCInvokesConcurrent", "-XX:MaxInlineLevel=15"})
+// 8 threads, as the default num.io.threads.
+@Threads(8)
 @Warmup(iterations = 3, time = 2)
 @Measurement(iterations = 5, time = 2)
 @BenchmarkMode(Mode.AverageTime)
