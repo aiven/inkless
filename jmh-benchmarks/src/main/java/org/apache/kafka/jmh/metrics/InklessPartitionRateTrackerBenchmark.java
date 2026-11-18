@@ -55,7 +55,8 @@ import io.aiven.inkless.common.metrics.PartitionRateTracker;
  *
  * <p>Each request takes its partitions at random from a working set, which is a random subset of the stored entries.
  * Each request has its own copy of each topic name, as a parsed request does. The map lookup then compares the bytes
- * of the names. A thread takes a snapshot every second, which is 60 times the default rate, and other threads
+ * of the names. A thread takes a snapshot every second, which is 60 times the default rate. Before each snapshot,
+ * it records bytes for every stored entry, so that no entry expires. Other threads
  * stream through memory to evict the caches, as the record payloads of a broker do. The JVM flags are those of
  * {@code kafka-run-class.sh}. The baseline methods build the same keys without the hooks; subtract them to get the
  * cost of the hooks.
@@ -114,12 +115,11 @@ public class InklessPartitionRateTrackerBenchmark {
                 : online.get(tp) ? PartitionRateTracker.Placement.CLASSIC_LEADER : PartitionRateTracker.Placement.CLASSIC_FOLLOWER);
         tracker = new PartitionRateTracker(Time.SYSTEM, () -> hosted);
 
+        final TopicPartition[] stored = new TopicPartition[storedPartitions];
         final List<Integer> order = new ArrayList<>(storedPartitions);
         for (int i = 0; i < storedPartitions; i++) {
-            final TopicPartition tp = key(i, copyOf(topicNames[i / PARTITIONS_PER_TOPIC]));
-            online.put(tp, true);
-            tracker.record(PartitionRateTracker.Direction.IN, tp, 1);
-            tracker.record(PartitionRateTracker.Direction.OUT, tp, 1);
+            stored[i] = key(i, copyOf(topicNames[i / PARTITIONS_PER_TOPIC]));
+            online.put(stored[i], true);
             order.add(i);
         }
         Collections.shuffle(order, new Random(7));
@@ -131,6 +131,10 @@ public class InklessPartitionRateTrackerBenchmark {
         running = true;
         final Thread snapshots = new Thread(() -> {
             while (running) {
+                for (final TopicPartition tp : stored) {
+                    tracker.record(PartitionRateTracker.Direction.IN, tp, 1);
+                    tracker.record(PartitionRateTracker.Direction.OUT, tp, 1);
+                }
                 tracker.snapshot();
                 sleep(1000);
             }
