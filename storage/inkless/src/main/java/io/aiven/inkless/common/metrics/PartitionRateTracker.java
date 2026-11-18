@@ -104,11 +104,11 @@ public final class PartitionRateTracker implements Closeable {
     /**
      * The state of this broker that one snapshot reads.
      *
-     * @param classicLeaders     the number of classic partitions this broker leads
-     * @param disklessPartitions the number of diskless partitions in the cluster
-     * @param placement          the placement of each partition with traffic
+     * @param classicLeaders   the number of classic partitions this broker leads
+     * @param disklessReplicas the number of diskless partitions whose replicas include this broker
+     * @param placement        the placement of each partition with traffic
      */
-    public record Hosted(int classicLeaders, int disklessPartitions, Function<TopicPartition, Placement> placement) {
+    public record Hosted(int classicLeaders, int disklessReplicas, Function<TopicPartition, Placement> placement) {
     }
 
     // Powers of 2 from 1 KiB/s to 64 MiB/s, plus 1.5 KiB/s: 128 MiB per 24 h,
@@ -136,7 +136,8 @@ public final class PartitionRateTracker implements Closeable {
 
     static final String HOSTED_PARTITIONS = "HostedPartitions";
     private static final String HOSTED_PARTITIONS_DOC =
-        "Number of partitions that this broker hosts: the classic partitions it leads, or all diskless partitions. "
+        "Number of partitions that this broker hosts: the classic partitions it leads, "
+            + "or the diskless partitions whose replicas include this broker. "
             + "Kafka internal topics are not counted. "
             + "For classic bytes out, compare it with the role=leader series of ActivePartitionsBytesOut only: "
             + "the role=follower series counts partitions that this broker follows, and this count leaves them out.";
@@ -316,7 +317,7 @@ public final class PartitionRateTracker implements Closeable {
             counter.lastBytesOut = out;
         }
         snapshot = new Snapshot(classicIn.stats(), classicOut.stats(), disklessIn.stats(), disklessOut.stats(),
-            hosted.classicLeaders(), hosted.disklessPartitions());
+            hosted.classicLeaders(), hosted.disklessReplicas());
     }
 
     /**
