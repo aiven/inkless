@@ -1088,7 +1088,12 @@ class Partition(val topicPartition: TopicPartition,
     leaderLogIfLocal.exists { leaderLog =>
       val followerEndOffset = followerReplica.stateSnapshot.logEndOffset
       val replicationStop = sealedReplicationStopOffset
-      followerEndOffset >= capAt(leaderLog.highWatermark, replicationStop) &&
+      // Inkless: `ReplicaManager` fences a phase 1 leader whose log ends below the committed seal, but only after the
+      // become-leader transition. A follower fetch in between must not expand the ISR, or the controller records a
+      // full ISR and a recovered leader for a partition that the leader can't serve. The check reads the stop offset
+      // directly because `seal()` runs after `makeLeader` on a restarted leader.
+      !replicationStopOffset().exists(leaderLog.logEndOffset < _) &&
+        followerEndOffset >= capAt(leaderLog.highWatermark, replicationStop) &&
         leaderEpochStartOffsetOpt.exists(epochStart => followerEndOffset >= capAt(epochStart, replicationStop))
     }
   }
