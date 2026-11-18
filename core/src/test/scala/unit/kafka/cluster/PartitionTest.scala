@@ -1579,6 +1579,43 @@ class PartitionTest extends AbstractPartitionTest {
   }
 
   @Test
+  def testIsrNotExpandedWhileLeaderLogEndsBelowSeal(): Unit = {
+    val log = logManager.getOrCreateLog(topicPartition, topicId = topicId.toJava)
+    seedLogData(log, numRecords = 10, leaderEpoch = 4)
+
+    val remoteBrokerId = brokerId + 1
+    val replicas = Array(brokerId, remoteBrokerId)
+    addBrokerEpochToMockMetadataCache(metadataCache, replicas)
+
+    partition.createLogIfNotExists(isNew = false, isFutureReplica = false, offsetCheckpoints, None)
+    val partitionRegistration = new PartitionRegistration.Builder()
+      .setLeader(brokerId)
+      .setLeaderRecoveryState(LeaderRecoveryState.RECOVERING)
+      .setLeaderEpoch(5)
+      .setIsr(Array(brokerId))
+      .setPartitionEpoch(1)
+      .setReplicas(replicas)
+      .setDirectories(DirectoryId.unassignedArray(replicas.length))
+      .build()
+    assertTrue(partition.makeLeader(partitionRegistration, isNew = true, offsetCheckpoints, None))
+
+    // The committed seal is past the leader's log end offset, as after a last-known-leader election that lost records.
+    // The partition isn't sealed yet, as on a restarted leader between `makeLeader` and `seal`.
+    partition.replicationStopOffset = () => Some(log.logEndOffset + 5)
+    assertFalse(partition.isSealed)
+
+    fetchFollower(partition, replicaId = remoteBrokerId, fetchOffset = log.logEndOffset)
+    assertEquals(0, alterPartitionManager.isrUpdates.size)
+    assertEquals(util.Set.of(brokerId), partition.partitionState.maximalIsr)
+
+    // Once the seal sits at the leader's log end offset, the same fetch expands the ISR.
+    partition.replicationStopOffset = () => Some(log.logEndOffset)
+    fetchFollower(partition, replicaId = remoteBrokerId, fetchOffset = log.logEndOffset)
+    assertEquals(1, alterPartitionManager.isrUpdates.size)
+    assertEquals(util.Set.of(brokerId, remoteBrokerId), partition.partitionState.maximalIsr)
+  }
+
+  @Test
   def testIsrNotExpandedIfUpdateFails(): Unit = {
     val log = logManager.getOrCreateLog(topicPartition, topicId = topicId.toJava)
     seedLogData(log, numRecords = 10, leaderEpoch = 4)
