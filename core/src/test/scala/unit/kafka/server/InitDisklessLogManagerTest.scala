@@ -559,6 +559,65 @@ class InitDisklessLogManagerTest {
     assertState[AwaitingMetadata](tp0)
   }
 
+  // Registers two ready partitions that each fill a request with room for two producer state entries.
+  // `whileQueueChecksFirstPartition` runs on the queue task, after it took both states from the queue.
+  private def sendTwoPartitionsThatEachFillARequest(whileQueueChecksFirstPartition: () => Unit): Unit = {
+    useProducerStateLimit(2)
+    val tp1 = new TopicPartition("test-topic", 1)
+    val partitions = Seq(tp0, tp1).map { tp =>
+      val partition = mockPartition(tp = tp, hw = 100, leo = 100)
+      setActiveProducers(partition, mockProducerEntry(7L, 0.toShort,
+        new BatchMetadata(4, 54, 4, 1000L),
+        new BatchMetadata(9, 59, 4, 2000L)))
+      manager.registerPartition(partition, topicId)
+      partition
+    }
+    var ran = false
+    when(partitions.head.isLeader).thenAnswer { _ =>
+      if (!ran) {
+        ran = true
+        whileQueueChecksFirstPartition()
+      }
+      true
+    }
+  }
+
+  @Test
+  def testStateQueuedWhileTheBatchDefersAPartitionIsStillSent(): Unit = {
+    // Given a third partition that becomes ready while the queue task defers the second one
+    val tp1 = new TopicPartition("test-topic", 1)
+    val tp2 = new TopicPartition("test-topic", 2)
+    sendTwoPartitionsThatEachFillARequest { () =>
+      val third = mockPartition(tp = tp2, hw = 100, leo = 100)
+      setActiveProducers(third, mockProducerEntry(7L, 0.toShort,
+        new BatchMetadata(4, 54, 4, 1000L),
+        new BatchMetadata(9, 59, 4, 2000L)))
+      manager.registerPartition(third, topicId)
+    }
+
+    // When the controller accepts every request
+    val requests = acceptRequestsUntilIdle()
+
+    // Then each partition goes in its own request, the deferred one before the later arrival
+    assertEquals(Seq(Seq(0), Seq(1), Seq(2)), requests.map(partitionIdsOf))
+    Seq(tp0, tp1, tp2).foreach(tp => assertState[AwaitingMetadata](tp))
+  }
+
+  @Test
+  def testDeferredPartitionRemovedWhileTheBatchDefersItIsNotSent(): Unit = {
+    // Given the second partition is removed while the queue task defers it
+    val tp1 = new TopicPartition("test-topic", 1)
+    sendTwoPartitionsThatEachFillARequest { () => manager.removePartition(tp1) }
+
+    // When the controller accepts every request
+    val requests = acceptRequestsUntilIdle()
+
+    // Then only the first partition is sent
+    assertEquals(Seq(Seq(0)), requests.map(partitionIdsOf))
+    assertState[AwaitingMetadata](tp0)
+    assertEquals(Set(tp0), manager.getTrackedPartitions)
+  }
+
   @Test
   def testDuplicateRegisterPartitionInWaitingForHWStaysWaiting(): Unit = {
     // Given a partition registered with HW < LEO

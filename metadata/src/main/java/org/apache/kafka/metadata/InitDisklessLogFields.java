@@ -44,9 +44,9 @@ public final class InitDisklessLogFields {
 
     /**
      * The most producer state entries that the records of one {@code InitDisklessLog} request can contain.
-     * The controller appends those records as one metadata batch, and the Raft client rejects a batch over
-     * {@link KafkaRaftClient#MAX_BATCH_SIZE_BYTES}. The entries take at most half of that limit, which leaves
-     * the rest for the other fields of the records. A snapshot writes the entries of a partition in one
+     * The controller appends those records in batches of at most 10,000 records, and the Raft client rejects a
+     * batch over {@link KafkaRaftClient#MAX_BATCH_SIZE_BYTES}. The entries of all batches together take at most
+     * half of that limit, which leaves the rest for the other fields of the records. A snapshot writes the entries of a partition in one
      * record. The limit therefore applies to a single partition too.
      */
     public static final int MAX_PRODUCER_STATE_ENTRIES =

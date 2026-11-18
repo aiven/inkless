@@ -1579,9 +1579,9 @@ public class ReplicationControlManager {
         clusterControl.checkBrokerEpoch(request.brokerId(), request.brokerEpoch());
         List<ApiMessageAndVersion> records = new ArrayList<>();
         List<InitDisklessLogResponseData.TopicResponse> topicResponses = new ArrayList<>();
-        // The records of this request go to the Raft client as one batch. A batch over the size limit
-        // fails the whole request and makes the active controller resign. The broker sends the partitions
-        // that don't fit again in a later request.
+        // The records of this request go to the Raft client in batches of at most 10,000 records. A batch over
+        // the size limit fails the whole request and makes the active controller resign. The broker sends the
+        // partitions that don't fit again in a later request.
         int producerStateEntries = 0;
 
         for (InitDisklessLogRequestData.TopicData topicData : request.topics()) {
