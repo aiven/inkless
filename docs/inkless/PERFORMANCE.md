@@ -591,6 +591,8 @@ The `background` role defaults to `s3.api.call.timeout=30000` and `s3.api.call.a
 
 To change a setting for one role, set the same key under `inkless.storage.<role>.`. The precedence, from lowest to highest, is the role default, the shared `inkless.storage.*` key, and the `inkless.storage.<role>.*` key. Role names must match exactly: the broker ignores an unknown role.
 
+The two S3 role defaults apply as a pair. If the shared or role layer sets either `s3.api.call.timeout` or `s3.api.call.attempt.timeout`, the `background` role keeps the shared default for the other one. Set both keys to change the pair. The GCS default is independent.
+
 The following settings give the `background` role longer S3 timeouts than the defaults and leave the produce and fetch roles on the shared values:
 
 ```properties

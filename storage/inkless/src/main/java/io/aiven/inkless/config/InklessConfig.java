@@ -77,11 +77,11 @@ public class InklessConfig extends AbstractConfig {
     public static final String STORAGE_ROLE_BACKGROUND = "background";
     // S3 DeleteObjects requests hold up to 1000 keys and consolidation cold reads are large.
     // The background role needs longer S3 and GCS timeouts than the produce and fetch paths.
-    private static final Map<String, Map<String, String>> STORAGE_ROLE_DEFAULTS = Map.of(
-        STORAGE_ROLE_BACKGROUND, Map.of(
-            "s3.api.call.timeout", "30000",
-            "s3.api.call.attempt.timeout", "10000",
-            "gcs.read.timeout", "10000"
+    // A group applies only if no layer sets any of its keys. The S3 attempt timeout must not exceed the call timeout.
+    private static final Map<String, List<Map<String, String>>> STORAGE_ROLE_DEFAULTS = Map.of(
+        STORAGE_ROLE_BACKGROUND, List.of(
+            Map.of("s3.api.call.timeout", "30000", "s3.api.call.attempt.timeout", "10000"),
+            Map.of("gcs.read.timeout", "10000")
         )
     );
 
@@ -802,14 +802,19 @@ public class InklessConfig extends AbstractConfig {
             @SuppressWarnings("unchecked")
             final Class<? extends StorageBackend> storageClass = (Class<? extends StorageBackend>) getClass(STORAGE_BACKEND_CLASS_CONFIG);
             final StorageBackend storage = storageClass.getDeclaredConstructor(Metrics.class).newInstance(metrics);
+            final Map<String, Object> explicit = new HashMap<>(originalsWithPrefix(STORAGE_PREFIX));
+            if (role != null) {
+                explicit.putAll(originalsWithPrefix(STORAGE_PREFIX + role + "."));
+            }
             final Map<String, Object> storageConfigs = new HashMap<>();
             if (role != null) {
-                storageConfigs.putAll(STORAGE_ROLE_DEFAULTS.getOrDefault(role, Map.of()));
+                for (final Map<String, String> group : STORAGE_ROLE_DEFAULTS.getOrDefault(role, List.of())) {
+                    if (group.keySet().stream().noneMatch(explicit::containsKey)) {
+                        storageConfigs.putAll(group);
+                    }
+                }
             }
-            storageConfigs.putAll(originalsWithPrefix(STORAGE_PREFIX));
-            if (role != null) {
-                storageConfigs.putAll(originalsWithPrefix(STORAGE_PREFIX + role + "."));
-            }
+            storageConfigs.putAll(explicit);
             storage.configure(storageConfigs);
             return storage;
         } catch (NoSuchMethodException | InvocationTargetException | InstantiationException |
