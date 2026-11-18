@@ -130,7 +130,7 @@ public final class PartitionRateTracker implements Closeable {
     private static final double[] QUANTILE_PERCENTS = {50.0, 95.0, 99.0, 99.9, 100.0};
     // Keeps each recorded rate within 1% of its value.
     static final int SIGNIFICANT_DIGITS = 2;
-    private static final String INF = "+Inf";
+    private static final String INF = "Inf";
 
     private static final String GROUP = "ReplicaManager";
 
@@ -212,7 +212,7 @@ public final class PartitionRateTracker implements Closeable {
     /**
      * The result of one snapshot for one direction and topic type.
      *
-     * @param cumulativeBuckets Cumulative. The last index is +Inf.
+     * @param cumulativeBuckets Cumulative. The last index is the {@code Inf} bound.
      */
     record GroupStats(long active, long activeLeader, long activeFollower, double[] quantiles, double total,
                       long[] cumulativeBuckets) {

@@ -334,7 +334,7 @@ class PartitionRateTrackerTest {
         assertThat((double) gaugeValue("PartitionBytesInRateMax", classic)).isCloseTo(2000.0, withinPercentage(1));
         assertThat(gaugeValue("PartitionsByBytesInRate", with(classic, "le", "1024"))).isEqualTo(0L);
         assertThat(gaugeValue("PartitionsByBytesInRate", with(classic, "le", "2048"))).isEqualTo(1L);
-        assertThat(gaugeValue("PartitionsByBytesInRate", with(classic, "le", "+Inf"))).isEqualTo(1L);
+        assertThat(gaugeValue("PartitionsByBytesInRate", with(classic, "le", "Inf"))).isEqualTo(1L);
         assertThat(gaugeValue("ActivePartitionsBytesIn", classic)).isEqualTo(1L);
         assertThat(gaugeValue("PartitionBytesInRateSum", classic)).isEqualTo(2000.0);
         assertThat(gaugeValue("HostedPartitions", classic)).isEqualTo(3);
@@ -350,7 +350,7 @@ class PartitionRateTrackerTest {
         tracker.close();
 
         assertThat(registered("PartitionBytesInRateP50", classic)).isNull();
-        assertThat(registered("PartitionsByBytesInRate", with(classic, "le", "+Inf"))).isNull();
+        assertThat(registered("PartitionsByBytesInRate", with(classic, "le", "Inf"))).isNull();
         assertThat(registered("HostedPartitions", classic)).isNull();
     }
 
