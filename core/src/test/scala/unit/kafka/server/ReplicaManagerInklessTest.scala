@@ -7045,6 +7045,73 @@ class ReplicaManagerInklessTest {
   }
 
   @Test
+  def testFirstDeltaAsPendingLeaderOfConsolidatingTopicWithoutLocalLogSkipsThePartition(): Unit = {
+    val ctorInit: MockedConstruction.MockInitializer[ConsolidationFetcherManager] = {
+      case (mock, _) =>
+        when(mock.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    }
+    val consolidationCtor = mockConstruction(classOf[ConsolidationFetcherManager], ctorInit)
+    try {
+      assertFirstDeltaAsPendingLeaderWithoutLocalLogSkipsThePartition(consolidating = true,
+        verifyNoConsolidationFetcher = () =>
+          verify(consolidationCtor.constructed().get(0), never()).addFetcherForPartitions(any()))
+    } finally {
+      consolidationCtor.close()
+    }
+  }
+
+  @Test
+  def testFirstDeltaAsPendingLeaderOfNonConsolidatingTopicWithoutLocalLogSkipsThePartition(): Unit = {
+    assertFirstDeltaAsPendingLeaderWithoutLocalLogSkipsThePartition(consolidating = false,
+      verifyNoConsolidationFetcher = () => ())
+  }
+
+  // A leader without a local log, such as after a disk replacement, has an empty log once makeLeader creates
+  // one. Registering it would propose a seal of 0 and drop the classic prefix that the followers hold.
+  private def assertFirstDeltaAsPendingLeaderWithoutLocalLogSkipsThePartition(consolidating: Boolean,
+                                                                             verifyNoConsolidationFetcher: () => Unit): Unit = {
+    val topicName = disklessTopicPartition.topic()
+    val topicId = disklessTopicPartition.topicId
+    val tp = disklessTopicPartition.topicPartition()
+    val brokerId = 1
+
+    val mockIdlm = mock(classOf[InitDisklessLogManager])
+    val replicaManager = createReplicaManager(
+      List(topicName),
+      disklessRemoteStorageConsolidationEnabled = consolidating,
+      consolidatingDisklessTopics = if (consolidating) Set(topicName) else Set.empty,
+      initDisklessLogManager = Some(mockIdlm)
+    )
+    try {
+      assertTrue(replicaManager.logManager.getLog(tp).isEmpty)
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp))
+        .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
+
+      val delta = new TopicsDelta(TopicsImage.EMPTY)
+      delta.replay(new TopicRecord().setName(topicName).setTopicId(topicId))
+      val partitionRecord = new PartitionRecord()
+        .setPartitionId(0)
+        .setTopicId(topicId)
+        .setReplicas(util.Arrays.asList(brokerId, brokerId + 1))
+        .setIsr(util.Arrays.asList(brokerId, brokerId + 1))
+        .setLeader(brokerId)
+        .setLeaderEpoch(1)
+        .setPartitionEpoch(0)
+      partitionRecord.unknownTaggedFields().add(
+        InitDisklessLogFields.encodeClassicToDisklessStartOffset(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING))
+      delta.replay(partitionRecord)
+      replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))
+
+      assertTrue(replicaManager.logManager.getLog(tp).isEmpty, "The leader must not create an empty log")
+      assertEquals(new HostedPartition.None[Partition], replicaManager.getPartition(tp))
+      verify(mockIdlm, never()).registerPartition(any(classOf[Partition]), any(classOf[Uuid]))
+      verifyNoConsolidationFetcher()
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
   def testApplyDeltaAdvancesHwmToSealOffsetForSealedLeaderWithStaleCheckpoint(): Unit = {
     // After restart, makeLeader reloads HW from the on-disk checkpoint file.
     // If the checkpoint is stale (e.g. unclean shutdown, or checkpoint interval

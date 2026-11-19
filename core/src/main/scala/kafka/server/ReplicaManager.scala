@@ -4832,6 +4832,14 @@ class ReplicaManager(val config: KafkaConfig,
               partition.seal()
               partition.makeLeader(info.partition, false, offsetCheckpoints, Some(info.topicId), partitionAssignedDirectoryId)
               Some(partition)
+            case None if logManager.getLog(tp).isEmpty =>
+              // Without a local log, makeLeader would create an empty one, and registerPartition would
+              // propose its high watermark of 0 as the seal. The controller would commit it, and the
+              // followers would truncate the classic prefix they hold.
+              stateChangeLogger.warn(s"Skipping the become-leader state change for $tp with topic id " +
+                s"${info.topicId} because the classic-to-diskless switch is pending and the broker has no " +
+                "local log for the partition")
+              None
             case None =>
               // First delta after a restart while the switch is pending. The local log only becomes
               // available after makeLeader, so the seal follows it. Produce can't append to the
