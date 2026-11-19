@@ -368,7 +368,7 @@ A last-known-leader election in phase 1 can elect a leader whose log ends below 
 
 The command sends the `AlterDisklessSwitch` controller RPC with the new seal. The controller authorizes the RPC as `ALTER` on the cluster. The controller writes a `PartitionChangeRecord` with the new `classicToDisklessStartOffset` and the current leader epoch as the diskless leader epoch, as the leader-driven commit does. The record keeps the leader, the leader epoch, and the producer states.
 
-The partition loses the records between the new seal and the old one. Every replica truncates its classic log to the new seal. The control plane keeps the diskless log, which starts at the old seal. A consumer that reads across the lost offsets gets the diskless records from the old seal on, and the broker doesn't return an error for the missing offsets.
+The partition loses the records between the new seal and the old one. Every replica truncates its classic log to the new seal. The control plane keeps the diskless log, which starts at the old seal. A consumer that reads across the lost offsets gets the diskless records from the old seal on, and the broker doesn't return an error for the missing offsets. Consolidation appends the diskless records after the gap, and the leader epoch cache maps the lost offsets to the last classic epoch. When a replica checks its records past the seal, it starts at its first record past the seal, so it keeps the consolidated records.
 
 The controller rejects the request with `INVALID_REQUEST` in these cases:
 

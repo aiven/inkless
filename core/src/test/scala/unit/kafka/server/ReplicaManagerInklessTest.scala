@@ -9190,6 +9190,126 @@ class ReplicaManagerInklessTest {
     }
   }
 
+  // An operator lowered the seal from 10 to 7, so the diskless log starts at 10 and the offsets [7, 10) are lost.
+  // The replica holds [0, 7) in epoch 0 and consolidated [10, 13) in the diskless leader epoch 5, so its leader
+  // epoch cache maps [7, 10) to epoch 0. A log directory move copies the same cache. A restart of the leader that
+  // the seal was lowered to adds a later epoch at 7, which the consolidated batch replaces. On a new leader epoch in
+  // phase 2, the replica keeps its log as a leader and as a follower.
+  @ParameterizedTest(name = "testSwitchedReplicaKeepsConsolidatedRecordsAfterLoweredSeal with isLeader: {0}, restartEpochAtSeal: {1}")
+  @CsvSource(Array("true, false", "true, true", "false, false"))
+  def testSwitchedReplicaKeepsConsolidatedRecordsAfterLoweredSeal(isLeader: Boolean, restartEpochAtSeal: Boolean): Unit = {
+    val topicName = "switched-consolidating-topic"
+    val topicId = Uuid.randomUuid()
+    val tp = new TopicPartition(topicName, 0)
+    val localBrokerId = 1
+    val otherBrokerId = 2
+    val loweredSeal = 7L
+    val oldSeal = 10L
+    val leo = 13L
+    val disklessLeaderEpoch = 5
+
+    val mockFetcherManager = mock(classOf[ReplicaFetcherManager])
+    when(mockFetcherManager.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    val ctorInit: MockedConstruction.MockInitializer[ConsolidationFetcherManager] = {
+      case (mockCfm, _) =>
+        when(mockCfm.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    }
+    val consolidationCtor = mockConstruction(classOf[ConsolidationFetcherManager], ctorInit)
+    try {
+      val replicaManager = createReplicaManager(
+        Seq(topicName),
+        disklessRemoteStorageConsolidationEnabled = true,
+        consolidatingDisklessTopics = Set(topicName),
+        mockReplicaFetcherManager = Some(mockFetcherManager),
+        defaultLogConfig = Some(LogTestUtils.createLogConfig(remoteLogStorageEnable = true)),
+        remoteLogManager = Some(mock(classOf[RemoteLogManager])),
+      )
+      try {
+        val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+        populateLoweredSealLog(log, classicEnd = loweredSeal, oldSeal, leo, disklessLeaderEpoch,
+          restartEpochAtSeal = if (restartEpochAtSeal) Some(disklessLeaderEpoch + 1) else None)
+        assertEquals(util.List.of(new EpochEntry(0, 0L), new EpochEntry(disklessLeaderEpoch, oldSeal)),
+          log.leaderEpochCache.epochEntries)
+        replicaManager.highWatermarkCheckpoints(log.parentDir).write(util.Map.of(tp, java.lang.Long.valueOf(loweredSeal)))
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(loweredSeal)
+        when(replicaManager.inklessMetadataView().getDisklessLeaderEpoch(tp)).thenReturn(disklessLeaderEpoch)
+        when(replicaManager.inklessMetadataView().isClassicPrefixInRemoteStorage(tp)).thenReturn(true)
+        when(replicaManager.inklessMetadataView().getLastClassicLeaderEpoch(tp)).thenReturn(0)
+
+        val delta = disklessFollowerDelta(topicName, topicId,
+          brokerId = if (isLeader) otherBrokerId else localBrokerId,
+          leaderId = if (isLeader) localBrokerId else otherBrokerId,
+          classicToDisklessStartOffset = loweredSeal, disklessLeaderEpoch = disklessLeaderEpoch,
+          classicPrefixInRemoteStorage = true, leaderEpoch = disklessLeaderEpoch + 2)
+        replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))
+
+        val partition = replicaManager.onlinePartition(tp).get
+        assertEquals(isLeader, partition.isLeader)
+        assertSame(log, replicaManager.logManager.getLog(tp).get)
+        assertEquals(leo, log.logEndOffset)
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
+    } finally {
+      consolidationCtor.close()
+    }
+  }
+
+  // In phase 1 the follower truncates a log that runs past a lowered seal 7 unless every record from the seal on
+  // is consolidated. With classic records only below the seal, it keeps the consolidated [10, 13). With a classic
+  // tail [7, 9), it truncates to the seal.
+  @ParameterizedTest(name = "testSwitchedFollowerTruncatesOnlyClassicTailPastLoweredSeal with classicEnd: {0}")
+  @ValueSource(longs = Array(7L, 9L))
+  def testSwitchedFollowerTruncatesOnlyClassicTailPastLoweredSeal(classicEnd: Long): Unit = {
+    val topicName = "consolidating-topic"
+    val topicId = Uuid.randomUuid()
+    val tp = new TopicPartition(topicName, 0)
+    val loweredSeal = 7L
+    val leo = 13L
+    val disklessLeaderEpoch = 5
+
+    val consolidationCtor = mockConstruction(classOf[ConsolidationFetcherManager])
+    try {
+      val replicaManager = createReplicaManager(
+        List(topicName),
+        disklessRemoteStorageConsolidationEnabled = true,
+        consolidatingDisklessTopics = Set(topicName),
+      )
+      try {
+        val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+        populateLoweredSealLog(log, classicEnd, oldSeal = 10L, leo, disklessLeaderEpoch)
+        replicaManager.highWatermarkCheckpoints(log.parentDir).write(util.Map.of(tp, java.lang.Long.valueOf(loweredSeal)))
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(loweredSeal)
+        when(replicaManager.inklessMetadataView().getDisklessLeaderEpoch(tp)).thenReturn(disklessLeaderEpoch)
+
+        val followerDelta = disklessFollowerDelta(topicName, topicId, brokerId = 1, leaderId = 2,
+          classicToDisklessStartOffset = loweredSeal, disklessLeaderEpoch = disklessLeaderEpoch)
+        replicaManager.applyDelta(followerDelta, imageFromTopics(followerDelta.apply()))
+
+        val expectedLogEndOffset = if (classicEnd > loweredSeal) loweredSeal else leo
+        assertEquals(expectedLogEndOffset, replicaManager.localLogOrException(tp).logEndOffset)
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
+    } finally {
+      consolidationCtor.close()
+    }
+  }
+
+  private def populateLoweredSealLog(log: UnifiedLog,
+                                     classicEnd: Long,
+                                     oldSeal: Long,
+                                     leo: Long,
+                                     disklessLeaderEpoch: Int,
+                                     restartEpochAtSeal: Option[Int] = None): Unit = {
+    val classicRecords = (0L until classicEnd).map(i => new SimpleRecord(s"classic-$i".getBytes))
+    log.appendAsFollower(TestUtils.records(classicRecords, partitionLeaderEpoch = 0), 0)
+    restartEpochAtSeal.foreach(epoch => log.assignEpochStartOffset(epoch, classicEnd))
+    val disklessRecords = (oldSeal until leo).map(i => new SimpleRecord(s"diskless-$i".getBytes))
+    log.appendAsFollower(TestUtils.records(disklessRecords, baseOffset = oldSeal,
+      partitionLeaderEpoch = disklessLeaderEpoch), disklessLeaderEpoch)
+  }
+
   // The replica follows in phase 2 with [0, 10) in epoch 0 and no recorded last classic epoch, so it consolidates at
   // the seal. The epoch is recorded as 1, but an ISR change keeps leader epoch 0. The broker checks a replica only
   // on a new leader epoch, because only then do its fetchers restart. A later delta makes the replica the leader of

@@ -71,7 +71,7 @@ import org.apache.kafka.server.partition.PartitionListener
 import org.apache.kafka.server.purgatory.DelayedProduce.PartitionStatusValidator.Result
 import org.apache.kafka.server.purgatory.{DelayedDeleteRecords, DelayedOperationPurgatory, DelayedProduce, DelayedRemoteFetch, DelayedRemoteListOffsets, DeleteRecordsPartitionStatus, ListOffsetsPartitionStatus, TopicPartitionOperationKey}
 import org.apache.kafka.server.share.fetch.{DelayedShareFetchKey, DelayedShareFetchPartitionKey}
-import org.apache.kafka.server.storage.log.{FetchParams, FetchPartitionData}
+import org.apache.kafka.server.storage.log.{FetchIsolation, FetchParams, FetchPartitionData}
 import org.apache.kafka.server.transaction.AddPartitionsToTxnManager
 import org.apache.kafka.server.transaction.AddPartitionsToTxnManager.TransactionSupportedOperation
 import org.apache.kafka.server.util.timer.{SystemTimer, TimerTask}
@@ -4639,7 +4639,11 @@ class ReplicaManager(val config: KafkaConfig,
     // The local log may no longer contain the seal offset itself after tiering/retention has
     // advanced localLogStartOffset. In that case, prove the suffix from the first still-local
     // offset. Any local offset at or above the seal must be in the captured diskless epoch E_d.
-    val suffixStart = math.max(seal, log.localLogStartOffset())
+    // After `lower-seal`, the diskless log starts at the old seal, so the log has no records from the
+    // seal to the old seal. The epoch cache maps those offsets to the last classic epoch, so the proof
+    // starts at the first local record instead.
+    val localSuffixStart = math.max(seal, log.localLogStartOffset())
+    val suffixStart = math.max(localSuffixStart, firstBatchBaseOffset(log, localSuffixStart))
     val epochAtSuffixStart = log.leaderEpochCache.epochForOffset(suffixStart)
     if (!epochAtSuffixStart.isPresent || epochAtSuffixStart.getAsInt != disklessLeaderEpoch) {
       return false
@@ -4653,6 +4657,13 @@ class ReplicaManager(val config: KafkaConfig,
         entry.startOffset() < leo &&
         entry.epoch() != disklessLeaderEpoch
     }
+  }
+
+  // Returns the base offset of the first local batch that holds an offset at or past startOffset, or startOffset
+  // if the log holds none.
+  private def firstBatchBaseOffset(log: UnifiedLog, startOffset: Long): Long = {
+    val batches = log.read(startOffset, 1, FetchIsolation.LOG_END, true).records.batches().iterator()
+    if (batches.hasNext) batches.next().baseOffset() else startOffset
   }
 
   def startConsolidationFetchersForCaughtUpClassicPartitions(topicPartitions: Set[TopicPartition]): Unit = {
