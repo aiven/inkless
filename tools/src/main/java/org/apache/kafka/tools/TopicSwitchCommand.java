@@ -47,6 +47,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
+import java.util.concurrent.ExecutionException;
 
 import static net.sourceforge.argparse4j.impl.Arguments.store;
 
@@ -154,6 +155,19 @@ public abstract class TopicSwitchCommand {
         return parser;
     }
 
+    /**
+     * Returns the offset of the partition, or {@code unavailable} if its {@code ListOffsets} request failed.
+     * A failure for one partition, such as the retriable {@code UNKNOWN_TOPIC_OR_PARTITION} while the leader
+     * initializes the control plane, must not hide the other partitions.
+     */
+    private static String formatOffset(ListOffsetsResult result, TopicPartition tp) throws InterruptedException {
+        try {
+            return String.valueOf(result.partitionResult(tp).get().offset());
+        } catch (ExecutionException | IllegalArgumentException e) {
+            return "unavailable";
+        }
+    }
+
     static void stateCommand(PrintStream stream, Admin adminClient, String topic) throws Exception {
         DescribeTopicPartitionsResult describeResult = adminClient.describeTopicPartitions(
             List.of(topic), new DescribeTopicsOptions());
@@ -177,10 +191,8 @@ public abstract class TopicSwitchCommand {
             earliestOffsets.put(tp, OffsetSpec.earliest());
         }
 
-        Map<TopicPartition, ListOffsetsResult.ListOffsetsResultInfo> latest =
-            adminClient.listOffsets(latestOffsets).all().get();
-        Map<TopicPartition, ListOffsetsResult.ListOffsetsResultInfo> earliest =
-            adminClient.listOffsets(earliestOffsets).all().get();
+        ListOffsetsResult latest = adminClient.listOffsets(latestOffsets);
+        ListOffsetsResult earliest = adminClient.listOffsets(earliestOffsets);
 
         for (DescribeTopicPartitionsResponsePartition partition : partitions) {
             int partitionIndex = partition.partitionIndex();
@@ -197,9 +209,6 @@ public abstract class TopicSwitchCommand {
             int lastClassicLeaderEpoch = InitDisklessLogFields.decodeLastClassicLeaderEpoch(
                 partition.unknownTaggedFields());
 
-            ListOffsetsResult.ListOffsetsResultInfo latestInfo = latest.get(tp);
-            ListOffsetsResult.ListOffsetsResultInfo earliestInfo = earliest.get(tp);
-
             stream.printf("Partition %d:%n", partitionIndex);
             stream.printf("  leader=%d epoch=%d isr=%s%n",
                 partition.leaderId(), partition.leaderEpoch(), partition.isrNodes());
@@ -211,9 +220,8 @@ public abstract class TopicSwitchCommand {
                 formatClassicPrefixInRemoteStorage(classicPrefixInRemoteStorage, classicToDisklessStartOffset));
             stream.printf("  lastClassicLeaderEpoch=%s%n",
                 formatLastClassicLeaderEpoch(lastClassicLeaderEpoch));
-            stream.printf("  logStartOffset=%d logEndOffset=%d%n",
-                earliestInfo != null ? earliestInfo.offset() : -1,
-                latestInfo != null ? latestInfo.offset() : -1);
+            stream.printf("  logStartOffset=%s logEndOffset=%s%n",
+                formatOffset(earliest, tp), formatOffset(latest, tp));
 
             if (!producerStates.isEmpty()) {
                 stream.printf("  producerStates (%d):%n", producerStates.size());
