@@ -207,6 +207,32 @@ New JMX metrics are available on the active controller (`kafka.controller:type=K
 
 These metrics are tracked separately from classic partition metrics to avoid false alerts — diskless topics may show offline replicas in KRaft metadata while remaining fully available via the metadata transformer.
 
+### Partition rate metrics
+
+Each broker publishes gauges under `kafka.server:type=ReplicaManager` with the distribution of client bytes per partition: bytes in from produce requests (`PartitionBytesInRate*`) and bytes out to consumer fetches (`PartitionBytesOutRate*`). Each direction has percentile gauges (`P50`, `P95`, `P99`, `P999`, `Max`), bucket counts, a sum, and an active partition count, tagged with `topicType`. For the list of metrics, see [metrics.rst](metrics.rst). To change the snapshot interval, set `inkless.partition.rate.window.ms`.
+
+The metrics count produce requests and consumer fetch requests. They don't count replication, consolidation, coordinator, or share fetch traffic, and they skip Kafka internal topics.
+
+The unit is one partition on one broker: the bytes that this broker served for the partition during the interval. A diskless partition can have traffic on several brokers. A classic partition can have bytes out on several brokers when consumers fetch from followers. Each broker counts its own slice, so the percentiles don't combine across brokers. A sum of `PartitionsByBytesInRate` or `PartitionsByBytesOutRate` over the brokers counts each slice once. A diskless partition with 1 KiB/s on each of 3 brokers adds 3 to the bucket of 1 KiB/s.
+
+The classic series of `ActivePartitionsBytesOut` have a `role` tag with the value `leader` or `follower`. The classic `HostedPartitions` series counts only the partitions that the broker leads. To get the share of idle classic partitions for bytes out, subtract the `role=leader` series from `HostedPartitions`, then divide by `HostedPartitions`. The diskless `HostedPartitions` series counts the diskless partitions whose replicas include the broker. Its sum over the brokers is the number of diskless partitions times the replication factor.
+
+#### Use the partition rate metrics
+
+The metrics answer these questions for one broker and one topic type:
+
+- How unequal are the partition rates? Compare `P99` and `Max` with `P50`. If `Max` is close to the sum, most of the client traffic of the broker goes to one partition.
+- How many partitions exceed a rate? Subtract the `PartitionsByBytesInRate` bucket at that bound from the `le=Inf` bucket: `le=Inf` minus `le=1048576` counts the partitions over 1 MiB/s.
+- How many classic partitions roll segments by size? With a 128 MiB segment and a 24 h time roll, the partitions over `le=1536` fill a segment first.
+- How many hosted partitions are idle? Subtract `ActivePartitionsBytesIn` from `HostedPartitions` of the same topic type. For classic bytes out, use the `role=leader` series. For diskless, the result is correct only if the metadata transformer keeps clients on the replicas: with `remote.storage.enable=true`, or in phase 1 of the classic-to-diskless switch.
+- How many classic partitions do consumers fetch from this broker as a follower? Read the `role=follower` series of `ActivePartitionsBytesOut`.
+
+The metrics don't answer these questions:
+
+- How many diskless partitions without remote storage are idle: the metadata transformer can route clients to a broker outside the replicas, so `ActivePartitionsBytesIn` can count partitions that `HostedPartitions` doesn't.
+- Which partition is hot: the metrics don't name partitions. The per-topic `BytesInPerSec` and `BytesOutPerSec` narrow it to a topic.
+- What share of the bytes goes to the busiest 20% of partitions: the buckets count partitions, not bytes. `Max` divided by the sum gives the share of the busiest partition, within 1%. For the partitions over a bound, the bound times their count gives a lower limit of their rate.
+
 ### App info metric
 
 Brokers and clients register an `inkless-tag` gauge in the `app-info` metric group, next to `version`, `commit-id`, and `start-time-ms`. The value is the `git describe` output of the nearest `inkless-*` tag, such as `inkless-4.2.1-0.45`. A build can set the value with `-PinklessTag`, which takes precedence over git. Without `-PinklessTag`, the value is `unknown` when the build has no git checkout or git can't describe it. On a checkout with no matching `inkless-*` tag, the value is the abbreviated commit hash, such as `9c3cf45`. The `kafka-version` gauge in the same group reports the upstream Kafka version without the `-inkless` qualifier, such as `4.3.1` for `4.3.1-inkless`. The `app-info` MBean exposes the same values as the `InklessTag` and `KafkaVersion` attributes.

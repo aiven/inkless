@@ -282,6 +282,25 @@ class InklessMetadataViewTest {
     assertTrue(metadataView.getConsolidatingDisklessTopicPartitions.isEmpty)
   }
 
+  @Test
+  def testGetDisklessReplicaCountCountsDisklessPartitionsWithTheBrokerInTheReplicas(): Unit = {
+    val metadataCache = mock(classOf[KRaftMetadataCache])
+    val metadataView = new InklessMetadataView(metadataCache, null)
+    stubTopicConfigs(metadataCache,
+      configs = Map("diskless-a" -> createTopicProps(diskless = Some("true")),
+        "diskless-b" -> createTopicProps(diskless = Some("true")), "classic" -> createTopicProps(),
+        "diskless-deleted" -> createTopicProps(diskless = Some("true"))),
+      topics = Map("diskless-a" -> (Uuid.randomUuid(), 3), "diskless-b" -> (Uuid.randomUuid(), 2),
+        "classic" -> (Uuid.randomUuid(), 2)),
+      replicas = Map("diskless-a" -> util.List.of(1, 2), "diskless-b" -> util.List.of(2, 3),
+        "classic" -> util.List.of(1, 2, 3)))
+
+    assertEquals(3, metadataView.getDisklessReplicaCount(1))
+    assertEquals(5, metadataView.getDisklessReplicaCount(2))
+    assertEquals(2, metadataView.getDisklessReplicaCount(3))
+    assertEquals(0, metadataView.getDisklessReplicaCount(4))
+  }
+
   private def createTopicProps(diskless: Option[String] = None, remoteStorageEnable: Option[String] = None): Properties = {
     val props = new Properties()
     diskless.foreach(v => props.put(TopicConfig.DISKLESS_ENABLE_CONFIG, v))
@@ -293,13 +312,14 @@ class InklessMetadataViewTest {
   // and the topics as (topic ID, partition count).
   private def stubTopicConfigs(cache: KRaftMetadataCache,
                                configs: Map[String, Properties],
-                               topics: Map[String, (Uuid, Int)] = Map.empty): Unit = {
+                               topics: Map[String, (Uuid, Int)] = Map.empty,
+                               replicas: Map[String, util.List[Integer]] = Map.empty): Unit = {
     val delta = new MetadataDelta.Builder().setImage(MetadataImage.EMPTY).build()
     topics.foreach { case (topic, (topicId, partitionCount)) =>
       delta.replay(new TopicRecord().setName(topic).setTopicId(topicId))
       (0 until partitionCount).foreach { partitionId =>
         delta.replay(new PartitionRecord().setTopicId(topicId).setPartitionId(partitionId)
-          .setReplicas(util.List.of(1)).setIsr(util.List.of(1)).setLeader(1).setLeaderEpoch(0))
+          .setReplicas(replicas.getOrElse(topic, util.List.of(1))).setIsr(util.List.of(1)).setLeader(1).setLeaderEpoch(0))
       }
     }
     configs.foreach { case (topic, props) =>
