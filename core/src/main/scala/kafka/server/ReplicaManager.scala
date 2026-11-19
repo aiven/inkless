@@ -18,6 +18,7 @@ package kafka.server
 
 import com.yammer.metrics.core.Meter
 import io.aiven.inkless.common.SharedState
+import io.aiven.inkless.common.metrics.PartitionRateTracker
 import io.aiven.inkless.consume.{ConcatenatedRecords, FetchHandler, FetchOffsetHandler, Reader}
 import io.aiven.inkless.storage_backend.common.ObjectFetcher
 import io.aiven.inkless.control_plane.{AdvanceCrossTierLogStartOffsetRequest, AdvanceCrossTierLogStartOffsetResponse, AvailabilityGatedControlPlane, BatchInfo, ControlPlaneAvailability, ControlPlaneUnavailableException, FindBatchRequest, FindBatchResponse, InitDisklessLogProducerState, ListOffsetsRequest => CpListOffsetsRequest}
@@ -583,6 +584,40 @@ class ReplicaManager(val config: KafkaConfig,
     metricsGroup.newMeter(ConsolidationHighWatermarkLagFetchRateMetricName, "fetches", TimeUnit.SECONDS)
   private val disklessSwitchedPrefixMissingFetchRate: Meter =
     metricsGroup.newMeter(DisklessSwitchedPrefixMissingFetchRateMetricName, "fetches", TimeUnit.SECONDS)
+  // Visible for testing
+  private[server] val partitionRateTracker = new PartitionRateTracker(time, () => hostedPartitionsForRates())
+  partitionRateTracker.registerMetrics(metricsGroup)
+
+  private def hostedPartitionsForRates(): PartitionRateTracker.Hosted = {
+    def isDiskless(topic: String): Boolean =
+      inklessSharedState.isDefined && _inklessMetadataView.isDisklessTopic(topic)
+
+    val classicLeaders = leaderPartitionsIterator.count(partition => !Topic.isInternal(partition.topic) && !isDiskless(partition.topic))
+    val disklessReplicas = if (inklessSharedState.isDefined) _inklessMetadataView.getDisklessReplicaCount(localBrokerId) else 0
+    new PartitionRateTracker.Hosted(classicLeaders, disklessReplicas, topicPartition =>
+      if (isDiskless(topicPartition.topic)) PartitionRateTracker.Placement.DISKLESS
+      else onlinePartition(topicPartition) match {
+        case Some(partition) if partition.isLeader => PartitionRateTracker.Placement.CLASSIC_LEADER
+        case Some(_) => PartitionRateTracker.Placement.CLASSIC_FOLLOWER
+        case None => PartitionRateTracker.Placement.NOT_HOSTED
+      })
+  }
+
+  /**
+   * Records the bytes that the broker committed for a client produce request.
+   */
+  def recordClientBytesIn(topicPartition: TopicPartition, bytes: Int): Unit = {
+    if (!Topic.isInternal(topicPartition.topic))
+      partitionRateTracker.record(PartitionRateTracker.Direction.IN, topicPartition, bytes)
+  }
+
+  /**
+   * Records the bytes that the broker sends to a consumer in a fetch response.
+   */
+  def recordClientBytesOut(topicPartition: TopicPartition, bytes: Int): Unit = {
+    if (!Topic.isInternal(topicPartition.topic))
+      partitionRateTracker.record(PartitionRateTracker.Direction.OUT, topicPartition, bytes)
+  }
 
   /**
    * Returns true when this broker consolidates the topic: the feature is enabled here and the topic
@@ -652,6 +687,10 @@ class ReplicaManager(val config: KafkaConfig,
     logDirFailureHandler.start()
     addPartitionsToTxnManager.foreach(_.start())
     remoteLogManager.foreach(rlm => rlm.setDelayedOperationPurgatory(delayedRemoteListOffsetsPurgatory))
+
+    val partitionRateWindowMs = config.inklessConfig.partitionRateWindow().toMillis
+    scheduler.schedule("inkless-partition-rate-snapshot", () => partitionRateTracker.snapshot(),
+      partitionRateWindowMs, partitionRateWindowMs)
 
     // Inkless threads
     inklessSharedState.map { sharedState =>
@@ -4277,6 +4316,7 @@ class ReplicaManager(val config: KafkaConfig,
       checkpointHighWatermarks()
     consolidationFetchHandler.foreach(_.close())
     consolidationMetrics.foreach(_.close())
+    partitionRateTracker.close()
     replicaSelectorPlugin.foreach(_.close)
     removeAllTopicMetrics()
     addPartitionsToTxnManager.foreach(_.shutdown())

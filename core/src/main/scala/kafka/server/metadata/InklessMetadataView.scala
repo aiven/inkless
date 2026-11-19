@@ -24,7 +24,7 @@ import org.apache.kafka.common.config.{ConfigResource, TopicConfig}
 import org.apache.kafka.common.network.ListenerName
 import org.apache.kafka.common.{Node, TopicIdPartition, TopicPartition, Uuid}
 import org.apache.kafka.image.MetadataImage
-import org.apache.kafka.metadata.{PartitionRegistration}
+import org.apache.kafka.metadata.{PartitionRegistration, Replicas}
 import org.apache.kafka.storage.internals.log.LogConfig
 
 import java.util
@@ -83,6 +83,17 @@ class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConf
 
   override def getConsolidatingDisklessTopicPartitions: util.Set[TopicIdPartition] =
     topicPartitions(isConsolidating)
+
+  /**
+   * Returns the number of diskless partitions whose replicas include the given broker.
+   */
+  def getDisklessReplicaCount(brokerId: Int): Int = {
+    val image = metadataCache.currentImage()
+    image.topics().topicsByName().values().stream()
+      .filter(topic => isDiskless(topicOverrides(image, topic.name())))
+      .mapToInt(_.partitions().values().stream().filter(p => Replicas.contains(p.replicas, brokerId)).count().toInt)
+      .sum()
+  }
 
   // Reads the topics, their configs, and their partitions from one image:
   // a topic that a later image deletes can't fail the scan.

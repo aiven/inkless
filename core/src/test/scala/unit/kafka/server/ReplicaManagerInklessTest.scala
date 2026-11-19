@@ -1701,6 +1701,143 @@ class ReplicaManagerInklessTest {
     }
   }
 
+  private val partitionRateWindowMs = 60000L
+
+  private def partitionRateGauge(name: String, tags: String): Number = {
+    val mbeanName = s"kafka.server:type=ReplicaManager,name=$name" + (if (tags.isEmpty) "" else s",$tags")
+    KafkaYammerMetrics.defaultRegistry.allMetrics.asScala
+      .collectFirst { case (n, g: com.yammer.metrics.core.Gauge[_]) if n.getMBeanName == mbeanName => g.value().asInstanceOf[Number] }
+      .getOrElse(fail(s"Gauge $mbeanName is not registered"))
+  }
+
+  private def snapshotPartitionRatesOverOneWindow(replicaManager: ReplicaManager)(traffic: => Unit): Unit = {
+    traffic
+    time.sleep(partitionRateWindowMs)
+    replicaManager.partitionRateTracker.snapshot()
+  }
+
+  private def stubHostedDisklessPartitions(replicaManager: ReplicaManager, tps: TopicIdPartition*): Unit =
+    when(replicaManager.inklessMetadataView().getDisklessReplicaCount(replicaManager.config.brokerId)).thenReturn(tps.size)
+
+  @ParameterizedTest(name = "testRecordClientBytesInByTopicType with diskless: {0}")
+  @ValueSource(booleans = Array(true, false))
+  def testRecordClientBytesInByTopicType(diskless: Boolean): Unit = {
+    val replicaManager = createReplicaManager(List(disklessTopicPartition.topic()))
+    try {
+      stubHostedDisklessPartitions(replicaManager, disklessTopicPartition)
+      addLeaderOrFollowerPartition(replicaManager, classicTopicPartition.topicPartition, isLeader = true)
+      val tp = if (diskless) disklessTopicPartition else classicTopicPartition
+      snapshotPartitionRatesOverOneWindow(replicaManager) {
+        replicaManager.recordClientBytesIn(tp.topicPartition, RECORDS.sizeInBytes)
+      }
+
+      val tags = if (diskless) "topicType=diskless" else "topicType=classic"
+      assertEquals(1L, partitionRateGauge("ActivePartitionsBytesIn", tags).longValue)
+      assertEquals(RECORDS.sizeInBytes * 1000.0 / partitionRateWindowMs, partitionRateGauge("PartitionBytesInRateSum", tags).doubleValue, 1e-9)
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testRecordClientBytesOutDisklessHasNoRole(): Unit = {
+    val replicaManager = createReplicaManager(List(disklessTopicPartition.topic()))
+    try {
+      stubHostedDisklessPartitions(replicaManager, disklessTopicPartition)
+      snapshotPartitionRatesOverOneWindow(replicaManager) {
+        replicaManager.recordClientBytesOut(disklessTopicPartition.topicPartition, RECORDS.sizeInBytes)
+      }
+
+      val tags = "topicType=diskless"
+      assertEquals(1L, partitionRateGauge("ActivePartitionsBytesOut", tags).longValue)
+      assertEquals(RECORDS.sizeInBytes * 1000.0 / partitionRateWindowMs, partitionRateGauge("PartitionBytesOutRateSum", tags).doubleValue, 1e-9)
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  private def addLeaderOrFollowerPartition(replicaManager: ReplicaManager, tp: TopicPartition, isLeader: Boolean): Partition = {
+    val partition = mock(classOf[Partition])
+    when(partition.topicPartition).thenReturn(tp)
+    when(partition.topic).thenReturn(tp.topic)
+    when(partition.isLeader).thenReturn(isLeader)
+    when(partition.leaderLogIfLocal).thenReturn(if (isLeader) Some(mock(classOf[UnifiedLog])) else None)
+    replicaManager.addOnlinePartition(tp, partition)
+    partition
+  }
+
+  @ParameterizedTest(name = "testRecordClientBytesOutClassicRole with isLeader: {0}")
+  @ValueSource(booleans = Array(true, false))
+  def testRecordClientBytesOutClassicRole(isLeader: Boolean): Unit = {
+    val replicaManager = createReplicaManager(List(disklessTopicPartition.topic()))
+    try {
+      addLeaderOrFollowerPartition(replicaManager, classicTopicPartition.topicPartition, isLeader)
+      snapshotPartitionRatesOverOneWindow(replicaManager) {
+        replicaManager.recordClientBytesOut(classicTopicPartition.topicPartition, RECORDS.sizeInBytes)
+      }
+
+      val tags = "topicType=classic"
+      assertEquals(if (isLeader) 1L else 0L, partitionRateGauge("ActivePartitionsBytesOut", s"$tags,role=leader").longValue)
+      assertEquals(if (isLeader) 0L else 1L, partitionRateGauge("ActivePartitionsBytesOut", s"$tags,role=follower").longValue)
+      assertEquals(RECORDS.sizeInBytes * 1000.0 / partitionRateWindowMs, partitionRateGauge("PartitionBytesOutRateSum", tags).doubleValue, 1e-9)
+      assertEquals(if (isLeader) 1 else 0, partitionRateGauge("HostedPartitions", "topicType=classic").intValue)
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testRecordClientBytesSkipsInternalTopicsAndPartitionsNotHosted(): Unit = {
+    val replicaManager = createReplicaManager(List(disklessTopicPartition.topic()))
+    try {
+      val internal = new TopicPartition("__consumer_offsets", 0)
+      addLeaderOrFollowerPartition(replicaManager, internal, isLeader = true)
+      snapshotPartitionRatesOverOneWindow(replicaManager) {
+        replicaManager.recordClientBytesIn(internal, RECORDS.sizeInBytes)
+        replicaManager.recordClientBytesOut(internal, RECORDS.sizeInBytes)
+        // This broker doesn't host the classic partition.
+        replicaManager.recordClientBytesOut(classicTopicPartition.topicPartition, RECORDS.sizeInBytes)
+      }
+
+      val tags = "topicType=classic"
+      assertEquals(0L, partitionRateGauge("ActivePartitionsBytesIn", tags).longValue)
+      assertEquals(0L, partitionRateGauge("ActivePartitionsBytesOut", s"$tags,role=leader").longValue)
+      assertEquals(0L, partitionRateGauge("ActivePartitionsBytesOut", s"$tags,role=follower").longValue)
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testPartitionRateHostedPartitionsExcludeInternalAndDisklessTopics(): Unit = {
+    val replicaManager = createReplicaManager(List(disklessTopicPartition.topic()))
+    try {
+      addLeaderOrFollowerPartition(replicaManager, new TopicPartition("classic", 0), isLeader = true)
+      addLeaderOrFollowerPartition(replicaManager, new TopicPartition("classic", 1), isLeader = false)
+      addLeaderOrFollowerPartition(replicaManager, new TopicPartition("__consumer_offsets", 0), isLeader = true)
+      addLeaderOrFollowerPartition(replicaManager, disklessTopicPartition.topicPartition, isLeader = true)
+      stubHostedDisklessPartitions(replicaManager, disklessTopicPartition)
+
+      replicaManager.partitionRateTracker.snapshot()
+
+      assertEquals(1, partitionRateGauge("HostedPartitions", "topicType=classic").intValue)
+      assertEquals(1, partitionRateGauge("HostedPartitions", "topicType=diskless").intValue)
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testShutdownRemovesPartitionRateMetrics(): Unit = {
+    val replicaManager = createReplicaManager(List(disklessTopicPartition.topic()))
+    assertNotNull(partitionRateGauge("HostedPartitions", "topicType=classic"))
+    replicaManager.shutdown(checkpointHW = false)
+
+    val registered = KafkaYammerMetrics.defaultRegistry.allMetrics.keySet.asScala
+      .exists(n => n.getMBeanName.matches("kafka\\.server:type=ReplicaManager,name=(PartitionBytes|PartitionsByBytes|ActivePartitionsBytes|HostedPartitions).*"))
+    assertFalse(registered)
+  }
+
   private def stubConsolidatingPartitionWithLocalLeo(replicaManager: ReplicaManager,
                                                      localLeo: Long,
                                                      localHighWatermark: Option[Long] = None,
