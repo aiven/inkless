@@ -111,6 +111,13 @@ Once HW catches up to LEO, the partition moves to `SendingToController`. The bro
 
 At this point `HW == LEO`, so the proposed start offset is the sealed LEO and is safely replicated to the ISR.
 
+The producer states contain one entry per retained batch of each active producer. One request contains at most 123,361 entries. The controller writes the records of a request in metadata batches of at most 10,000 records, and this limit keeps the entries of all batches together within half of the 8 MiB that the Raft client accepts in one batch. The broker applies the limit in two ways:
+
+* If the ready partitions exceed the limit together, the broker sends them in several requests. A partition that waits for a later request doesn't count as a retry.
+* If one partition exceeds the limit, the broker sends only the newest batch of each producer. The control plane needs only that batch to check the next sequence of a producer. A retry of an older batch then fails with `OUT_OF_ORDER_SEQUENCE_NUMBER`, because the control plane no longer recognizes it as a duplicate. If the producers still don't fit, the broker keeps the producers whose newest batch has the highest offset and drops the others. The control plane rejects the next batch of a dropped producer with `OUT_OF_ORDER_SEQUENCE_NUMBER` until the producer bumps its epoch. A dropped producer also loses duplicate detection and epoch fencing. If it retries a batch that starts at sequence 0, the control plane appends the batch again. The control plane also accepts a batch from an older epoch of that producer. The broker logs a warning with the number of producers it dropped.
+
+If the broker can't build the request entry of a partition, it logs the error and retries that partition alone. The broker still sends the other partitions of the batch to the controller.
+
 ### Step 4: persist the final start offset
 
 The controller handles `InitDisklessLog` as a serialized write operation. For each partition, it validates that:
@@ -124,6 +131,10 @@ If validation succeeds, the controller writes a `PartitionChangeRecord` containi
 
 If the broker is stale, the controller rejects the request. A lower leader epoch is a permanent failure for that broker's attempt; retriable controller or transport failures are retried by the broker.
 
+The controller applies the same limit of 123,361 producer state entries to the records of one request. It rejects a partition whose entries don't fit with `RECORD_LIST_TOO_LARGE` and doesn't write a record for it. The broker retries that partition in a later request. A metadata batch over the Raft batch size fails the whole request and makes the active controller resign. The limit prevents the controller from passing such a batch to the Raft client.
+
+The producer states stay in the metadata of the partition, and every metadata snapshot writes them in the record of the partition. The snapshot writer starts a new batch when the next record doesn't fit in 4 MiB. Without that split, the records of several switched partitions exceed the Raft batch size in one snapshot batch, and the snapshot fails.
+
 ### Step 5: initialize the diskless log
 
 After the final offset is committed to the metadata log, brokers receive a new metadata delta with `classicToDisklessStartOffset >= 0`. The local leader then initializes the diskless log on the control plane using the authoritative data from metadata, not the earlier controller response.
@@ -131,11 +142,13 @@ After the final offset is committed to the metadata log, brokers receive a new m
 The leader calls the control-plane `InitDisklessLog` API with:
 
 * topic ID, topic name, and partition
-* local classic log start offset
+* local log start offset, or the committed `classicToDisklessStartOffset` if the local log starts past it
 * committed `classicToDisklessStartOffset`
 * committed producer states
 
 Control-plane initialization is batched and retried on transient failures. An `INVALID_REQUEST` response from the control plane is treated as success because it means the diskless log is already initialized.
+
+If the leader can't build the request of a partition, it logs the error and retries that partition alone. The leader still sends the other partitions of the batch to the control plane.
 
 Once control-plane initialization succeeds, produce requests can use the diskless append path from the committed start offset onward. If `classicPrefixInRemoteStorage` is already `true`, `InitDisklessLogManager` removes the partition from tracking. Otherwise `InitDisklessLogManager` keeps tracking the partition for the next step.
 
@@ -185,6 +198,8 @@ When a broker applies a newly committed seal offset, it reconciles the local cla
 A broker answers `ListOffsets` from its local classic log while the switch is pending, because the control plane has no entry for the partition yet. The leader and the in-sync followers answer client requests, because the metadata routing sends clients to any alive ISR member. A replica outside the ISR answers `NOT_LEADER_OR_FOLLOWER`. After the controller commits the final start offset and until the leader initializes the control plane, `ListOffsets` for the latest offset fails with the retriable `UNKNOWN_TOPIC_OR_PARTITION`. On a consolidating topic, `ListOffsets` for the earliest offset fails the same way.
 
 If leadership changes while the switch is pending, the new leader seals and re-drives the `InitDisklessLog` controller request. If leadership changes after the controller commits the final offset, the new leader skips the controller step and initializes the control plane directly from metadata. If the flag is still unset, the new leader also rolls its active segment when that segment holds part of the classic prefix, so the remote log manager can copy it. The new leader then watches the upload itself, as in [Step 6](#step-6-request-the-classicprefixinremotestorage-flag).
+
+If a broker deletes a partition, it also removes the partition from `InitDisklessLogManager`, whatever its state. This covers a topic deletion and a reassignment that takes the replica away from the broker. The manager tracks partitions by topic name, so an entry of a deleted topic would otherwise block the switch of a later topic with the same name.
 
 ## Open transactions at the switch
 

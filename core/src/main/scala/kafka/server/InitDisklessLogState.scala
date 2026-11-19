@@ -23,12 +23,13 @@ import kafka.utils.Logging
 import org.apache.kafka.common.{TopicPartition, Uuid}
 import org.apache.kafka.common.message.{InitDisklessLogRequestData, InitDisklessLogResponseData, SetClassicPrefixInRemoteStorageRequestData, SetClassicPrefixInRemoteStorageResponseData}
 import org.apache.kafka.common.protocol.Errors
-import org.apache.kafka.metadata.PartitionRegistration
-import org.apache.kafka.storage.internals.log.UnifiedLog
+import org.apache.kafka.metadata.{InitDisklessLogFields, PartitionRegistration}
+import org.apache.kafka.storage.internals.log.{BatchMetadata, ProducerStateEntry, UnifiedLog}
 
 import java.util
 import scala.jdk.CollectionConverters._
 import scala.jdk.OptionConverters._
+import scala.util.control.NonFatal
 
 sealed trait InitDisklessLogState extends Logging {
   def partition: Partition
@@ -126,11 +127,12 @@ object SendingToController {
   def buildRequestData(
     states: Iterable[SendingToController],
     brokerId: Int,
-    brokerEpoch: Long
+    brokerEpoch: Long,
+    maxProducerStateEntries: Int = InitDisklessLogFields.MAX_PRODUCER_STATE_ENTRIES
   ): InitDisklessLogRequestData = {
     val topicDataById = new util.LinkedHashMap[Uuid, util.List[InitDisklessLogRequestData.PartitionData]]()
     states.foreach { state =>
-      toPartitionData(state).foreach { partitionData =>
+      toPartitionData(state, maxProducerStateEntries).foreach { partitionData =>
         topicDataById.computeIfAbsent(state.topicId, _ => new util.ArrayList[InitDisklessLogRequestData.PartitionData]())
           .add(partitionData)
       }
@@ -170,38 +172,101 @@ object SendingToController {
     outcomes.toSeq
   }
 
-  private def toPartitionData(state: SendingToController): Option[InitDisklessLogRequestData.PartitionData] = {
+  /**
+   * Returns the number of producer state entries in the request for `state`, or 0 if the partition has no log.
+   */
+  def producerStateEntryCount(state: SendingToController, maxEntries: Int): Int =
     state.partition.log.map { log =>
-      val hw = log.highWatermark
-      val leaderEpoch = state.partition.getLeaderEpoch
-      new InitDisklessLogRequestData.PartitionData()
-        .setPartitionId(state.tp.partition)
-        .setDisklessStartOffset(hw)
-        .setLeaderEpoch(leaderEpoch)
-        .setProducerStates(extractProducerStates(log))
-    }.orElse {
-      state.warn(s"Skipping InitDisklessLog request entry because log disappeared for ${state.tp}")
-      None
+      Math.min(retainedBatchCount(producersWithBatches(log)), maxEntries.toLong).toInt
+    }.getOrElse(0)
+
+  private def toPartitionData(
+    state: SendingToController,
+    maxProducerStateEntries: Int
+  ): Option[InitDisklessLogRequestData.PartitionData] = {
+    state.partition.log match {
+      case Some(log) =>
+        // An exception here makes the caller retry the whole batch. Only this partition must retry.
+        try {
+          Some(new InitDisklessLogRequestData.PartitionData()
+            .setPartitionId(state.tp.partition)
+            .setDisklessStartOffset(log.highWatermark)
+            .setLeaderEpoch(state.partition.getLeaderEpoch)
+            .setProducerStates(extractProducerStates(state, log, maxProducerStateEntries)))
+        } catch {
+          case NonFatal(e) =>
+            state.error(s"Failed to build the InitDisklessLog request entry for ${state.tp}, scheduling retry", e)
+            None
+        }
+      case None =>
+        state.warn(s"Skipping InitDisklessLog request entry because log disappeared for ${state.tp}")
+        None
     }
   }
 
-  private def extractProducerStates(log: UnifiedLog): util.List[InitDisklessLogRequestData.ProducerState] = {
+  private def producersWithBatches(log: UnifiedLog): Seq[(java.lang.Long, ProducerStateEntry)] =
+    log.producerStateManager().activeProducers().asScala.toSeq
+      .filter { case (_, entry) => !entry.batchMetadata().isEmpty }
+
+  private def retainedBatchCount(producers: Seq[(java.lang.Long, ProducerStateEntry)]): Long =
+    producers.iterator.map { case (_, entry) => entry.batchMetadata().size.toLong }.sum
+
+  /**
+   * Returns the producer state entries to commit with the seal, at most `maxEntries` of them.
+   *
+   * The controller writes the entries of a partition in one metadata record, so a partition can't commit
+   * more than `maxEntries`. A partition over the limit keeps only the newest batch of each producer. The
+   * control plane needs only that batch to check the next sequence of a producer. The producer continues,
+   * but the control plane no longer recognizes a retry of an older batch as a duplicate. If the producers
+   * still don't fit, the ones that wrote last keep their entry. A producer without an entry must bump its
+   * epoch before the control plane accepts its next batch. The control plane doesn't store any state for
+   * that producer: it appends a retry of a batch that starts at sequence 0 again, and it accepts a batch
+   * from an older epoch.
+   */
+  private def extractProducerStates(
+    state: SendingToController,
+    log: UnifiedLog,
+    maxEntries: Int
+  ): util.List[InitDisklessLogRequestData.ProducerState] = {
+    val producers = producersWithBatches(log)
+    val totalBatches = retainedBatchCount(producers)
     val states = new util.ArrayList[InitDisklessLogRequestData.ProducerState]()
-    log.producerStateManager().activeProducers().forEach { (producerId, entry) =>
-      if (!entry.isEmpty) {
+    if (totalBatches <= maxEntries) {
+      producers.foreach { case (producerId, entry) =>
         entry.batchMetadata().asScala.foreach { batch =>
-          states.add(new InitDisklessLogRequestData.ProducerState()
-            .setProducerId(producerId)
-            .setProducerEpoch(entry.producerEpoch())
-            .setBaseSequence(batch.firstSeq())
-            .setLastSequence(batch.lastSeq)
-            .setAssignedOffset(batch.firstOffset())
-            .setBatchMaxTimestamp(batch.timestamp))
+          states.add(toProducerState(producerId, entry.producerEpoch(), batch))
         }
       }
+    } else {
+      // The batch with the highest sequence is the last one of a producer.
+      val newestBatches = producers.map { case (producerId, entry) =>
+        (producerId, entry.producerEpoch(), entry.batchMetadata().asScala.last)
+      }
+      val kept =
+        if (newestBatches.size <= maxEntries) newestBatches
+        else newestBatches.sortBy { case (_, _, batch) => batch.lastOffset }(Ordering[Long].reverse).take(maxEntries)
+      kept.foreach { case (producerId, producerEpoch, batch) =>
+        states.add(toProducerState(producerId, producerEpoch, batch))
+      }
+      state.warn(s"The producer state of ${state.tp} holds $totalBatches batches of ${producers.size} producers, " +
+        s"over the limit of $maxEntries entries. Committing only the newest batch of ${kept.size} producers. " +
+        s"${producers.size - kept.size} producers lose their state.")
     }
     states
   }
+
+  private def toProducerState(
+    producerId: Long,
+    producerEpoch: Short,
+    batch: BatchMetadata
+  ): InitDisklessLogRequestData.ProducerState =
+    new InitDisklessLogRequestData.ProducerState()
+      .setProducerId(producerId)
+      .setProducerEpoch(producerEpoch)
+      .setBaseSequence(batch.firstSeq())
+      .setLastSequence(batch.lastSeq())
+      .setAssignedOffset(batch.firstOffset())
+      .setBatchMaxTimestamp(batch.timestamp())
 
 }
 
@@ -367,6 +432,13 @@ object SendingFlagToController {
 
 object AwaitingMetadata {
 
+  /**
+   * Returns the start offset of the classic prefix `[logStartOffset, seal)`. If the local log start is past
+   * the seal, the classic prefix is empty and starts at the seal. The control plane rejects a log start
+   * offset past the seal.
+   */
+  private def classicLogStartOffset(log: UnifiedLog, seal: Long): Long = Math.min(log.logStartOffset, seal)
+
   def sendBatch(
     states: Iterable[AwaitingMetadata],
     destination: ControlPlane,
@@ -396,14 +468,21 @@ object AwaitingMetadata {
               state.warn(s"Partition ${state.tp} has no log while applying diskless metadata, scheduling retry")
               retryOutcomeByIndex += index -> retriable(state)
             case Some(log) =>
-              requests.add(new CpInitRequest(
-                state.topicId,
-                metadata.topicName,
-                state.tp.partition(),
-                log.logStartOffset,
-                metadata.classicToDisklessStartOffset,
-                metadata.producerStates
-              ))
+              // An exception here makes the caller retry the whole batch. Only this partition must retry.
+              try {
+                requests.add(new CpInitRequest(
+                  state.topicId,
+                  metadata.topicName,
+                  state.tp.partition(),
+                  classicLogStartOffset(log, metadata.classicToDisklessStartOffset),
+                  metadata.classicToDisklessStartOffset,
+                  metadata.producerStates
+                ))
+              } catch {
+                case NonFatal(e) =>
+                  state.error(s"Failed to build the control-plane InitDisklessLog request for ${state.tp}, scheduling retry", e)
+                  retryOutcomeByIndex += index -> retriable(state)
+              }
           }
       }
     }
