@@ -431,7 +431,8 @@ object SendingFlagToController {
   }
 }
 
-object AwaitingMetadata {
+object AwaitingMetadata extends Logging {
+  logIdent = "[InitDisklessLog->AwaitingMetadata] "
 
   /**
    * Returns the start offset of the classic prefix `[logStartOffset, seal)`. If the local log start is past
@@ -456,6 +457,8 @@ object AwaitingMetadata {
     val retryOutcomeByIndex = scala.collection.mutable.Map[Int, ParsedResponse]()
     // Batched control-plane requests for states that are ready to be applied.
     val requests = new util.ArrayList[CpInitRequest]()
+    // Input index of the state of each request in `requests`.
+    val stateIndexByRequest = scala.collection.mutable.ArrayBuffer[Int]()
 
     // Validate each state and either precompute a retry outcome or queue a batched request.
     stateSeq.zipWithIndex.foreach { case (state, index) =>
@@ -479,6 +482,7 @@ object AwaitingMetadata {
                   metadata.classicToDisklessStartOffset,
                   metadata.producerStates
                 ))
+                stateIndexByRequest += index
               } catch {
                 case NonFatal(e) =>
                   state.error(s"Failed to build the control-plane InitDisklessLog request for ${state.tp}, scheduling retry", e)
@@ -488,41 +492,59 @@ object AwaitingMetadata {
       }
     }
 
-    // Issue one Control Plane call for the whole batch (if any requests exist).
-    val responseResult: Either[Throwable, Seq[CpInitResponse]] =
-      if (requests.isEmpty) Right(Seq.empty)
-      else {
-        try Right(Option(destination.initDisklessLog(requests)).map(_.asScala.toSeq).getOrElse(Seq.empty))
-        catch {
-          case t: Throwable => Left(t)
-        }
-      }
+    val resultByStateIndex = stateIndexByRequest.zip(callControlPlane(destination, requests)).toMap
 
     // Rebuild outcomes in original order.
-    val responseIterator = responseResult.getOrElse(Seq.empty).iterator
     val outcomes = stateSeq.zipWithIndex.map { case (state, index) =>
       retryOutcomeByIndex.getOrElse(index, {
-        responseResult match {
+        resultByStateIndex(index) match {
           case Left(t) =>
-            // If the single batched call fails, retry all.
-            state.warn(s"Control-plane InitDisklessLog for ${state.tp} failed, scheduling retry", t)
+            state.error(s"Control-plane InitDisklessLog for ${state.tp} failed, scheduling retry", t)
             retriable(state)
-          case Right(_) =>
-            (if (responseIterator.hasNext) Some(responseIterator.next()) else None) match {
-              // INVALID_REQUEST = partition already initialized (idempotent success)
-              case Some(r) if r.error() == Errors.NONE || r.error() == Errors.INVALID_REQUEST =>
-                ParsedResponse(state.topicId, state.tp.partition(), r.error(), InitDisklessLogBatchQueue.Success)
-              case Some(r) =>
-                ParsedResponse(state.topicId, state.tp.partition(), r.error(), InitDisklessLogBatchQueue.RetriableFailure)
-              case None =>
-                // Missing response entry is treated as retriable to avoid dropping work.
-                state.warn(s"Control-plane InitDisklessLog response missing for ${state.tp}, scheduling retry")
-                retriable(state)
-            }
+          // `INVALID_REQUEST` means the control plane already has the partition, which counts as a success.
+          case Right(Some(r)) if r.error() == Errors.NONE || r.error() == Errors.INVALID_REQUEST =>
+            ParsedResponse(state.topicId, state.tp.partition(), r.error(), InitDisklessLogBatchQueue.Success)
+          case Right(Some(r)) =>
+            ParsedResponse(state.topicId, state.tp.partition(), r.error(), InitDisklessLogBatchQueue.RetriableFailure)
+          case Right(None) =>
+            // A missing response entry retries the partition, so the broker doesn't drop the work.
+            state.warn(s"Control-plane InitDisklessLog response missing for ${state.tp}, scheduling retry")
+            retriable(state)
         }
       })
     }
 
     onBatchComplete(Right(outcomes))
+  }
+
+  /**
+   * Returns the result of each request in `requests`, in order. `Right(None)` means the control plane
+   * returned no entry for that request.
+   *
+   * The control plane applies a batch in one transaction, so one request that it can't apply fails the
+   * whole call. If a batch of several requests fails, each request goes to the control plane alone. A partition
+   * that the control plane can't apply then retries, and the other partitions complete.
+   */
+  private def callControlPlane(
+    destination: ControlPlane,
+    requests: util.List[CpInitRequest]
+  ): Seq[Either[Throwable, Option[CpInitResponse]]] = {
+    def call(batch: util.List[CpInitRequest]): Either[Throwable, Seq[CpInitResponse]] =
+      try Right(Option(destination.initDisklessLog(batch)).map(_.asScala.toSeq).getOrElse(Seq.empty))
+      catch {
+        case t: Throwable => Left(t)
+      }
+
+    if (requests.isEmpty) return Seq.empty
+    call(requests) match {
+      case Right(responses) =>
+        requests.asScala.indices.map(index => Right(responses.lift(index)))
+      case Left(t) if requests.size == 1 =>
+        Seq(Left(t))
+      case Left(t) =>
+        warn(s"Control-plane InitDisklessLog failed for a batch of ${requests.size} partitions, " +
+          s"sending each partition alone", t)
+        requests.asScala.toSeq.map(request => call(util.List.of(request)).map(_.headOption))
+    }
   }
 }

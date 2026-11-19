@@ -1801,6 +1801,66 @@ class InitDisklessLogManagerTest {
     assertTrue(manager.getTrackedPartitions.isEmpty)
   }
 
+  @Test
+  def testControlPlaneFailureCausedByOnePartitionDoesNotBlockTheOthers(): Unit = {
+    // Given a control plane that fails every call that contains partition 0
+    val tp1 = new TopicPartition("test-topic", 1)
+    val tp2 = new TopicPartition("test-topic", 2)
+    val poison = mockPartition(tp = tp0, hw = 100, leo = 100)
+    val healthy = mockPartition(tp = tp1, hw = 100, leo = 100)
+    val sentBatches = mutable.Buffer[Seq[Int]]()
+    doAnswer { (invocation: InvocationOnMock) =>
+      val batch = invocation.getArgument[util.List[CpInitRequest]](0).asScala.map(_.partition()).toSeq
+      sentBatches += batch
+      if (batch.contains(0)) throw new RuntimeException("timestamp_t domain check failed")
+      util.Collections.nCopies(batch.size, CpInitResponse.success())
+    }.when(controlPlane).initDisklessLog(any())
+    val retriedBefore = meterCount(InitDisklessLogManager.InitRetriedPerSecMetricName)
+
+    // When both partitions reach the control-plane init in one batch
+    startInitOnControlPlane(poison, seal = 100L)
+    startInitOnControlPlane(healthy, seal = 100L)
+    fireLinger()
+
+    // Then the failed batch is resent one partition at a time, and the healthy partition completes.
+    // `MockScheduler` doesn't cancel the replaced linger task, which can run the retry of partition 0 in the same tick.
+    assertEquals(Seq(Seq(0, 1), Seq(0), Seq(1)), sentBatches.take(3).toSeq)
+    assertTrue(sentBatches.drop(3).forall(_ == Seq(0)), s"Unexpected batches: $sentBatches")
+    assertEquals(Set(tp0), manager.getTrackedPartitions)
+
+    // And the failing partition stays in AwaitingMetadata, visible in the metrics, with one retry per failed attempt
+    assertState[AwaitingMetadata](tp0)
+    assertEquals(1L, gaugeValue(InitDisklessLogManager.AwaitingMetadataPartitionsMetricName))
+    assertEquals(retriedBefore + sentBatches.count(_.contains(0)) - 1,
+      meterCount(InitDisklessLogManager.InitRetriedPerSecMetricName))
+
+    // When a partition reaches the control-plane init while the failing one still retries
+    sentBatches.clear()
+    startInitOnControlPlane(mockPartition(tp = tp2, hw = 100, leo = 100), seal = 100L)
+    fireLinger()
+
+    // Then the new partition completes, and only the failing one stays tracked
+    assertEquals(Seq(Seq(0, 2), Seq(0), Seq(2)), sentBatches.take(3).toSeq)
+    assertTrue(sentBatches.drop(3).forall(_ == Seq(0)), s"Unexpected batches: $sentBatches")
+    assertEquals(Set(tp0), manager.getTrackedPartitions)
+    assertState[AwaitingMetadata](tp0)
+  }
+
+  @Test
+  def testControlPlaneFailureOfASinglePartitionIsNotResent(): Unit = {
+    // Given a control plane that fails the call
+    val partition = mockPartition(hw = 100, leo = 100)
+    when(controlPlane.initDisklessLog(any())).thenThrow(new RuntimeException("control plane unavailable"))
+
+    // When one partition reaches the control-plane init
+    startInitOnControlPlane(partition, seal = 100L)
+    fireLinger()
+
+    // Then the broker makes one call and retries the partition later
+    verify(controlPlane, times(1)).initDisklessLog(any())
+    assertState[AwaitingMetadata](tp0)
+  }
+
   private val classicSeal = 100L
 
   // Makes the control plane accept every request in a batch.
