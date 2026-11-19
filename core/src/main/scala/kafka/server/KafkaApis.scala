@@ -461,6 +461,8 @@ class KafkaApis(val requestChannel: RequestChannel,
             invalidRequestResponses += topicIdPartition -> new PartitionResponse(Errors.forException(e))
         }
     }
+    // Only the sizes, so that the response callback does not hold the records while the request waits in purgatory.
+    val authorizedRecordsSizes = authorizedRequestInfo.map { case (topicIdPartition, records) => topicIdPartition -> records.sizeInBytes }
 
     // the callback for sending a produce response
     // The construction of ProduceResponse is able to accept auto-generated protocol data so
@@ -468,6 +470,10 @@ class KafkaApis(val requestChannel: RequestChannel,
     // https://issues.apache.org/jira/browse/KAFKA-10730
     @nowarn("cat=deprecation")
     def sendResponseCallback(responseStatus: Map[TopicIdPartition, PartitionResponse]): Unit = {
+      responseStatus.foreachEntry { (topicIdPartition, status) =>
+        if (status.error == Errors.NONE)
+          authorizedRecordsSizes.get(topicIdPartition).foreach(replicaManager.recordClientBytesIn(topicIdPartition.topicPartition, _))
+      }
       val mergedResponseStatus = responseStatus ++ unauthorizedTopicResponses ++ nonExistingTopicResponses ++ invalidRequestResponses
       var errorInResponse = false
 
@@ -691,6 +697,8 @@ class KafkaApis(val requestChannel: RequestChannel,
               val tp = new TopicIdPartition(topicResponse.topicId, new TopicPartition(topicResponse.topic, data.partitionIndex))
               val isDiskless = inklessSharedState.exists(_.metadata().isDisklessTopic(tp.topic))
               brokerTopicStats.updateBytesOut(tp.topic, fetchRequest.isFromFollower, reassigningPartitions.contains(tp), FetchResponse.recordsSize(data), isDiskless)
+              if (!fetchRequest.isFromFollower)
+                replicaManager.recordClientBytesOut(tp.topicPartition, FetchResponse.recordsSize(data))
             }
           }
         }

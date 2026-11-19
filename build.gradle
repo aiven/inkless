@@ -2615,6 +2615,7 @@ project(':storage:inkless') {
     api libs.pitestAnnotations
 
     implementation libs.slf4jApi
+    implementation libs.hdrHistogram
     implementation libs.postgresql
     implementation libs.hikariCP
     implementation libs.flyway

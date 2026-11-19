@@ -156,6 +156,13 @@ public class InklessConfig extends AbstractConfig {
         + "or a shorter consolidation.cleanup.interval.ms.";
     private static final int CONSOLIDATION_CLEANUP_MAX_BATCHES_PER_REQUEST_DEFAULT = 2000;
 
+    public static final String PARTITION_RATE_WINDOW_MS_CONFIG = "partition.rate.window.ms";
+    private static final String PARTITION_RATE_WINDOW_MS_DOC = "The interval with which the broker snapshots the client bytes in and bytes out "
+        + "rate of each partition for the PartitionBytesInRate and PartitionBytesOutRate metrics. "
+        + "A partition with no client traffic during the interval is idle. "
+        + "A longer interval smooths sporadic traffic but delays changes in the metrics.";
+    private static final int PARTITION_RATE_WINDOW_MS_DEFAULT = 60 * 1000;  // 1 minute
+
     public static final String FILE_CLEANER_INTERVAL_MS_CONFIG = "file.cleaner.interval.ms";
     private static final String FILE_CLEANER_INTERVAL_MS_DOC = "The interval with which to clean up files marked for deletion. "
         + "Together with file.cleaner.max.files.per.cycle, this interval sets the rate at which "
@@ -423,6 +430,15 @@ public class InklessConfig extends AbstractConfig {
             ConfigDef.Range.atLeast(0),
             ConfigDef.Importance.LOW,
             CONSOLIDATION_CLEANUP_MAX_BATCHES_PER_REQUEST_DOC
+        );
+
+        configDef.define(
+            PARTITION_RATE_WINDOW_MS_CONFIG,
+            ConfigDef.Type.INT,
+            PARTITION_RATE_WINDOW_MS_DEFAULT,
+            ConfigDef.Range.atLeast(1000),
+            ConfigDef.Importance.LOW,
+            PARTITION_RATE_WINDOW_MS_DOC
         );
 
         configDef.define(
@@ -853,6 +869,10 @@ public class InklessConfig extends AbstractConfig {
 
     public int maxBatchesPerConsolidationCleanupRequest() {
         return getInt(CONSOLIDATION_CLEANUP_MAX_BATCHES_PER_REQUEST_CONFIG);
+    }
+
+    public Duration partitionRateWindow() {
+        return Duration.ofMillis(getInt(PARTITION_RATE_WINDOW_MS_CONFIG));
     }
 
     public Duration fileCleanerInterval() {

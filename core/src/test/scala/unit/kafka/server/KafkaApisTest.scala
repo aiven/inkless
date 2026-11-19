@@ -10076,6 +10076,90 @@ class KafkaApisTest extends Logging {
     assertEquals(records.sizeInBytes(), brokerTopicStats.allTopicsStats.replicationBytesOutRate.get.count())
   }
 
+  @ParameterizedTest(name = "testFetchRecordsClientBytesOut with replica id {0} and throttled {1}")
+  @CsvSource(Array(
+    "-1,false,true",
+    "-1,true,false",
+    "1,false,false",
+  ))
+  def testFetchRecordsClientBytesOut(replicaId: Int, throttled: Boolean, counted: Boolean): Unit = {
+    val tp0 = new TopicPartition("tp", 0)
+    val topicId = Uuid.randomUuid()
+    val tidp0 = new TopicIdPartition(topicId, tp0)
+    setupBasicMetadataCache(tp0.topic, numPartitions = 1, 1, topicId)
+
+    val fetchDataBuilder = util.Map.of(tp0, new FetchRequest.PartitionData(Uuid.ZERO_UUID, 0, 0, Int.MaxValue, Optional.empty()))
+    val fetchData = util.Map.of(tidp0, new FetchRequest.PartitionData(Uuid.ZERO_UUID, 0, 0, Int.MaxValue, Optional.empty()))
+    val fetchRequest = buildRequest(new FetchRequest.Builder(
+      ApiKeys.FETCH.oldestVersion(), ApiKeys.FETCH.latestVersion(), replicaId, -1, 1000, 0, fetchDataBuilder).build())
+
+    val records = MemoryRecords.withRecords(Compression.NONE, new SimpleRecord(1000, "foo".getBytes(StandardCharsets.UTF_8)))
+    when(replicaManager.fetchMessages(
+      any[FetchParams],
+      any[Seq[(TopicIdPartition, FetchRequest.PartitionData)]],
+      any[ReplicaQuota],
+      any[Seq[(TopicIdPartition, FetchPartitionData)] => Unit]()
+    )).thenAnswer(invocation => {
+      val callback = invocation.getArgument(3).asInstanceOf[Seq[(TopicIdPartition, FetchPartitionData)] => Unit]
+      callback(Seq(tidp0 -> new FetchPartitionData(Errors.NONE, 3, 0, records,
+        Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false)))
+    })
+    val fetchContext = new FullFetchContext(time, new FetchSessionCacheShard(1000, 100, Int.MaxValue, 0), fetchData, true, replicaId >= 0)
+    when(fetchManager.newContext(
+      any[Short],
+      any[JFetchMetadata],
+      any[Boolean],
+      any[util.Map[TopicIdPartition, FetchRequest.PartitionData]],
+      any[util.List[TopicIdPartition]],
+      any[util.Map[Uuid, String]])).thenReturn(fetchContext)
+    when(replicaManager.getLogConfig(ArgumentMatchers.eq(tp0))).thenReturn(None)
+    when(clientQuotaManager.maybeRecordAndGetThrottleTimeMs(any[Session](), anyString, anyDouble, anyLong))
+      .thenReturn(if (throttled) 100 else 0)
+
+    kafkaApis = createKafkaApis()
+    kafkaApis.handle(fetchRequest, RequestLocal.withThreadConfinedCaching)
+
+    if (counted)
+      verify(replicaManager).recordClientBytesOut(tp0, records.sizeInBytes)
+    else
+      verify(replicaManager, never()).recordClientBytesOut(any(), anyInt)
+  }
+
+  @ParameterizedTest(name = "testProduceRecordsClientBytesInOnlyOnSuccess with error {0}")
+  @EnumSource(value = classOf[Errors], names = Array("NONE", "NOT_ENOUGH_REPLICAS_AFTER_APPEND"))
+  def testProduceRecordsClientBytesInOnlyOnSuccess(error: Errors): Unit = {
+    val topic = "topic"
+    val topicId = Uuid.randomUuid()
+    addTopicToMetadataCache(topic, numPartitions = 1, numBrokers = 1, topicId = topicId)
+    val tp = new TopicIdPartition(topicId, 0, topic)
+
+    val records = MemoryRecords.withRecords(Compression.NONE, new SimpleRecord("test".getBytes))
+    val produceData = new ProduceRequestData.TopicProduceData()
+      .setTopicId(topicId)
+      .setPartitionData(util.List.of(new ProduceRequestData.PartitionProduceData().setIndex(tp.partition).setRecords(records)))
+    val request = buildRequest(ProduceRequest.builder(new ProduceRequestData()
+      .setTopicData(new ProduceRequestData.TopicProduceDataCollection(util.List.of(produceData).iterator))
+      .setAcks(1.toShort)
+      .setTimeoutMs(5000))
+      .build(ApiKeys.PRODUCE.latestVersion))
+
+    val responseCallback: ArgumentCaptor[Map[TopicIdPartition, PartitionResponse] => Unit] =
+      ArgumentCaptor.forClass(classOf[Map[TopicIdPartition, PartitionResponse] => Unit])
+    when(replicaManager.handleProduceAppend(anyLong, anyShort, ArgumentMatchers.eq(false), any(), any(),
+      responseCallback.capture(), any(), any(), any())
+    ).thenAnswer(_ => responseCallback.getValue.apply(Map(tp -> new PartitionResponse(error))))
+    when(clientRequestQuotaManager.maybeRecordAndGetThrottleTimeMs(any[RequestChannel.Request](), any[Long])).thenReturn(0)
+    when(clientQuotaManager.maybeRecordAndGetThrottleTimeMs(any[Session](), anyString, anyDouble, anyLong)).thenReturn(0)
+
+    kafkaApis = createKafkaApis()
+    kafkaApis.handleProduceRequest(request, RequestLocal.withThreadConfinedCaching)
+
+    if (error == Errors.NONE)
+      verify(replicaManager).recordClientBytesIn(tp.topicPartition, records.sizeInBytes)
+    else
+      verify(replicaManager, never()).recordClientBytesIn(any(), anyInt)
+  }
+
   @ParameterizedTest
   @ApiKeyVersionsSource(apiKey = ApiKeys.LIST_GROUPS)
   def testListGroupsRequest(version: Short): Unit = {
