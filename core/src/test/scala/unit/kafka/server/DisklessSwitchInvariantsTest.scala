@@ -250,6 +250,7 @@ class DisklessSwitchInvariantsTest {
       alterPartitionManager = mock(classOf[AlterPartitionManager]),
       inklessSharedState = Some(sharedState),
       inklessMetadataView = Some(inklessMetadata),
+      initDisklessLogManager = Some(mock(classOf[InitDisklessLogManager])),
     ) {
       override protected def createReplicaFetcherManager(
         metrics: Metrics,
