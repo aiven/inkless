@@ -665,9 +665,9 @@ class InklessClassicToDisklessSwitchTest(Test):
                         throughput=10000, retries=None):
         """Start a producer.
 
-        With idempotence, ``retries`` sets ``delivery.timeout.ms`` to
-        ``retries`` request timeouts of 30 s. Without it, a record expires
-        after the 120 s default.
+        With idempotence, ``retries`` caps the attempts of each record and sets
+        ``delivery.timeout.ms`` to ``retries`` request timeouts of 30 s.
+        Without it, a record expires after the 120 s default.
         """
         if topic is None:
             topic = self.topic
@@ -706,12 +706,24 @@ class InklessClassicToDisklessSwitchTest(Test):
         producer.stop()
         assert not producer.worker_errors, "Unexpected producer errors: %s" % producer.worker_errors
         assert producer.num_not_acked == 0, \
-            "Producer failed to send %d records to %s, for example %s" % \
-            (producer.num_not_acked, producer.topic, producer.not_acked[:5])
+            "Producer failed to send %d records to %s, for example %s. Send errors: %s" % \
+            (producer.num_not_acked, producer.topic, producer.not_acked[:5], self._send_errors(producer))
         self._record_acked(producer)
         acked = producer.num_acked
         producer.free()
         return acked
+
+    def _send_errors(self, producer, limit=3):
+        """Returns the exception and message of the first ``limit`` failed sends of ``producer``."""
+        errors = []
+        for node in producer.nodes:
+            cmd = "grep -m %d producer_send_error %s" % (limit, VerifiableProducer.STDOUT_CAPTURE)
+            for line in node.account.ssh_capture(cmd, allow_fail=True):
+                line = line.decode("utf-8") if isinstance(line, bytes) else line
+                data = producer.try_parse_json(line.strip())
+                if data is not None:
+                    errors.append("%s: %s" % (data.get("exception"), data.get("message")))
+        return errors[:limit]
 
     def _record_acked(self, producer):
         """Add every record that ``producer`` saw acknowledged to the ledger of its topic.
@@ -1963,9 +1975,10 @@ class InklessClassicToDisklessSwitchTest(Test):
         self.verifier = ConsolidationVerifier(self.kafka)
         self._start_trogdor()
 
-        # The holds stall produce requests. The retries raise the delivery timeout to
-        # 10 minutes, so no record expires before the test releases the hold.
-        producer = self._start_producer(throughput=2000, retries=20)
+        # The holds stall produce requests. A broker that is down or sealed rejects a
+        # send within a second, and the retry backoff stays at 1 s. The retries keep a
+        # record alive for 1,000 attempts and 8 hours, longer than any hold.
+        producer = self._start_producer(throughput=2000, retries=1000)
         self._wait_for_steady_production(producer, min_acked=5000)
 
         follower = self._get_follower_nodes(partition=0)[0]
