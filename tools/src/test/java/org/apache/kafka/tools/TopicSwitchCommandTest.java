@@ -25,6 +25,8 @@ import org.apache.kafka.clients.admin.ListOffsetsResult;
 import org.apache.kafka.clients.admin.OffsetSpec;
 import org.apache.kafka.common.KafkaFuture;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.errors.UnknownTopicOrPartitionException;
+import org.apache.kafka.common.internals.KafkaFutureImpl;
 import org.apache.kafka.common.message.DescribeTopicPartitionsResponseData;
 import org.apache.kafka.common.message.DescribeTopicPartitionsResponseData.DescribeTopicPartitionsResponsePartition;
 import org.apache.kafka.common.message.DescribeTopicPartitionsResponseData.DescribeTopicPartitionsResponseTopic;
@@ -68,6 +70,36 @@ public class TopicSwitchCommandTest {
 
     @Mock
     private Admin adminClient;
+
+    @Test
+    public void testStateCommandListOffsetsFailsForOnePartition() throws Exception {
+        DescribeTopicPartitionsResponseData responseData = buildResponseData(
+            List.of(buildPartition(0, 1, 5, 100L, 7), buildPartition(1, 2, 6, 200L, 8))
+        );
+        when(adminClient.describeTopicPartitions(ArgumentMatchers.any(), any(DescribeTopicsOptions.class)))
+            .thenReturn(new DescribeTopicPartitionsResult(KafkaFuture.completedFuture(responseData)));
+
+        TopicPartition tp0 = new TopicPartition(TOPIC, 0);
+        TopicPartition tp1 = new TopicPartition(TOPIC, 1);
+        KafkaFutureImpl<ListOffsetsResult.ListOffsetsResultInfo> failed = new KafkaFutureImpl<>();
+        failed.completeExceptionally(new UnknownTopicOrPartitionException());
+        when(adminClient.listOffsets(anyMap())).thenAnswer(invocation -> {
+            Map<TopicPartition, OffsetSpec> request = invocation.getArgument(0);
+            boolean isLatest = request.values().stream().anyMatch(s -> s instanceof OffsetSpec.LatestSpec);
+            return new ListOffsetsResult(Map.of(
+                tp0, KafkaFuture.completedFuture(
+                    new ListOffsetsResult.ListOffsetsResultInfo(isLatest ? 150 : 0, -1, java.util.Optional.empty())),
+                tp1, isLatest ? failed : KafkaFuture.completedFuture(
+                    new ListOffsetsResult.ListOffsetsResultInfo(10, -1, java.util.Optional.empty()))));
+        });
+
+        String output = runStateCommand();
+        assertTrue(output.contains("Partition 0:"));
+        assertTrue(output.contains("logStartOffset=0 logEndOffset=150"));
+        assertTrue(output.contains("Partition 1:"));
+        assertTrue(output.contains("classicToDisklessStartOffset=200"));
+        assertTrue(output.contains("logStartOffset=10 logEndOffset=unavailable"));
+    }
 
     @Test
     public void testStateCommandFullySwitched() throws Exception {
