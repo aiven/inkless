@@ -16,7 +16,7 @@
  */
 package kafka.server
 
-import io.aiven.inkless.control_plane.{ControlPlane, InitDisklessLogProducerState => CpProducerState, InitDisklessLogRequest => CpInitRequest, InitDisklessLogResponse => CpInitResponse}
+import io.aiven.inkless.control_plane.{ControlPlane, ControlPlaneRequestRejectedException, InitDisklessLogProducerState => CpProducerState, InitDisklessLogRequest => CpInitRequest, InitDisklessLogResponse => CpInitResponse}
 import kafka.cluster.Partition
 import kafka.server.InitDisklessLogBatchQueue.ParsedResponse
 import kafka.utils.Logging
@@ -521,9 +521,11 @@ object AwaitingMetadata extends Logging {
    * Returns the result of each request in `requests`, in order. `Right(None)` means the control plane
    * returned no entry for that request.
    *
-   * The control plane applies a batch in one transaction, so one request that it can't apply fails the
-   * whole call. If a batch of several requests fails, each request goes to the control plane alone. A partition
-   * that the control plane can't apply then retries, and the other partitions complete.
+   * The control plane applies a batch in one transaction, so one request that it rejects fails the whole
+   * call. If the control plane rejects a batch of several requests, each request goes to the control plane
+   * alone. A partition that the control plane rejects then retries, and the other partitions complete.
+   * Any other failure, such as a lost connection, doesn't depend on the requests. The partitions that it
+   * reaches then retry with the queue backoff, without a call per partition.
    */
   private def callControlPlane(
     destination: ControlPlane,
@@ -539,12 +541,26 @@ object AwaitingMetadata extends Logging {
     call(requests) match {
       case Right(responses) =>
         requests.asScala.indices.map(index => Right(responses.lift(index)))
-      case Left(t) if requests.size == 1 =>
-        Seq(Left(t))
-      case Left(t) =>
-        warn(s"Control-plane InitDisklessLog failed for a batch of ${requests.size} partitions, " +
+      case Left(t: ControlPlaneRequestRejectedException) if requests.size > 1 =>
+        warn(s"The control plane rejected the InitDisklessLog batch of ${requests.size} partitions, " +
           s"sending each partition alone", t)
-        requests.asScala.toSeq.map(request => call(util.List.of(request)).map(_.headOption))
+        // A failure that isn't a rejection, such as a lost connection, ends the pass. The remaining partitions
+        // then retry with the queue backoff, without waiting for a timeout each.
+        var unavailable: Option[Throwable] = None
+        requests.asScala.toSeq.map { request =>
+          unavailable match {
+            case Some(cause) => Left(cause)
+            case None =>
+              val result = call(util.List.of(request)).map(_.headOption)
+              result.left.foreach {
+                case _: ControlPlaneRequestRejectedException =>
+                case cause => unavailable = Some(cause)
+              }
+              result
+          }
+        }
+      case Left(t) =>
+        Seq.fill(requests.size)(Left(t))
     }
   }
 }

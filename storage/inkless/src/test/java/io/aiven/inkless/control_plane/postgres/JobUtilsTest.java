@@ -23,6 +23,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 import java.sql.SQLException;
+import java.sql.SQLTransientConnectionException;
 import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -280,5 +281,24 @@ class JobUtilsTest {
         b.setNextException(a);
 
         assertThat(JobUtils.isRetriable(a)).isFalse();
+    }
+
+    @Test
+    void isRequestRejectionMatchesDataAndConstraintErrors() {
+        assertThat(JobUtils.isRequestRejection(new SQLException("domain check", "23514"))).isTrue();
+        assertThat(JobUtils.isRequestRejection(new SQLException("numeric overflow", "22003"))).isTrue();
+        assertThat(JobUtils.isRequestRejection(new SQLException("raised by a function", "P0001"))).isTrue();
+        // jOOQ and the job wrap the driver exception.
+        assertThat(JobUtils.isRequestRejection(
+            new ControlPlaneException("wrapped", new RuntimeException(new SQLException("domain check", "23514"))))).isTrue();
+    }
+
+    @Test
+    void isRequestRejectionIgnoresConnectionAndTransientErrors() {
+        assertThat(JobUtils.isRequestRejection(new SQLException("connection failure", "08006"))).isFalse();
+        assertThat(JobUtils.isRequestRejection(new SQLTransientConnectionException("Connection is not available, request timed out"))).isFalse();
+        assertThat(JobUtils.isRequestRejection(new SQLTransientConnectionException("pool timeout", "08001"))).isFalse();
+        assertThat(JobUtils.isRequestRejection(recoveryConflict())).isFalse();
+        assertThat(JobUtils.isRequestRejection(new RuntimeException("no SQL state"))).isFalse();
     }
 }

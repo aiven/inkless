@@ -67,6 +67,8 @@ public interface ControlPlane extends Closeable, Configurable {
      *
      * @param requests the list of initialization requests
      * @return list of responses, one per request, in the same order as the requests.
+     * @throws ControlPlaneRequestRejectedException if the control plane rejects the content of a request.
+     *     The whole call fails, and the caller can send each request alone to find the one it rejects.
      */
     List<InitDisklessLogResponse> initDisklessLog(List<InitDisklessLogRequest> requests);
 

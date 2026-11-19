@@ -36,6 +36,7 @@ import java.util.concurrent.Callable;
 import java.util.function.Consumer;
 
 import io.aiven.inkless.control_plane.ControlPlaneException;
+import io.aiven.inkless.control_plane.ControlPlaneRequestRejectedException;
 import io.aiven.inkless.control_plane.InitDisklessLogProducerState;
 import io.aiven.inkless.control_plane.InitDisklessLogRequest;
 import io.aiven.inkless.control_plane.InitDisklessLogResponse;
@@ -112,6 +113,9 @@ class InitDisklessLogJob implements Callable<List<InitDisklessLogResponse>> {
 
                 return processFunctionResult(functionResult);
             } catch (RuntimeException e) {
+                if (JobUtils.isRequestRejection(e)) {
+                    throw new ControlPlaneRequestRejectedException("Diskless log initialization rejected the request", e);
+                }
                 throw new ControlPlaneException("Error initializing diskless log", e);
             }
         });

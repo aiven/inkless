@@ -17,17 +17,28 @@
  */
 package io.aiven.inkless.control_plane.postgres;
 
+import org.apache.kafka.common.Uuid;
+
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInfo;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.io.IOException;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import io.aiven.inkless.control_plane.AbstractControlPlaneTest;
+import io.aiven.inkless.control_plane.ControlPlaneRequestRejectedException;
+import io.aiven.inkless.control_plane.CreateTopicAndPartitionsRequest;
+import io.aiven.inkless.control_plane.InitDisklessLogProducerState;
+import io.aiven.inkless.control_plane.InitDisklessLogRequest;
 import io.aiven.inkless.test_utils.InklessPostgreSQLContainer;
 import io.aiven.inkless.test_utils.PostgreSQLTestContainer;
+
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @Testcontainers
 class PostgresControlPlaneTest extends AbstractControlPlaneTest {
@@ -52,5 +63,18 @@ class PostgresControlPlaneTest extends AbstractControlPlaneTest {
     protected void tearDownControlPlane() throws IOException {
         controlPlane.close();
         pgContainer.tearDown();
+    }
+
+    @Test
+    void initDisklessLogRejectsAValueThatADomainDoesNotAllow() {
+        final Uuid topicId = new Uuid(70, 70);
+        controlPlane.createTopicAndPartitions(Set.of(new CreateTopicAndPartitionsRequest(topicId, "rejected", 2)));
+
+        // `timestamp_t` allows values from -5. Partition 0 fails with partition 1 because the call is one transaction.
+        assertThatThrownBy(() -> controlPlane.initDisklessLog(List.of(
+            new InitDisklessLogRequest(topicId, "rejected", 0, 0, 10, List.of()),
+            new InitDisklessLogRequest(topicId, "rejected", 1, 0, 10,
+                List.of(new InitDisklessLogProducerState(7L, (short) 0, 0, 0, 9L, -6L)))
+        ))).isInstanceOf(ControlPlaneRequestRejectedException.class);
     }
 }

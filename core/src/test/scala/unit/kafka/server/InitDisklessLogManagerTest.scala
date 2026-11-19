@@ -16,7 +16,7 @@
  */
 package kafka.server
 
-import io.aiven.inkless.control_plane.{ControlPlane, InitDisklessLogProducerState => CpProducerState, InitDisklessLogRequest => CpInitRequest, InitDisklessLogResponse => CpInitResponse}
+import io.aiven.inkless.control_plane.{ControlPlane, ControlPlaneException, ControlPlaneRequestRejectedException, InitDisklessLogProducerState => CpProducerState, InitDisklessLogRequest => CpInitRequest, InitDisklessLogResponse => CpInitResponse}
 import kafka.cluster.Partition
 import org.apache.kafka.clients.ClientResponse
 import org.apache.kafka.common.{TopicPartition, Uuid}
@@ -1803,7 +1803,7 @@ class InitDisklessLogManagerTest {
 
   @Test
   def testControlPlaneFailureCausedByOnePartitionDoesNotBlockTheOthers(): Unit = {
-    // Given a control plane that fails every call that contains partition 0
+    // Given a control plane that rejects every call that contains partition 0
     val tp1 = new TopicPartition("test-topic", 1)
     val tp2 = new TopicPartition("test-topic", 2)
     val poison = mockPartition(tp = tp0, hw = 100, leo = 100)
@@ -1812,7 +1812,7 @@ class InitDisklessLogManagerTest {
     doAnswer { (invocation: InvocationOnMock) =>
       val batch = invocation.getArgument[util.List[CpInitRequest]](0).asScala.map(_.partition()).toSeq
       sentBatches += batch
-      if (batch.contains(0)) throw new RuntimeException("timestamp_t domain check failed")
+      if (batch.contains(0)) throw rejected()
       util.Collections.nCopies(batch.size, CpInitResponse.success())
     }.when(controlPlane).initDisklessLog(any())
     val retriedBefore = meterCount(InitDisklessLogManager.InitRetriedPerSecMetricName)
@@ -1844,6 +1844,58 @@ class InitDisklessLogManagerTest {
     assertTrue(sentBatches.drop(3).forall(_ == Seq(0)), s"Unexpected batches: $sentBatches")
     assertEquals(Set(tp0), manager.getTrackedPartitions)
     assertState[AwaitingMetadata](tp0)
+  }
+
+  private def rejected(): ControlPlaneRequestRejectedException =
+    new ControlPlaneRequestRejectedException("rejected", new RuntimeException("timestamp_t domain check failed"))
+
+  @Test
+  def testControlPlaneFailureThatIsNotARejectionRetriesTheBatchTogether(): Unit = {
+    // Given a control plane that can't be reached
+    val tp1 = new TopicPartition("test-topic", 1)
+    val sentBatches = mutable.Buffer[Seq[Int]]()
+    doAnswer { (invocation: InvocationOnMock) =>
+      sentBatches += invocation.getArgument[util.List[CpInitRequest]](0).asScala.map(_.partition()).toSeq
+      throw new ControlPlaneException("connection refused")
+    }.when(controlPlane).initDisklessLog(any())
+
+    // When two partitions reach the control-plane init in one batch
+    startInitOnControlPlane(mockPartition(tp = tp0, hw = 100, leo = 100), seal = 100L)
+    startInitOnControlPlane(mockPartition(tp = tp1, hw = 100, leo = 100), seal = 100L)
+    fireLinger()
+
+    // Then the broker doesn't send the partitions alone, and both retry
+    assertEquals(Seq(0, 1), sentBatches.head)
+    assertTrue(sentBatches.forall(_ == Seq(0, 1)), s"Unexpected batches: $sentBatches")
+    assertEquals(Set(tp0, tp1), manager.getTrackedPartitions)
+    assertState[AwaitingMetadata](tp0)
+    assertState[AwaitingMetadata](tp1)
+  }
+
+  @Test
+  def testControlPlaneOutageEndsThePerPartitionResend(): Unit = {
+    // Given a control plane that rejects partition 0 and becomes unreachable when it receives partition 1 alone
+    val tp1 = new TopicPartition("test-topic", 1)
+    val tp2 = new TopicPartition("test-topic", 2)
+    val sentBatches = mutable.Buffer[Seq[Int]]()
+    doAnswer { (invocation: InvocationOnMock) =>
+      val batch = invocation.getArgument[util.List[CpInitRequest]](0).asScala.map(_.partition()).toSeq
+      sentBatches += batch
+      if (batch.contains(0)) throw rejected()
+      if (batch == Seq(1)) throw new ControlPlaneException("connection refused")
+      util.Collections.nCopies(batch.size, CpInitResponse.success())
+    }.when(controlPlane).initDisklessLog(any())
+
+    // When three partitions reach the control-plane init in one batch
+    startInitOnControlPlane(mockPartition(tp = tp0, hw = 100, leo = 100), seal = 100L)
+    startInitOnControlPlane(mockPartition(tp = tp1, hw = 100, leo = 100), seal = 100L)
+    startInitOnControlPlane(mockPartition(tp = tp2, hw = 100, leo = 100), seal = 100L)
+    fireLinger()
+
+    // Then the resend stops at the failure of partition 1, and partition 2 retries without a call of its own
+    assertEquals(Seq(Seq(0, 1, 2), Seq(0), Seq(1)), sentBatches.take(3).toSeq)
+    assertFalse(sentBatches.contains(Seq(2)), s"Unexpected batches: $sentBatches")
+    assertEquals(Set(tp0, tp1, tp2), manager.getTrackedPartitions)
   }
 
   @Test

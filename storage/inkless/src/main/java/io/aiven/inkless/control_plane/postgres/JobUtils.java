@@ -29,6 +29,7 @@ import java.util.IdentityHashMap;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 
 import io.aiven.inkless.TimeUtils;
 import io.aiven.inkless.control_plane.ControlPlaneException;
@@ -110,29 +111,43 @@ public class JobUtils {
      * {@code PSQLException}), so the argument stays {@link Throwable}.
      */
     static boolean isRetriable(final Throwable throwable) {
-        // Identity-based visited set guards against self-referential cause chains.
-        return hasRetriableCause(throwable, Collections.newSetFromMap(new IdentityHashMap<>()));
+        return hasSqlState(throwable, RETRIABLE_SQL_STATES::contains);
     }
 
-    private static boolean hasRetriableCause(final Throwable throwable, final Set<Throwable> seen) {
+    /**
+     * Checks whether PostgreSQL rejected the content of the request: class {@code 22} for data exceptions,
+     * class {@code 23} for constraint violations such as a domain check, and {@code P0001} for an error that
+     * a function raises. A connection or pool failure doesn't match.
+     */
+    static boolean isRequestRejection(final Throwable throwable) {
+        return hasSqlState(throwable, sqlState ->
+            sqlState.startsWith("22") || sqlState.startsWith("23") || sqlState.equals("P0001"));
+    }
+
+    private static boolean hasSqlState(final Throwable throwable, final Predicate<String> matches) {
+        // Identity-based visited set guards against self-referential cause chains.
+        return hasSqlState(throwable, matches, Collections.newSetFromMap(new IdentityHashMap<>()));
+    }
+
+    private static boolean hasSqlState(final Throwable throwable, final Predicate<String> matches, final Set<Throwable> seen) {
         if (throwable == null || !seen.add(throwable)) {
             return false;
         }
         if (throwable instanceof SQLException) {
             final SQLException sqlException = (SQLException) throwable;
             final String sqlState = sqlException.getSQLState();
-            if (sqlState != null && RETRIABLE_SQL_STATES.contains(sqlState)) {
+            if (sqlState != null && matches.test(sqlState)) {
                 return true;
             }
-            if (hasRetriableCause(sqlException.getNextException(), seen)) {
+            if (hasSqlState(sqlException.getNextException(), matches, seen)) {
                 return true;
             }
         }
-        if (hasRetriableCause(throwable.getCause(), seen)) {
+        if (hasSqlState(throwable.getCause(), matches, seen)) {
             return true;
         }
         for (final Throwable suppressed : throwable.getSuppressed()) {
-            if (hasRetriableCause(suppressed, seen)) {
+            if (hasSqlState(suppressed, matches, seen)) {
                 return true;
             }
         }
