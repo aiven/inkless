@@ -59,7 +59,12 @@ import org.apache.kafka.server.config.ReplicationConfigs;
 import org.apache.kafka.server.config.ServerConfigs;
 import org.apache.kafka.server.log.remote.metadata.storage.TopicBasedRemoteLogMetadataManager;
 import org.apache.kafka.server.log.remote.metadata.storage.TopicBasedRemoteLogMetadataManagerConfig;
+import org.apache.kafka.server.log.remote.storage.LogSegmentData;
 import org.apache.kafka.server.log.remote.storage.RemoteLogManagerConfig;
+import org.apache.kafka.server.log.remote.storage.RemoteLogSegmentMetadata;
+import org.apache.kafka.server.log.remote.storage.RemoteStorageException;
+import org.apache.kafka.server.log.remote.storage.RemoteStorageManager;
+import org.apache.kafka.server.log.remote.storage.RetriableRemoteStorageException;
 import org.apache.kafka.storage.internals.log.UnifiedLog;
 
 import org.junit.jupiter.api.AfterEach;
@@ -75,6 +80,8 @@ import org.slf4j.LoggerFactory;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -83,6 +90,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -133,11 +141,71 @@ public class InklessTopicTypeSwitcherClusterTest {
     }
 
     /**
-     * Tags a test that needs a switched partition to stay in phase 1. The leader's remote copy task runs
-     * when the broker schedules it and then once per task interval. With a long interval, the broker doesn't
-     * upload the classic prefix of a topic that has remote storage on from creation during the test.
+     * Tags a test that blocks uploads to remote storage to keep a switched partition in phase 1. For such
+     * a test, the setup configures {@link GatedRemoteStorageManager} as the remote storage manager.
      */
-    private static final String HOLDS_PHASE_ONE = "holds-phase-one";
+    private static final String GATES_REMOTE_UPLOADS = "gates-remote-uploads";
+
+    /**
+     * Delegates to the tiered storage plugin and rejects segment uploads while a test blocks them. The
+     * remote copy task retries a rejected upload on its next run.
+     */
+    public static class GatedRemoteStorageManager implements RemoteStorageManager {
+        private static final AtomicBoolean UPLOADS_BLOCKED = new AtomicBoolean(false);
+
+        private final io.aiven.kafka.tieredstorage.RemoteStorageManager delegate =
+            new io.aiven.kafka.tieredstorage.RemoteStorageManager();
+
+        static void blockUploads(final boolean blocked) {
+            UPLOADS_BLOCKED.set(blocked);
+        }
+
+        @Override
+        public void configure(final Map<String, ?> configs) {
+            delegate.configure(configs);
+        }
+
+        @Override
+        public Optional<RemoteLogSegmentMetadata.CustomMetadata> copyLogSegmentData(
+            final RemoteLogSegmentMetadata remoteLogSegmentMetadata,
+            final LogSegmentData logSegmentData
+        ) throws RemoteStorageException {
+            if (UPLOADS_BLOCKED.get()) {
+                throw new RetriableRemoteStorageException("The test blocks uploads to remote storage");
+            }
+            return delegate.copyLogSegmentData(remoteLogSegmentMetadata, logSegmentData);
+        }
+
+        @Override
+        public InputStream fetchLogSegment(final RemoteLogSegmentMetadata remoteLogSegmentMetadata,
+                                           final int startPosition) throws RemoteStorageException {
+            return delegate.fetchLogSegment(remoteLogSegmentMetadata, startPosition);
+        }
+
+        @Override
+        public InputStream fetchLogSegment(final RemoteLogSegmentMetadata remoteLogSegmentMetadata,
+                                           final int startPosition,
+                                           final int endPosition) throws RemoteStorageException {
+            return delegate.fetchLogSegment(remoteLogSegmentMetadata, startPosition, endPosition);
+        }
+
+        @Override
+        public InputStream fetchIndex(final RemoteLogSegmentMetadata remoteLogSegmentMetadata,
+                                      final IndexType indexType) throws RemoteStorageException {
+            return delegate.fetchIndex(remoteLogSegmentMetadata, indexType);
+        }
+
+        @Override
+        public void deleteLogSegmentData(final RemoteLogSegmentMetadata remoteLogSegmentMetadata)
+            throws RemoteStorageException {
+            delegate.deleteLogSegmentData(remoteLogSegmentMetadata);
+        }
+
+        @Override
+        public void close() throws IOException {
+            delegate.close();
+        }
+    }
 
     @BeforeEach
     public void setup(final TestInfo testInfo) throws Exception {
@@ -159,7 +227,9 @@ public class InklessTopicTypeSwitcherClusterTest {
             ));
         }
 
-        final boolean holdsPhaseOne = testInfo.getTags().contains(HOLDS_PHASE_ONE);
+        final String remoteStorageManagerClass = testInfo.getTags().contains(GATES_REMOTE_UPLOADS)
+            ? GatedRemoteStorageManager.class.getName()
+            : "io.aiven.kafka.tieredstorage.RemoteStorageManager";
 
         final TestKitNodes nodes = new TestKitNodes.Builder()
             .setCombined(true)
@@ -175,13 +245,13 @@ public class InklessTopicTypeSwitcherClusterTest {
             .setConfigProp(ServerConfigs.DISKLESS_REMOTE_STORAGE_CONSOLIDATION_ENABLE_CONFIG, "true")
             .setConfigProp(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, "true")
             .setConfigProp(RemoteLogManagerConfig.REMOTE_LOG_STORAGE_SYSTEM_ENABLE_PROP, "true")
-            .setConfigProp(RemoteLogManagerConfig.REMOTE_LOG_MANAGER_TASK_INTERVAL_MS_PROP, holdsPhaseOne ? "3600000" : "5000")
+            .setConfigProp(RemoteLogManagerConfig.REMOTE_LOG_MANAGER_TASK_INTERVAL_MS_PROP, "5000")
             .setConfigProp(RemoteLogManagerConfig.REMOTE_LOG_MANAGER_FOLLOWER_THREAD_POOL_SIZE_PROP, "4")
             .setConfigProp(RemoteLogManagerConfig.REMOTE_LOG_METADATA_MANAGER_CLASS_NAME_PROP, TopicBasedRemoteLogMetadataManager.class.getName())
             .setConfigProp(RemoteLogManagerConfig.REMOTE_LOG_METADATA_MANAGER_LISTENER_NAME_PROP, "EXTERNAL")
             .setConfigProp(RemoteLogManagerConfig.DEFAULT_REMOTE_LOG_METADATA_MANAGER_CONFIG_PREFIX
                 + TopicBasedRemoteLogMetadataManagerConfig.REMOTE_LOG_METADATA_TOPIC_REPLICATION_FACTOR_PROP, "1")
-            .setConfigProp(RemoteLogManagerConfig.REMOTE_STORAGE_MANAGER_CLASS_NAME_PROP, "io.aiven.kafka.tieredstorage.RemoteStorageManager")
+            .setConfigProp(RemoteLogManagerConfig.REMOTE_STORAGE_MANAGER_CLASS_NAME_PROP, remoteStorageManagerClass)
             .setConfigProp(RSM_CONFIG_PREFIX + "chunk.size", 1048576)
             .setConfigProp(RSM_CONFIG_PREFIX + "fetch.chunk.cache.class", "io.aiven.kafka.tieredstorage.fetch.cache.DiskChunkCache")
             .setConfigProp(RSM_CONFIG_PREFIX + "fetch.chunk.cache.size", "10737418")
@@ -583,7 +653,7 @@ public class InklessTopicTypeSwitcherClusterTest {
     }
 
     @Test
-    @Tag(HOLDS_PHASE_ONE)
+    @Tag(GATES_REMOTE_UPLOADS)
     public void testElectedReplicaOutsideTheIsrRecoversAPhaseOnePartition() throws Exception {
         final String topic = "switch-elect-" + UUID.randomUUID().toString().substring(0, 8);
         final TopicPartition tp = new TopicPartition(topic, 0);
@@ -592,13 +662,13 @@ public class InklessTopicTypeSwitcherClusterTest {
         final int classicRecords = 20;
         final int disklessRecords = 10;
 
+        // Blocked uploads keep the classic prefix on the local disks, and the partition in phase 1.
+        GatedRemoteStorageManager.blockUploads(true);
         try (Admin admin = AdminClient.create(baseClientConfigs())) {
-            // Broker 0 isn't a replica and stays up for the test's clients. The topic has
-            // remote storage on from creation. A create request can't set both `diskless.enable` and
-            // `remote.storage.enable`.
+            // Broker 0 isn't a replica and stays up for the test's clients.
             admin.createTopics(List.of(
                 new NewTopic(topic, Map.of(0, List.of(lostLeader, electedReplica)))
-                    .configs(Map.of(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true"))
+                    .configs(Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "false"))
             )).all().get(30, TimeUnit.SECONDS);
             TopicMetadataProbe.awaitVisible(admin, topic);
             produceRecords(topic, classicRecords);
@@ -639,7 +709,24 @@ public class InklessTopicTypeSwitcherClusterTest {
             // so the controller can move leadership back to it afterward.
             cluster.brokers().get(lostLeader).startup();
             waitForIsrRecovery(admin, topic, 0, 2);
+
+            // With the uploads unblocked, the leader uploads the classic prefix, and phase 2 starts.
+            GatedRemoteStorageManager.blockUploads(false);
+            waitForClassicPrefixInRemoteStorage(admin, topic);
+        } finally {
+            GatedRemoteStorageManager.blockUploads(false);
         }
+    }
+
+    private void waitForClassicPrefixInRemoteStorage(final Admin admin, final String topic) throws Exception {
+        final long deadline = System.currentTimeMillis() + Duration.ofSeconds(90).toMillis();
+        while (System.currentTimeMillis() < deadline) {
+            if (readClassicPrefixInRemoteStorage(admin, topic, 0)) {
+                return;
+            }
+            Thread.sleep(500);
+        }
+        throw new AssertionError("Partition " + topic + "-0 did not enter phase 2 within timeout");
     }
 
     private void produceRecords(final String topic, final int count) throws Exception {
