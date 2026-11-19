@@ -1905,26 +1905,38 @@ public class ReplicationControlManager {
     /**
      * Alters the classic-to-diskless switch of a single partition for an operator. Unlike {@link #initDisklessLog},
      * the caller is an administrator rather than the partition leader, so this performs no leader/epoch fencing.
-     * The controller accepts two seal offsets and rejects every other one:
+     * Without a leader ID, the controller accepts two seal offsets and rejects every other one:
      *
      * <ul>
      *   <li>{@code -2} ({@link PartitionRegistration#CLASSIC_TO_DISKLESS_SWITCH_PENDING}) re-arms a pending switch.
      *   The record re-sets the leader to bump the leader epoch, so the leader seals again and re-drives
      *   {@code InitDisklessLog}, as after the switch-pending mark.</li>
-     *   <li>A seal of at least {@code 0} lowers a committed seal in phase 1. An operator uses it after a
-     *   last-known-leader election picks a leader whose log ends below the seal: the leader marks the partition
-     *   offline, and no other replica can lead in phase 1. The partition loses the records between the new seal
-     *   and the old one.</li>
+     *   <li>A seal of at least {@code 0} lowers a committed seal in phase 1. An operator uses it after an
+     *   election picks a leader whose log ends below the seal: the leader marks the partition offline. The
+     *   partition loses the records between the new seal and the old one.</li>
      * </ul>
      *
      * The controller doesn't accept an operator seal for a pending switch: only the leader knows its log end
      * offset and the producer states that the seal commits.
+     *
+     * With a leader ID, the controller elects that replica in phase 1 and keeps the seal. For more information,
+     * see {@link #electPhaseOneLeader}.
      */
     ControllerResult<AlterDisklessSwitchResponseData> alterDisklessSwitch(
         AlterDisklessSwitchRequestData request
     ) {
         long sealOffset = request.sealOffset();
-        if (sealOffset != PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING && sealOffset < 0) {
+        boolean election = request.leaderId() != NO_LEADER;
+        if (election) {
+            if (request.leaderId() < 0) {
+                throw new InvalidRequestException("Invalid leader ID " + request.leaderId() + "; AlterDisklessSwitch " +
+                    "accepts a broker ID, which elects that replica in phase 1, or -1, which keeps the leader.");
+            }
+            if (sealOffset != PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET) {
+                throw new InvalidRequestException("Invalid seal offset " + sealOffset + " with leader ID " +
+                    request.leaderId() + "; an election keeps the seal, so the seal offset must be -1.");
+            }
+        } else if (sealOffset != PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING && sealOffset < 0) {
             throw new InvalidRequestException("Invalid seal offset " + sealOffset + "; AlterDisklessSwitch " +
                 "accepts -2, which re-arms a pending switch, or a seal of at least 0, which lowers a committed seal.");
         }
@@ -1941,6 +1953,11 @@ public class ReplicationControlManager {
         String partitionName = request.topicName() + "-" + request.partitionIndex();
         if (partition == null) {
             throw new UnknownTopicOrPartitionException("Partition not found: " + partitionName);
+        }
+        if (election) {
+            ApiMessageAndVersion electionRecord = electPhaseOneLeader(
+                request.topicName(), topicId, request.partitionIndex(), partition, request.leaderId());
+            return ControllerResult.of(List.of(electionRecord), new AlterDisklessSwitchResponseData());
         }
 
         PartitionChangeRecord record = new PartitionChangeRecord()
@@ -1980,6 +1997,71 @@ public class ReplicationControlManager {
 
         return ControllerResult.of(List.of(new ApiMessageAndVersion(record, (short) 0)),
             new AlterDisklessSwitchResponseData());
+    }
+
+    /**
+     * Elects the replica that an operator chose as the leader of a partition in phase 1 of the
+     * classic-to-diskless switch.
+     *
+     * In phase 1 only the replicas' local disks hold the classic prefix, so the controller blocks unclean
+     * leader election. If no ISR member holds the prefix anymore, no other path can bring the partition back.
+     * The controller can't check the chosen replica's log, because it doesn't know replica log end offsets.
+     * The broker checks it: a leader whose log ends below a committed seal marks the partition offline, and
+     * the operator then lowers the seal.
+     *
+     * The election follows the unclean leader election rules for the chosen replica alone. If the replica is
+     * outside the ISR, the record resets the ISR to it and sets the leader recovery state to
+     * {@code RECOVERING}. While the switch is pending, the new leader seals at its own log end offset.
+     */
+    private ApiMessageAndVersion electPhaseOneLeader(
+        String topicName,
+        Uuid topicId,
+        int partitionId,
+        PartitionRegistration partition,
+        int leaderId
+    ) {
+        String partitionName = topicName + "-" + partitionId;
+        if (!isClassicPrefixOnlyOnLocalDisks(partition)) {
+            throw new InvalidRequestException("Cannot elect broker " + leaderId + " as the leader of " +
+                partitionName + ": the partition isn't in phase 1 of the classic-to-diskless switch " +
+                "(classicToDisklessStartOffset=" + partition.classicToDisklessStartOffset +
+                ", classicPrefixInRemoteStorage=" + partition.classicPrefixInRemoteStorage + ").");
+        }
+        if (!Replicas.contains(partition.replicas, leaderId)) {
+            throw new InvalidRequestException("Cannot elect broker " + leaderId + " as the leader of " +
+                partitionName + ": it isn't a replica of the partition (replicas=" +
+                Arrays.toString(partition.replicas) + ").");
+        }
+        if (partition.leader == leaderId) {
+            throw new InvalidRequestException("Cannot elect broker " + leaderId + " as the leader of " +
+                partitionName + ": it already leads the partition.");
+        }
+        IntPredicate isAcceptableLeader = leaderAcceptorFor(topicName, partition);
+        if (!isAcceptableLeader.test(leaderId)) {
+            throw new InvalidRequestException("Cannot elect broker " + leaderId + " as the leader of " +
+                partitionName + ": it isn't active, or the log directory of its replica is offline.");
+        }
+
+        // Only the chosen replica is acceptable, so the builder never keeps the current leader or picks another one.
+        Optional<ApiMessageAndVersion> record = new PartitionChangeBuilder(
+            partition,
+            topicId,
+            partitionId,
+            replica -> replica == leaderId && isAcceptableLeader.test(replica),
+            featureControl.metadataVersionOrThrow(),
+            getTopicEffectiveMinIsr(topicName),
+            featureControl.isElrFeatureEnabled()
+        )
+            .setElection(PartitionChangeBuilder.Election.UNCLEAN)
+            .setDefaultDirProvider(clusterDescriber)
+            .build();
+        if (record.isEmpty()) {
+            throw new InvalidRequestException("Cannot elect broker " + leaderId + " as the leader of " +
+                partitionName + ": the election changes nothing.");
+        }
+        log.info("AlterDisklessSwitch elected broker {} as the leader of {} in phase 1. Previous partition: {}",
+            leaderId, partitionName, partition);
+        return record.get();
     }
 
     private static String logPartitionChangeInfo(PartitionRegistration oldRegistration, PartitionRegistration newRegistration) {

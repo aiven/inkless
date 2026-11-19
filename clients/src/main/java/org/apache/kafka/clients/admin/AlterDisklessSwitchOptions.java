@@ -19,6 +19,8 @@ package org.apache.kafka.clients.admin;
 
 import org.apache.kafka.common.annotation.InterfaceStability;
 
+import java.util.OptionalInt;
+
 /**
  * Options for {@link Admin#alterDisklessSwitch(String, int, long, AlterDisklessSwitchOptions)}.
  *
@@ -26,4 +28,24 @@ import org.apache.kafka.common.annotation.InterfaceStability;
  */
 @InterfaceStability.Unstable
 public class AlterDisklessSwitchOptions extends AbstractOptions<AlterDisklessSwitchOptions> {
+    private OptionalInt leaderId = OptionalInt.empty();
+
+    /**
+     * Sets the replica to elect as the leader in phase 1, even if it's outside the ISR. The request must
+     * carry a seal offset of {@code -1}, which keeps the seal.
+     *
+     * @param leaderId The broker ID of the replica to elect.
+     * @return This options object.
+     */
+    public AlterDisklessSwitchOptions leaderId(int leaderId) {
+        this.leaderId = OptionalInt.of(leaderId);
+        return this;
+    }
+
+    /**
+     * Returns the replica to elect as the leader, or empty to keep the leader.
+     */
+    public OptionalInt leaderId() {
+        return leaderId;
+    }
 }

@@ -233,7 +233,7 @@ A switched partition runs in one of two phases. The `classicPrefixInRemoteStorag
 | Unclean leader election | Blocked, even if `unclean.leader.election.enable` is `true`. See [Unclean leader election](#unclean-leader-election). The last-known-leader election of KIP-966 still runs. See [Last-known-leader election](#last-known-leader-election). | Allowed if `unclean.leader.election.enable` is `true`, as for a born-diskless topic. |
 | ISR expansion when a broker unfences | Skipped. As for a classic partition, only `AlterPartition` expands the ISR. | The controller re-adds the unfenced replica and completes an in-flight reassignment. |
 | Reassignment | The controller stages the move as it does for a classic topic. New replicas are adding and dropped replicas are removing until the adding replicas join the ISR. | The target replicas replace the current replicas in one step. |
-| `AlterDisklessSwitch` | Accepted for a seal lower than the committed seal. See [Lower a committed seal](#lower-a-committed-seal). While the switch is pending, accepted only with `-2`. See [Re-arm a pending switch](#re-arm-a-pending-switch). | Rejected with `INVALID_REQUEST`. |
+| `AlterDisklessSwitch` | Accepted for a seal lower than the committed seal. See [Lower a committed seal](#lower-a-committed-seal). While the switch is pending, accepted only with `-2`. See [Re-arm a pending switch](#re-arm-a-pending-switch). Accepted with a leader ID in both states. See [Elect a chosen replica in phase 1](#elect-a-chosen-replica-in-phase-1). | Rejected with `INVALID_REQUEST`. |
 
 The controller sets the flag when it handles a `SetClassicPrefixInRemoteStorage` request from the current leader. In the same record, the controller sets the ISR, can complete a reassignment, and elects a leader if needed. The leader sends this request after the remote log manager uploads the classic prefix, or after retention or `DeleteRecords` removes it. For more information, see [Step 6](#step-6-request-the-classicprefixinremotestorage-flag).
 
@@ -260,6 +260,8 @@ In phase 1, only the ISR members store a complete copy of the classic prefix. An
 
 These guards also apply if the cluster default enables unclean leader election, which the topic config check doesn't cover. They don't block the last-known-leader election of eligible leader replicas. For more information, see [Last-known-leader election](#last-known-leader-election).
 
+If no ISR member holds the classic prefix anymore, these guards keep the partition offline. An operator can then elect a replica outside the ISR for that partition alone. For more information, see [Elect a chosen replica in phase 1](#elect-a-chosen-replica-in-phase-1).
+
 ### Last-known-leader election
 
 The `eligible.leader.replicas.version` feature is on by default at 4.1 and later. With it on, the controller tracks eligible leader replicas (ELR) as described in KIP-966. KIP-966 adds a last-known-leader election, and the phase 1 guards don't block it. The controller runs this election for every election type, not only `UNCLEAN`, and `unclean.leader.election.enable` doesn't control it.
@@ -275,9 +277,9 @@ A replica leaves the ELR when it registers after an unclean shutdown. So the ele
 If the unclean shutdown cost the last known leader records, the partition loses those records, even though the high watermark covered them. KIP-966 accepts the same loss for a classic topic. The switch changes how the loss shows up:
 
 * If the last known leader holds the whole classic prefix, its log end offset equals the seal. The leader serves the partition, and the switch goes on.
-* If the leader lost records, its log end offset is below the seal, because the local log in phase 1 ends at the seal. The leader marks the partition offline without telling the controller, as described in [Additional Behavior](#additional-behavior). The controller keeps that leader and an ISR of one. No other replica can lead, because none is in the ISR or the ELR and phase 1 blocks unclean leader election. The remote log manager can't upload the prefix, so phase 2 doesn't start.
+* If the leader lost records, its log end offset is below the seal, because the local log in phase 1 ends at the seal. The leader marks the partition offline without telling the controller, as described in [Additional Behavior](#additional-behavior). The controller keeps that leader and an ISR of one. The controller elects no other replica, because none is in the ISR or the ELR and phase 1 blocks unclean leader election. The remote log manager can't upload the prefix, so phase 2 doesn't start.
 
-If the partition is offline, lower the seal to the leader's log end offset. The partition loses the records between that offset and the old seal. To recover the partition, follow these steps:
+If the log of another replica contains more of the classic prefix than the leader's log, elect that replica first. For more information, see [Elect a chosen replica in phase 1](#elect-a-chosen-replica-in-phase-1). Otherwise, lower the seal to the leader's log end offset. The partition loses the records between that offset and the old seal. To recover the partition, follow these steps:
 
 1. Find the leader's log end offset in the broker log message that marks the partition offline. The message starts with `Leader partition <topic>-<partition> has LEO`.
 2. Lower the seal to that offset:
@@ -353,7 +355,7 @@ After an unclean leader election before the switch, a remote segment can cross t
 
 Every step of the switch runs on the leader. Only the leader knows its log end offset and the producer states that the seal commits, so `rearm` takes no seal offset.
 
-If a switch doesn't leave the pending state, you can restart it without moving the leader. Run `kafka-topic-switch.sh rearm --topic <topic> --partition <partition>` with `--bootstrap-server` or `--bootstrap-controller`. The command sends the `AlterDisklessSwitch` controller RPC with a seal offset of `-2`. The controller authorizes the RPC as `ALTER` on the cluster. The controller writes a `PartitionChangeRecord` that keeps `classicToDisklessStartOffset` at `-2` and re-sets the leader, which bumps the leader epoch. The leader then seals again and re-drives `InitDisklessLog`, as after any leadership change while the switch is pending. A leader election has the same effect.
+If a switch doesn't leave the pending state, you can restart it without moving the leader. To move leadership to another replica instead, see [Elect a chosen replica in phase 1](#elect-a-chosen-replica-in-phase-1). Run `kafka-topic-switch.sh rearm --topic <topic> --partition <partition>` with `--bootstrap-server` or `--bootstrap-controller`. The command sends the `AlterDisklessSwitch` controller RPC with a seal offset of `-2`. The controller authorizes the RPC as `ALTER` on the cluster. The controller writes a `PartitionChangeRecord` that keeps `classicToDisklessStartOffset` at `-2` and re-sets the leader, which bumps the leader epoch. The leader then seals again and re-drives `InitDisklessLog`, as after any leadership change while the switch is pending. A leader election has the same effect.
 
 The controller rejects the request with `INVALID_REQUEST` in these cases:
 
@@ -364,7 +366,7 @@ To see the switch state of each partition, run `kafka-topic-switch.sh state --to
 
 ## Lower a committed seal
 
-A last-known-leader election in phase 1 can elect a leader whose log ends below the committed seal. That leader marks the partition offline, and no other replica can lead it. For more information, see [Last-known-leader election](#last-known-leader-election). To bring the partition back, lower the seal to the leader's log end offset with `kafka-topic-switch.sh lower-seal --topic <topic> --partition <partition> --offset <offset>`, with `--bootstrap-server` or `--bootstrap-controller`. Then restart the leader.
+A last-known-leader election or an operator election in phase 1 can elect a leader whose log ends below the committed seal. That leader marks the partition offline. For more information, see [Last-known-leader election](#last-known-leader-election) and [Elect a chosen replica in phase 1](#elect-a-chosen-replica-in-phase-1). To bring the partition back, lower the seal to the leader's log end offset with `kafka-topic-switch.sh lower-seal --topic <topic> --partition <partition> --offset <offset>`, with `--bootstrap-server` or `--bootstrap-controller`. Then restart the leader.
 
 The command sends the `AlterDisklessSwitch` controller RPC with the new seal. The controller authorizes the RPC as `ALTER` on the cluster. The controller writes a `PartitionChangeRecord` with the new `classicToDisklessStartOffset` and the current leader epoch as the diskless leader epoch, as the leader-driven commit does. The record keeps the leader, the leader epoch, and the producer states.
 
@@ -378,3 +380,50 @@ The controller rejects the request with `INVALID_REQUEST` in these cases:
 * The new seal isn't lower than the committed seal.
 
 The command rejects a negative offset before it sends the request, because the controller reads `-2` as a re-arm.
+
+## Elect a chosen replica in phase 1
+
+In phase 1, only the ISR members store a complete copy of the classic prefix, and the controller blocks unclean leader election. If the only ISR member loses its disk, the partition goes offline and nothing brings it back:
+
+* If the log directory of the replica is offline, the controller elects no leader.
+* If the broker returns with a log that ends below a committed seal, it leads the partition and marks it offline.
+* If the broker returns without a log for the partition after the seal commits, the controller keeps it as the leader, but the broker doesn't create the partition. No broker serves it.
+
+To bring the partition back, elect a replica whose log still contains the classic prefix, even if that replica is outside the ISR:
+
+```bash
+kafka-topic-switch.sh elect --bootstrap-server <broker> --topic <topic> --partition <partition> --replica <broker-id>
+```
+
+The command also accepts `--bootstrap-controller`. It sends the `AlterDisklessSwitch` controller RPC with the leader ID and a seal offset of `-1`, which keeps the seal. The controller authorizes the RPC as `ALTER` on the cluster. The controller applies the unclean leader election rules to the chosen replica alone:
+
+* If the replica is outside the ISR, the controller makes it the leader and resets the ISR to that replica. The controller also sets the leader recovery state to `RECOVERING`.
+* If the replica is in the ISR, the controller makes it the leader and keeps the ISR.
+
+The controller runs the election whether or not the partition has a leader, so you can also move leadership off a leader that marked the partition offline. The other phase 1 guards still apply, and `unclean.leader.election.enable` keeps its value.
+
+The controller rejects the request with `INVALID_REQUEST` in these cases:
+
+* The topic doesn't have `diskless.enable=true`.
+* The partition isn't in phase 1: `classicToDisklessStartOffset` is `-1`, or the partition is in phase 2. In phase 2, use `kafka-leader-election.sh`.
+* The broker isn't a replica of the partition, isn't active, or the log directory of its replica is offline.
+* The broker already leads the partition.
+* The request also contains a seal offset other than `-1`.
+
+The controller doesn't know replica log end offsets, so it can't check that the log of the chosen replica contains the classic prefix. The elected broker checks its own log against a committed seal:
+
+* If its log ends at the seal, it serves the partition. The remote log manager uploads the prefix, and the partition enters phase 2. If the replica's log matches the committed prefix, the partition keeps every record.
+* If its log ends past the seal, the broker truncates it to the seal and serves the partition.
+* If its log ends below the seal, the broker marks the partition offline and logs its log end offset. Elect another replica, or lower the seal to that offset and restart the broker. The partition then loses the records between that offset and the old seal. For more information, see [Lower a committed seal](#lower-a-committed-seal).
+* If it has no log for the partition, the broker doesn't create the partition, and the broker log has no message with a log end offset. Elect another replica.
+
+If the switch is still pending, the partition has no committed seal to check the log against. The elected leader seals at its own log end offset, and the controller commits that offset as the seal. The other replicas then truncate to it. So a replica with a shorter log costs the partition the difference as soon as you elect it, without a `lower-seal` command.
+
+A broker doesn't apply metadata changes to a partition that it marked offline. Restart such a broker so that it follows the new leader. The other replicas truncate to the new leader's log when they follow it, and rejoin the ISR.
+
+The election has these limitations:
+
+* The election needs another replica whose log contains the classic prefix. It can't recover records that no replica's log contains, and a topic with one replica per partition has no other replica to elect.
+* A replica outside the ISR can hold records of an older leader epoch that a later leader discarded. If that log ends at or past the seal, the broker's check passes, and those records become part of the classic prefix. An unclean leader election on a classic topic has the same effect.
+* The partition keeps only the records of the elected replica. If remote storage holds a part of the prefix that the elected replica doesn't hold, the election and the lower seal still drop that part.
+* The command also moves leadership off a leader that serves the partition, and the partition then loses the records that the chosen replica's log doesn't contain. Before you run it, check that the current ISR members can't serve the partition.

@@ -22,6 +22,7 @@ import org.apache.kafka.clients.CommonClientConfigs;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.AlterConfigOp;
+import org.apache.kafka.clients.admin.AlterDisklessSwitchOptions;
 import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.clients.admin.CreateTopicsResult;
 import org.apache.kafka.clients.admin.NewTopic;
@@ -63,6 +64,7 @@ import org.apache.kafka.storage.internals.log.UnifiedLog;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInfo;
 import org.junit.jupiter.api.io.TempDir;
@@ -100,6 +102,7 @@ import io.aiven.inkless.test_utils.PostgreSQLTestContainer;
 import io.aiven.inkless.test_utils.S3TestContainer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -129,6 +132,13 @@ public class InklessTopicTypeSwitcherClusterTest {
         LEGACY
     }
 
+    /**
+     * Tags a test that needs a switched partition to stay in phase 1. The leader's remote copy task runs
+     * when the broker schedules it and then once per task interval. With a long interval, the broker doesn't
+     * upload the classic prefix of a topic that has remote storage on from creation during the test.
+     */
+    private static final String HOLDS_PHASE_ONE = "holds-phase-one";
+
     @BeforeEach
     public void setup(final TestInfo testInfo) throws Exception {
         log.warn("[stage=setup] Initializing containers and 3-broker cluster");
@@ -149,6 +159,8 @@ public class InklessTopicTypeSwitcherClusterTest {
             ));
         }
 
+        final boolean holdsPhaseOne = testInfo.getTags().contains(HOLDS_PHASE_ONE);
+
         final TestKitNodes nodes = new TestKitNodes.Builder()
             .setCombined(true)
             .setNumBrokerNodes(3)
@@ -163,7 +175,7 @@ public class InklessTopicTypeSwitcherClusterTest {
             .setConfigProp(ServerConfigs.DISKLESS_REMOTE_STORAGE_CONSOLIDATION_ENABLE_CONFIG, "true")
             .setConfigProp(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, "true")
             .setConfigProp(RemoteLogManagerConfig.REMOTE_LOG_STORAGE_SYSTEM_ENABLE_PROP, "true")
-            .setConfigProp(RemoteLogManagerConfig.REMOTE_LOG_MANAGER_TASK_INTERVAL_MS_PROP, "5000")
+            .setConfigProp(RemoteLogManagerConfig.REMOTE_LOG_MANAGER_TASK_INTERVAL_MS_PROP, holdsPhaseOne ? "3600000" : "5000")
             .setConfigProp(RemoteLogManagerConfig.REMOTE_LOG_MANAGER_FOLLOWER_THREAD_POOL_SIZE_PROP, "4")
             .setConfigProp(RemoteLogManagerConfig.REMOTE_LOG_METADATA_MANAGER_CLASS_NAME_PROP, TopicBasedRemoteLogMetadataManager.class.getName())
             .setConfigProp(RemoteLogManagerConfig.REMOTE_LOG_METADATA_MANAGER_LISTENER_NAME_PROP, "EXTERNAL")
@@ -568,6 +580,108 @@ public class InklessTopicTypeSwitcherClusterTest {
                 assertEquals(sealOffset, readSealOffset(admin, topic, 0));
             }
         }
+    }
+
+    @Test
+    @Tag(HOLDS_PHASE_ONE)
+    public void testElectedReplicaOutsideTheIsrRecoversAPhaseOnePartition() throws Exception {
+        final String topic = "switch-elect-" + UUID.randomUUID().toString().substring(0, 8);
+        final TopicPartition tp = new TopicPartition(topic, 0);
+        final int lostLeader = 1;
+        final int electedReplica = 2;
+        final int classicRecords = 20;
+        final int disklessRecords = 10;
+
+        try (Admin admin = AdminClient.create(baseClientConfigs())) {
+            // Broker 0 isn't a replica and stays up for the test's clients. The topic has
+            // remote storage on from creation. A create request can't set both `diskless.enable` and
+            // `remote.storage.enable`.
+            admin.createTopics(List.of(
+                new NewTopic(topic, Map.of(0, List.of(lostLeader, electedReplica)))
+                    .configs(Map.of(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true"))
+            )).all().get(30, TimeUnit.SECONDS);
+            TopicMetadataProbe.awaitVisible(admin, topic);
+            produceRecords(topic, classicRecords);
+
+            alterTopicConfigWithIncrementalAlterConfigs(
+                admin, topic, Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true"));
+            final long sealOffset = waitForSealOffset(admin, topic, 0, offset -> offset >= 0);
+            assertEquals(classicRecords, sealOffset);
+
+            // The follower leaves the ISR with the whole classic prefix. The leader is then the only ISR
+            // member, and its shutdown stands for the loss of its disk.
+            cluster.brokers().get(electedReplica).shutdown();
+            waitForIsrShrink(admin, topic, 0, 2);
+            assertEquals(List.of(lostLeader), waitForLeader(admin, topic, lostLeader));
+            assertFalse(readClassicPrefixInRemoteStorage(admin, topic, 0),
+                "The partition must still be in phase 1 when its last ISR member goes away");
+            cluster.brokers().get(lostLeader).shutdown();
+            cluster.brokers().get(electedReplica).startup();
+
+            // The replica is back, but it's outside the ISR, and phase 1 blocks unclean leader election.
+            assertFalse(waitForLeader(admin, topic, -1).contains(electedReplica));
+            assertFalse(readClassicPrefixInRemoteStorage(admin, topic, 0));
+
+            admin.alterDisklessSwitch(topic, 0, PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET,
+                new AlterDisklessSwitchOptions().leaderId(electedReplica)).all().get(20, TimeUnit.SECONDS);
+            assertEquals(List.of(electedReplica), waitForLeader(admin, topic, electedReplica));
+            assertEquals(sealOffset, readSealOffset(admin, topic, 0));
+
+            // The elected replica's log ends at the seal, so it serves the whole classic prefix.
+            assertEquals(classicRecords, countCommittedRecordsUpTo(tp, sealOffset));
+
+            // The partition also takes diskless records again.
+            produceRecords(topic, disklessRecords);
+            assertEquals(classicRecords + disklessRecords,
+                countCommittedRecordsUpTo(tp, sealOffset + disklessRecords));
+
+            // The old leader follows the elected replica and rejoins the ISR. It's the preferred replica,
+            // so the controller can move leadership back to it afterward.
+            cluster.brokers().get(lostLeader).startup();
+            waitForIsrRecovery(admin, topic, 0, 2);
+        }
+    }
+
+    private void produceRecords(final String topic, final int count) throws Exception {
+        try (Producer<byte[], byte[]> producer = new KafkaProducer<>(producerConfigs())) {
+            for (int i = 0; i < count; i++) {
+                producer.send(new ProducerRecord<>(topic, 0, null,
+                    ("record-" + i).getBytes(StandardCharsets.UTF_8))).get(30, TimeUnit.SECONDS);
+            }
+        }
+    }
+
+    /**
+     * Waits until partition 0 of the topic has the leader, and returns its ISR at that time. A leader of
+     * `-1` means no leader.
+     */
+    private List<Integer> waitForLeader(final Admin admin,
+                                        final String topic,
+                                        final int expectedLeader) throws Exception {
+        final long deadline = System.currentTimeMillis() + Duration.ofSeconds(60).toMillis();
+        int leader = -1;
+        while (System.currentTimeMillis() < deadline) {
+            final var partition = admin.describeTopics(List.of(topic)).allTopicNames()
+                .get(10, TimeUnit.SECONDS).get(topic).partitions().get(0);
+            leader = partition.leader() == null ? -1 : partition.leader().id();
+            if (leader == expectedLeader) {
+                return partition.isr().stream().map(node -> node.id()).sorted().toList();
+            }
+            Thread.sleep(200);
+        }
+        throw new AssertionError("Partition " + topic + "-0 did not reach leader=" + expectedLeader
+            + " within timeout; last observed leader=" + leader);
+    }
+
+    private boolean readClassicPrefixInRemoteStorage(final Admin admin,
+                                                     final String topic,
+                                                     final int partition) throws Exception {
+        return admin.describeTopicPartitions(List.of(topic)).rawResponse().get(10, TimeUnit.SECONDS)
+            .topics().find(topic).partitions().stream()
+            .filter(p -> p.partitionIndex() == partition)
+            .findFirst()
+            .map(p -> InitDisklessLogFields.decodeClassicPrefixInRemoteStorage(p.unknownTaggedFields()))
+            .orElseThrow();
     }
 
     @Test

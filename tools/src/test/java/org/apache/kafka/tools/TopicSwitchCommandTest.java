@@ -48,6 +48,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.OptionalInt;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -55,6 +56,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -292,6 +294,47 @@ public class TopicSwitchCommandTest {
     public void testLowerSealRequiresPartitionAndOffset(String omitted) {
         List<String> args = new ArrayList<>(List.of("lower-seal", "--bootstrap-server", "localhost:9092",
             "--topic", TOPIC, "--partition", "0", "--offset", "40"));
+        int index = args.indexOf(omitted);
+        args.remove(index + 1);
+        args.remove(index);
+        assertThrows(ArgumentParserException.class, () ->
+            TopicSwitchCommand.argumentParser().parseArgs(args.toArray(new String[0])));
+    }
+
+    @Test
+    public void testElectSendsTheReplicaAndKeepsTheSeal() throws Exception {
+        mockAlterDisklessSwitch();
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        TopicSwitchCommand.electCommand(new PrintStream(out, false, StandardCharsets.UTF_8), adminClient, TOPIC, 0, 2);
+
+        verify(adminClient).alterDisklessSwitch(eq(TOPIC), eq(0),
+            eq(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET),
+            argThat(options -> options.leaderId().equals(OptionalInt.of(2))));
+        assertTrue(out.toString(StandardCharsets.UTF_8).contains("Elected broker 2 as the leader of test-topic-0."));
+        // Controllers don't serve DescribeTopicPartitions, so elect must work with --bootstrap-controller.
+        verify(adminClient, never()).describeTopicPartitions(any(), any(DescribeTopicsOptions.class));
+    }
+
+    @Test
+    public void testElectRejectsNegativeReplicas() {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        assertThrows(IllegalArgumentException.class, () -> TopicSwitchCommand.electCommand(
+            new PrintStream(out, false, StandardCharsets.UTF_8), adminClient, TOPIC, 0, -1));
+        verify(adminClient, never()).alterDisklessSwitch(any(), anyInt(), anyLong(), any(AlterDisklessSwitchOptions.class));
+    }
+
+    @Test
+    public void testElectAcceptsBootstrapController() throws Exception {
+        TopicSwitchCommand.argumentParser().parseArgs(new String[]{"elect", "--bootstrap-controller",
+            "localhost:9093", "--topic", TOPIC, "--partition", "0", "--replica", "2"});
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"--partition", "--replica"})
+    public void testElectRequiresPartitionAndReplica(String omitted) {
+        List<String> args = new ArrayList<>(List.of("elect", "--bootstrap-server", "localhost:9092",
+            "--topic", TOPIC, "--partition", "0", "--replica", "2"));
         int index = args.indexOf(omitted);
         args.remove(index + 1);
         args.remove(index);

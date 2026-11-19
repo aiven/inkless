@@ -383,9 +383,16 @@ public interface Admin extends AutoCloseable {
      * a seal of at least {@code 0} if the partition has no committed seal, is in phase 2, or the seal isn't
      * lower than the committed seal. It also fails for every other negative seal offset.
      *
+     * If the options name a leader with {@link AlterDisklessSwitchOptions#leaderId(int)}, the request elects
+     * that replica as the leader in phase 1 instead, even if it's outside the ISR, and resets the ISR to it.
+     * The seal offset must then be {@code -1}, which keeps the seal. The partition loses the records that the
+     * elected replica doesn't hold. The result fails with {@code InvalidRequestException} if the partition
+     * isn't in phase 1, or if the broker isn't a replica of the partition, isn't active, has an offline log
+     * directory, or already leads the partition.
+     *
      * @param topic       The topic name.
      * @param partition   The partition index.
-     * @param sealOffset  {@code -2} to re-arm, or the new, lower seal.
+     * @param sealOffset  {@code -2} to re-arm, the new, lower seal, or {@code -1} with a leader in the options.
      * @param options     The options to use.
      * @return The AlterDisklessSwitchResult.
      */

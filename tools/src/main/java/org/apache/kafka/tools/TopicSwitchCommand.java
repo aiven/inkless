@@ -95,6 +95,12 @@ public abstract class TopicSwitchCommand {
                         namespace.getLong("offset"));
                 }
                 break;
+            case "elect":
+                try (Admin adminClient = Admin.create(properties)) {
+                    electCommand(System.out, adminClient, topic, namespace.getInt("partition"),
+                        namespace.getInt("replica"));
+                }
+                break;
             default:
                 throw new RuntimeException("Unknown command " + command);
         }
@@ -114,8 +120,11 @@ public abstract class TopicSwitchCommand {
         Subparser lowerSealParser = commandParsers.addParser("lower-seal")
                 .help("Lower the committed seal of a partition in phase 1 to its leader's log end offset. The "
                         + "partition loses the records between the new seal and the old one.");
+        Subparser electParser = commandParsers.addParser("elect")
+                .help("Elect a chosen replica as the leader of a partition in phase 1, even if it's outside the "
+                        + "ISR. The partition loses the records that the replica doesn't hold.");
 
-        for (Subparser subparser : List.of(stateParser, rearmParser, lowerSealParser)) {
+        for (Subparser subparser : List.of(stateParser, rearmParser, lowerSealParser, electParser)) {
             MutuallyExclusiveGroup connectionOptions = subparser.addMutuallyExclusiveGroup().required(true);
             connectionOptions.addArgument("--bootstrap-server", "-b")
                     .action(store())
@@ -150,6 +159,20 @@ public abstract class TopicSwitchCommand {
                 .required(true)
                 .help("The new seal: the leader's log end offset. The controller accepts it only in phase 1, "
                         + "and only if it's at least 0 and lower than the committed seal.");
+
+        electParser.addArgument("--partition", "-p")
+                .action(store())
+                .type(Integer.class)
+                .required(true)
+                .help("The partition index whose leader to elect.");
+        electParser.addArgument("--replica", "-r")
+                .action(store())
+                .type(Integer.class)
+                .required(true)
+                .help("The broker ID of the replica to elect. The controller accepts it only in phase 1, and "
+                        + "only if the broker is an active replica of the partition with an online log directory. "
+                        + "The controller doesn't check the replica's log, and it resets the ISR to a replica "
+                        + "outside the ISR.");
 
         return parser;
     }
@@ -242,6 +265,17 @@ public abstract class TopicSwitchCommand {
         }
         adminClient.alterDisklessSwitch(topic, partition, sealOffset, new AlterDisklessSwitchOptions()).all().get();
         stream.printf("Lowered the seal of %s-%d to %d.%n", topic, partition, sealOffset);
+    }
+
+    static void electCommand(PrintStream stream, Admin adminClient, String topic, int partition,
+                             int replica) throws Exception {
+        // AlterDisklessSwitch reads a leader ID of -1 as no election, so a negative ID must not reach the controller.
+        if (replica < 0) {
+            throw new IllegalArgumentException("Invalid replica " + replica + "; it must be a broker ID.");
+        }
+        adminClient.alterDisklessSwitch(topic, partition, PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET,
+            new AlterDisklessSwitchOptions().leaderId(replica)).all().get();
+        stream.printf("Elected broker %d as the leader of %s-%d.%n", replica, topic, partition);
     }
 
     private static String formatStartOffset(long offset) {

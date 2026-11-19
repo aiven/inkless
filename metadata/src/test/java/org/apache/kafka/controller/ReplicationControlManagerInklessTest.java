@@ -6819,6 +6819,178 @@ public class ReplicationControlManagerInklessTest {
             ctx.replicationControl.alterDisklessSwitch(alterRequest("foo", 5, 0L)));
     }
 
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    public void testAlterDisklessSwitchElectsAReplicaOutsideTheIsrInPhaseOne(boolean leaderFenced) {
+        ReplicationControlTestContext ctx = disklessSwitchTestContext();
+        Uuid topicId = createSwitchingTestTopicWithLeaderOnlyIsr(ctx);
+        commitSeal(ctx, topicId, 100L, List.of());
+        if (leaderFenced) {
+            ctx.fenceBrokers(0);
+            assertFalse(ctx.replicationControl.getPartition(topicId, 0).hasLeader());
+        }
+        PartitionRegistration before = ctx.replicationControl.getPartition(topicId, 0);
+
+        ControllerResult<AlterDisklessSwitchResponseData> result =
+            ctx.replicationControl.alterDisklessSwitch(electRequest("foo", 0, 2));
+        assertEquals((short) 0, result.response().errorCode());
+        ctx.replay(result.records());
+
+        PartitionRegistration after = ctx.replicationControl.getPartition(topicId, 0);
+        assertEquals(2, after.leader);
+        assertArrayEquals(new int[] {2}, after.isr);
+        assertEquals(LeaderRecoveryState.RECOVERING, after.leaderRecoveryState);
+        assertEquals(before.leaderEpoch + 1, after.leaderEpoch);
+        assertEquals(100L, after.classicToDisklessStartOffset);
+        assertFalse(after.classicPrefixInRemoteStorage);
+    }
+
+    @Test
+    public void testAlterDisklessSwitchElectsAReplicaOutsideTheIsrOnAPendingSwitch() {
+        ReplicationControlTestContext ctx = disklessSwitchTestContext();
+        Uuid topicId = createSwitchingTestTopicWithLeaderOnlyIsr(ctx);
+
+        ctx.replay(ctx.replicationControl.alterDisklessSwitch(electRequest("foo", 0, 1)).records());
+
+        PartitionRegistration after = ctx.replicationControl.getPartition(topicId, 0);
+        assertEquals(1, after.leader);
+        assertArrayEquals(new int[] {1}, after.isr);
+        assertEquals(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING, after.classicToDisklessStartOffset);
+    }
+
+    @Test
+    public void testAlterDisklessSwitchElectsAnIsrMemberWithoutResettingTheIsr() {
+        ReplicationControlTestContext ctx = disklessSwitchTestContext();
+        Uuid topicId = createSwitchingTestTopic(ctx);
+        commitSeal(ctx, topicId, 100L, List.of());
+        PartitionRegistration before = ctx.replicationControl.getPartition(topicId, 0);
+        assertEquals(0, before.leader);
+        assertArrayEquals(new int[] {0, 1, 2}, before.isr);
+
+        ctx.replay(ctx.replicationControl.alterDisklessSwitch(electRequest("foo", 0, 1)).records());
+
+        PartitionRegistration after = ctx.replicationControl.getPartition(topicId, 0);
+        assertEquals(1, after.leader);
+        assertArrayEquals(new int[] {0, 1, 2}, after.isr);
+        assertEquals(LeaderRecoveryState.RECOVERED, after.leaderRecoveryState);
+    }
+
+    @Test
+    public void testAlterDisklessSwitchRejectsAnElectionInPhaseTwo() {
+        ReplicationControlTestContext ctx = disklessSwitchTestContext();
+        Uuid topicId = createSwitchingTestTopicWithLeaderOnlyIsr(ctx);
+        commitSeal(ctx, topicId, 100L, List.of());
+        PartitionChangeRecord flagRecord = new PartitionChangeRecord().setTopicId(topicId).setPartitionId(0);
+        flagRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicPrefixInRemoteStorage());
+        ctx.replay(List.of(new ApiMessageAndVersion(flagRecord, (short) 0)));
+
+        InvalidRequestException e = assertThrows(InvalidRequestException.class, () ->
+            ctx.replicationControl.alterDisklessSwitch(electRequest("foo", 0, 2)));
+        assertTrue(e.getMessage().contains("isn't in phase 1"), e.getMessage());
+        assertEquals(0, ctx.replicationControl.getPartition(topicId, 0).leader);
+    }
+
+    @Test
+    public void testAlterDisklessSwitchRejectsAnElectionOfABrokerThatIsNotAReplica() {
+        ReplicationControlTestContext ctx = disklessSwitchTestContext();
+        Uuid topicId = createSwitchingTestTopicWithLeaderOnlyIsr(ctx);
+        ctx.registerBrokers(3);
+        ctx.unfenceBrokers(3);
+
+        InvalidRequestException e = assertThrows(InvalidRequestException.class, () ->
+            ctx.replicationControl.alterDisklessSwitch(electRequest("foo", 0, 3)));
+        assertTrue(e.getMessage().contains("isn't a replica"), e.getMessage());
+        assertEquals(0, ctx.replicationControl.getPartition(topicId, 0).leader);
+    }
+
+    @Test
+    public void testAlterDisklessSwitchRejectsAnElectionOfTheCurrentLeader() {
+        ReplicationControlTestContext ctx = disklessSwitchTestContext();
+        createSwitchingTestTopicWithLeaderOnlyIsr(ctx);
+
+        InvalidRequestException e = assertThrows(InvalidRequestException.class, () ->
+            ctx.replicationControl.alterDisklessSwitch(electRequest("foo", 0, 0)));
+        assertTrue(e.getMessage().contains("already leads"), e.getMessage());
+    }
+
+    @Test
+    public void testAlterDisklessSwitchRejectsAnElectionOfAFencedReplica() {
+        ReplicationControlTestContext ctx = disklessSwitchTestContext();
+        Uuid topicId = createSwitchingTestTopicWithLeaderOnlyIsr(ctx);
+        ctx.fenceBrokers(2);
+
+        InvalidRequestException e = assertThrows(InvalidRequestException.class, () ->
+            ctx.replicationControl.alterDisklessSwitch(electRequest("foo", 0, 2)));
+        assertTrue(e.getMessage().contains("isn't active"), e.getMessage());
+        // A rejected election must not demote the current leader.
+        assertEquals(0, ctx.replicationControl.getPartition(topicId, 0).leader);
+    }
+
+    @Test
+    public void testAlterDisklessSwitchRejectsAnElectionOfAReplicaWithAnOfflineLogDirectory() {
+        ReplicationControlTestContext ctx = disklessSwitchTestContext();
+        Uuid topicId = createSwitchingTestTopicWithLeaderOnlyIsr(ctx);
+        List<Uuid> directories = new ArrayList<>(List.of(ctx.replicationControl.getPartition(topicId, 0).directories));
+        directories.set(2, DirectoryId.LOST);
+        ctx.replay(List.of(new ApiMessageAndVersion(new PartitionChangeRecord()
+            .setTopicId(topicId)
+            .setPartitionId(0)
+            .setDirectories(directories), (short) 1)));
+        assertTrue(ctx.clusterControl.isActive(2));
+
+        InvalidRequestException e = assertThrows(InvalidRequestException.class, () ->
+            ctx.replicationControl.alterDisklessSwitch(electRequest("foo", 0, 2)));
+        assertTrue(e.getMessage().contains("the log directory of its replica is offline"), e.getMessage());
+        assertEquals(0, ctx.replicationControl.getPartition(topicId, 0).leader);
+
+        // Broker 1 is also outside the ISR, and the log directory of its replica is online.
+        ctx.replay(ctx.replicationControl.alterDisklessSwitch(electRequest("foo", 0, 1)).records());
+        assertEquals(1, ctx.replicationControl.getPartition(topicId, 0).leader);
+    }
+
+    @ParameterizedTest
+    @ValueSource(longs = {-2L, 0L, 40L})
+    public void testAlterDisklessSwitchRejectsAnElectionWithASealOffset(long sealOffset) {
+        ReplicationControlTestContext ctx = disklessSwitchTestContext();
+        Uuid topicId = createSwitchingTestTopicWithLeaderOnlyIsr(ctx);
+        commitSeal(ctx, topicId, 100L, List.of());
+
+        assertThrows(InvalidRequestException.class, () ->
+            ctx.replicationControl.alterDisklessSwitch(electRequest("foo", 0, 2).setSealOffset(sealOffset)));
+        PartitionRegistration partition = ctx.replicationControl.getPartition(topicId, 0);
+        assertEquals(0, partition.leader);
+        assertEquals(100L, partition.classicToDisklessStartOffset);
+    }
+
+    @Test
+    public void testAlterDisklessSwitchRejectsANegativeLeaderId() {
+        ReplicationControlTestContext ctx = disklessSwitchTestContext();
+        createSwitchingTestTopicWithLeaderOnlyIsr(ctx);
+
+        assertThrows(InvalidRequestException.class, () ->
+            ctx.replicationControl.alterDisklessSwitch(electRequest("foo", 0, -2)));
+    }
+
+    // Partition 0 of the returned topic has replicas [0, 1, 2], leader 0, ISR [0], and a pending switch.
+    // While the switch is pending, an unfence doesn't add 1 and 2 back to the ISR.
+    private static Uuid createSwitchingTestTopicWithLeaderOnlyIsr(ReplicationControlTestContext ctx) {
+        Uuid topicId = createSwitchingTestTopic(ctx);
+        ctx.fenceBrokers(1, 2);
+        ctx.unfenceBrokers(1, 2);
+        PartitionRegistration partition = ctx.replicationControl.getPartition(topicId, 0);
+        assertEquals(0, partition.leader);
+        assertArrayEquals(new int[] {0}, partition.isr);
+        return topicId;
+    }
+
+    private static AlterDisklessSwitchRequestData electRequest(String topic, int partition, int leaderId) {
+        return new AlterDisklessSwitchRequestData()
+            .setTopicName(topic)
+            .setPartitionIndex(partition)
+            .setSealOffset(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+            .setLeaderId(leaderId);
+    }
+
     private static void commitSeal(ReplicationControlTestContext ctx, Uuid topicId, long seal,
                                    List<InitDisklessLogFields.ProducerStateEntry> producerStates) {
         PartitionChangeRecord sealRecord = new PartitionChangeRecord().setTopicId(topicId).setPartitionId(0);

@@ -26,6 +26,8 @@
     { "name": "PartitionIndex", "type": "int32", "versions": "0+",
       "about": "The partition index." },
     { "name": "SealOffset", "type": "int64", "versions": "0+",
-      "about": "-2 re-arms a pending switch. A seal of at least 0 lowers a committed seal in phase 1, and must be lower than the committed seal." }
+      "about": "-2 re-arms a pending switch. A seal of at least 0 lowers a committed seal in phase 1, and must be lower than the committed seal. -1 keeps the seal, and is valid only with a LeaderId." },
+    { "name": "LeaderId", "type": "int32", "versions": "0+", "default": "-1", "entityType": "brokerId",
+      "about": "The replica to elect as the leader in phase 1, even if it's outside the ISR, or -1 to keep the leader." }
   ]
 }
