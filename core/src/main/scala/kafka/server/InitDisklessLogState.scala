@@ -531,8 +531,8 @@ object AwaitingMetadata extends Logging {
     destination: ControlPlane,
     requests: util.List[CpInitRequest]
   ): Seq[Either[Throwable, Option[CpInitResponse]]] = {
-    def call(batch: util.List[CpInitRequest]): Either[Throwable, Seq[CpInitResponse]] =
-      try Right(Option(destination.initDisklessLog(batch)).map(_.asScala.toSeq).getOrElse(Seq.empty))
+    def call(batch: util.List[CpInitRequest]): Either[Throwable, IndexedSeq[CpInitResponse]] =
+      try Right(Option(destination.initDisklessLog(batch)).map(_.asScala.toIndexedSeq).getOrElse(IndexedSeq.empty))
       catch {
         case t: Throwable => Left(t)
       }
