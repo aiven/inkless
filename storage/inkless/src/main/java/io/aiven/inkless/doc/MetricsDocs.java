@@ -31,6 +31,7 @@ import io.aiven.inkless.cache.BatchCoordinateCacheMetrics;
 import io.aiven.inkless.cache.CaffeineCacheMetricsRegistry;
 import io.aiven.inkless.cache.CrossTierLogStartCacheMetrics;
 import io.aiven.inkless.common.SharedState;
+import io.aiven.inkless.common.metrics.PartitionRateTracker;
 import io.aiven.inkless.common.metrics.ThreadPoolMonitorMetricsRegistry;
 import io.aiven.inkless.consume.InklessFetchMetrics;
 import io.aiven.inkless.consume.InklessFetchOffsetMetrics;
@@ -140,6 +141,11 @@ public class MetricsDocs {
         printHeading("CaffeineCache metrics");
         out.println();
         out.println(toRstTable(CaffeineCacheMetricsRegistry.METRIC_CONTEXT, new CaffeineCacheMetricsRegistry().all()));
+
+        // Partition rate metrics
+        printHeading("PartitionRate metrics");
+        out.println();
+        out.println(toRstTable("kafka.server", PartitionRateTracker.all()));
 
         // Thread pool metrics
         printHeading("ThreadPoolMonitor metrics");
