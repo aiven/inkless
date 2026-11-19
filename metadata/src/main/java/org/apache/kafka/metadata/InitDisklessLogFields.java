@@ -18,6 +18,7 @@
 package org.apache.kafka.metadata;
 
 import org.apache.kafka.common.protocol.types.RawTaggedField;
+import org.apache.kafka.raft.KafkaRaftClient;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
@@ -40,6 +41,16 @@ public final class InitDisklessLogFields {
     public static final int DISKLESS_LEADER_EPOCH_TAG = 102;
     public static final int CLASSIC_PREFIX_IN_REMOTE_STORAGE_TAG = 103;
     public static final int LAST_CLASSIC_LEADER_EPOCH_TAG = 104;
+
+    /**
+     * The most producer state entries that the records of one {@code InitDisklessLog} request can contain.
+     * The controller appends those records in batches of at most 10,000 records, and the Raft client rejects a
+     * batch over {@link KafkaRaftClient#MAX_BATCH_SIZE_BYTES}. The entries of all batches together take at most
+     * half of that limit, which leaves the rest for the other fields of the records. A snapshot writes the entries of a partition in one
+     * record. The limit therefore applies to a single partition too.
+     */
+    public static final int MAX_PRODUCER_STATE_ENTRIES =
+        KafkaRaftClient.MAX_BATCH_SIZE_BYTES / 2 / ProducerStateEntry.SERIALIZED_SIZE;
 
     private InitDisklessLogFields() {}
 

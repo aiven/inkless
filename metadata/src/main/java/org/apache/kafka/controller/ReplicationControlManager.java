@@ -150,6 +150,7 @@ import static org.apache.kafka.common.protocol.Errors.NEW_LEADER_ELECTED;
 import static org.apache.kafka.common.protocol.Errors.NONE;
 import static org.apache.kafka.common.protocol.Errors.NOT_CONTROLLER;
 import static org.apache.kafka.common.protocol.Errors.NO_REASSIGNMENT_IN_PROGRESS;
+import static org.apache.kafka.common.protocol.Errors.RECORD_LIST_TOO_LARGE;
 import static org.apache.kafka.common.protocol.Errors.TOPIC_AUTHORIZATION_FAILED;
 import static org.apache.kafka.common.protocol.Errors.UNKNOWN_SERVER_ERROR;
 import static org.apache.kafka.common.protocol.Errors.UNKNOWN_TOPIC_ID;
@@ -1571,6 +1572,10 @@ public class ReplicationControlManager {
         clusterControl.checkBrokerEpoch(request.brokerId(), request.brokerEpoch());
         List<ApiMessageAndVersion> records = new ArrayList<>();
         List<InitDisklessLogResponseData.TopicResponse> topicResponses = new ArrayList<>();
+        // The records of this request go to the Raft client in batches of at most 10,000 records. A batch over
+        // the size limit fails the whole request and makes the active controller resign. The broker sends the
+        // partitions that don't fit again in a later request.
+        int producerStateEntries = 0;
 
         for (InitDisklessLogRequestData.TopicData topicData : request.topics()) {
             Uuid topicId = topicData.topicId();
@@ -1658,6 +1663,20 @@ public class ReplicationControlManager {
                         .setErrorCode(INVALID_REQUEST.code()));
                     continue;
                 }
+
+                if (producerStateEntries + partitionData.producerStates().size() >
+                        InitDisklessLogFields.MAX_PRODUCER_STATE_ENTRIES) {
+                    log.info("Rejecting InitDisklessLog request from node {} for {}-{} because its {} producer " +
+                            "state entries don't fit in the metadata batch of this request, which already " +
+                            "holds {} of at most {} entries.",
+                        request.brokerId(), topic.name, partitionId, partitionData.producerStates().size(),
+                        producerStateEntries, InitDisklessLogFields.MAX_PRODUCER_STATE_ENTRIES);
+                    partitionResponses.add(new InitDisklessLogResponseData.PartitionResponse()
+                        .setPartitionId(partitionId)
+                        .setErrorCode(RECORD_LIST_TOO_LARGE.code()));
+                    continue;
+                }
+                producerStateEntries += partitionData.producerStates().size();
 
                 List<InitDisklessLogFields.ProducerStateEntry> producerStates =
                     partitionData.producerStates().stream()

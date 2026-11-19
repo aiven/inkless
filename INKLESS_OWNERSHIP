@@ -69,6 +69,7 @@ core/src/main/scala/kafka/server/AbstractFetcherThread.scala @aiven/inkless @apa
 core/src/main/java/kafka/server/TierStateMachine.java     @aiven/inkless @apache/kafka  # phase 2 remote rebuild starts at the classic-to-diskless seal
 metadata/src/main/java/org/apache/kafka/controller/ReplicationControlManager.java @aiven/inkless @apache/kafka  # diskless placement, election, and classic-to-diskless switch commits
 metadata/src/main/java/org/apache/kafka/controller/PartitionChangeBuilder.java @aiven/inkless @apache/kafka  # classic-to-diskless switch flag commit
+metadata/src/main/java/org/apache/kafka/image/writer/RaftSnapshotWriter.java @aiven/inkless @apache/kafka  # snapshot batches split by size, for the producer states of switched partitions
 storage/src/main/java/org/apache/kafka/storage/internals/log/UnifiedLog.java @aiven/inkless @apache/kafka  # forced deletion of the local classic prefix; truncation count that fences remote offset updates
 storage/src/main/java/org/apache/kafka/storage/internals/epoch/LeaderEpochFileCache.java @aiven/inkless @apache/kafka  # a restored list of epoch entries becomes visible to readers all at once
 core/src/main/scala/kafka/server/ReplicaAlterLogDirsThread.scala @aiven/inkless @apache/kafka  # future log rolls at the seal; promotion waits for classic prefix deletion

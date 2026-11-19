@@ -42,7 +42,7 @@ import org.apache.kafka.common.message.ListOffsetsRequestData.{ListOffsetsPartit
 import org.apache.kafka.common.message.ListOffsetsResponseData.{ListOffsetsPartitionResponse, ListOffsetsTopicResponse}
 import org.apache.kafka.common.message.{DeleteRecordsResponseData, FetchResponseData}
 import org.apache.kafka.common.message.OffsetForLeaderEpochRequestData.{OffsetForLeaderPartition, OffsetForLeaderTopic}
-import org.apache.kafka.common.metadata.{PartitionChangeRecord, PartitionRecord, TopicRecord}
+import org.apache.kafka.common.metadata.{PartitionChangeRecord, PartitionRecord, RemoveTopicRecord, TopicRecord}
 import org.apache.kafka.common.metrics.Metrics
 import org.apache.kafka.common.protocol.Errors
 import org.apache.kafka.common.record._
@@ -9431,6 +9431,62 @@ class ReplicaManagerInklessTest {
       assertTrue(promotedPartition.isLeader)
       assertEquals(sealOffset, promotedPartition.localLogOrException.logEndOffset,
         "Promoted switched leader must drop uncommitted classic records at or beyond the seal")
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = Array(true, false))
+  def testApplyDeltaRemovesDeletedPartitionFromInitTracking(topicDeleted: Boolean): Unit = {
+    val topicName = "switched-topic"
+    val topicId = Uuid.randomUuid()
+    val tp = new TopicPartition(topicName, 0)
+    val brokerId = 1
+    val leaderId = 2
+    val sealOffset = 10L
+
+    val mockFetcherManager = mock(classOf[ReplicaFetcherManager])
+    when(mockFetcherManager.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    val initDisklessLogManager = mock(classOf[InitDisklessLogManager])
+
+    val replicaManager = spy(createReplicaManager(
+      List(topicName),
+      mockReplicaFetcherManager = Some(mockFetcherManager),
+      initDisklessLogManager = Some(initDisklessLogManager)
+    ))
+    try {
+      val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+      populateLocalLogAtLeoAndCheckpointedHwm(replicaManager, tp, log, leo = sealOffset, hw = sealOffset)
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(sealOffset)
+
+      val followerDelta = disklessFollowerDelta(
+        topicName,
+        topicId,
+        brokerId,
+        leaderId,
+        classicToDisklessStartOffset = sealOffset
+      )
+      val followerImage = imageFromTopics(followerDelta.apply())
+      replicaManager.applyDelta(followerDelta, followerImage)
+      // The become-follower path also removes the partition, so only the delete counts from here on.
+      clearInvocations(initDisklessLogManager)
+
+      val deleteDelta = new TopicsDelta(followerImage.topics())
+      if (topicDeleted) {
+        deleteDelta.replay(new RemoveTopicRecord().setTopicId(topicId))
+      } else {
+        // A reassignment that takes the replica away from this broker.
+        deleteDelta.replay(new PartitionChangeRecord()
+          .setTopicId(topicId)
+          .setPartitionId(tp.partition())
+          .setReplicas(util.Arrays.asList(leaderId))
+          .setIsr(util.Arrays.asList(leaderId)))
+      }
+      assertTrue(deleteDelta.localChanges(brokerId).deletes.contains(tp))
+      replicaManager.applyDelta(deleteDelta, imageFromTopics(deleteDelta.apply()))
+
+      verify(initDisklessLogManager).removePartition(tp)
     } finally {
       replicaManager.shutdown(checkpointHW = false)
     }
