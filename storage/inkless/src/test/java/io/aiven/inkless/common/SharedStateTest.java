@@ -43,6 +43,8 @@ import io.aiven.inkless.storage_backend.common.StorageBackend;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -101,7 +103,7 @@ class SharedStateTest {
         stubFullConfig();
         final AtomicInteger storageCallCount = new AtomicInteger();
 
-        when(config.storage(any(Metrics.class)))
+        when(config.storage(any(Metrics.class), anyString()))
             .thenAnswer(invocation ->
                 switch (storageCallCount.incrementAndGet()) {
                     case 1 -> firstBackend;   // fetchStorage
@@ -131,13 +133,35 @@ class SharedStateTest {
     }
 
     @Test
+    void testShouldCreateEachStorageForItsRole() throws Exception {
+        stubFullConfig();
+        // SharedState asks for the fetch role twice: first for fetchStorage, then for the lagging fetch storage.
+        when(config.storage(any(Metrics.class), eq(InklessConfig.STORAGE_ROLE_FETCH)))
+            .thenReturn(firstBackend, secondBackend);
+        when(config.storage(any(Metrics.class), eq(InklessConfig.STORAGE_ROLE_PRODUCE))).thenReturn(thirdBackend);
+        when(config.storage(any(Metrics.class), eq(InklessConfig.STORAGE_ROLE_BACKGROUND))).thenReturn(fourthBackend);
+
+        final SharedState state = SharedState.initialize(
+            Time.SYSTEM, 1, config, metadataView, controlPlane,
+            new ControlPlaneAvailability(),
+            brokerTopicStats, () -> mock(LogConfig.class)
+        );
+
+        assertThat(state.fetchStorage()).isSameAs(firstBackend);
+        assertThat(state.maybeLaggingFetchStorage()).containsSame(secondBackend);
+        assertThat(state.produceStorage()).isSameAs(thirdBackend);
+        assertThat(state.backgroundStorage()).isSameAs(fourthBackend);
+        state.close();
+    }
+
+    @Test
     void testShouldCloseWithoutLaggingStorageWhenDisabled() throws Exception {
         stubFullConfig();
         when(config.fetchLaggingConsumerThreadPoolSize()).thenReturn(0);
 
         final AtomicInteger storageCallCount = new AtomicInteger();
 
-        when(config.storage(any(Metrics.class)))
+        when(config.storage(any(Metrics.class), anyString()))
             .thenAnswer(invocation ->
                 switch (storageCallCount.incrementAndGet()) {
                     case 1 -> firstBackend;   // fetchStorage
@@ -171,7 +195,7 @@ class SharedStateTest {
     void testShouldCleanupCreatedResourcesInReverseOrderOnInitFailure() throws Exception {
         final AtomicInteger storageCallCount = new AtomicInteger();
 
-        when(config.storage(any(Metrics.class))).thenAnswer(invocation -> {
+        when(config.storage(any(Metrics.class), anyString())).thenAnswer(invocation -> {
             int count = storageCallCount.incrementAndGet();
             if (count == 3) {
                 throw new RuntimeException("Failure creating third storage");
