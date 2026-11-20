@@ -18,10 +18,13 @@
 
 package kafka.server.metadata
 
-import org.apache.kafka.common.config.TopicConfig
+import org.apache.kafka.common.config.{ConfigResource, TopicConfig}
 import org.apache.kafka.common.{DirectoryId, TopicIdPartition, TopicPartition, Uuid}
-import org.apache.kafka.image.{MetadataImage, TopicImage, TopicsImage}
-import org.apache.kafka.metadata.{LeaderRecoveryState, PartitionRegistration}
+import org.apache.kafka.common.utils.LogCaptureAppender
+import org.apache.kafka.common.metadata.{ConfigRecord, PartitionChangeRecord, PartitionRecord, TopicRecord}
+import org.apache.kafka.image.{MetadataDelta, MetadataImage, MetadataProvenance, TopicImage, TopicsDelta, TopicsImage}
+import org.apache.kafka.metadata.{InitDisklessLogFields, LeaderRecoveryState, PartitionRegistration}
+import org.apache.logging.log4j.Level
 import org.junit.jupiter.api.{BeforeEach, Nested, Test}
 import org.junit.jupiter.api.Assertions._
 import org.mockito.ArgumentMatchers.anyString
@@ -29,7 +32,8 @@ import org.mockito.Mockito._
 
 import java.util.function.Supplier
 import java.util
-import java.util.{Collections, Optional, Properties}
+import java.util.Properties
+import scala.util.Using
 
 class InklessMetadataViewTest {
   private var metadataCache: KRaftMetadataCache = _
@@ -115,9 +119,10 @@ class InklessMetadataViewTest {
       ("unrelated properties", {val p = new Properties(); p.put("foo", "bar"); p}, false),
     )
 
-    testCases.foreach { case (description, props, expected) =>
-      val topicName = description.replaceAll(" ", "-")
-      when(metadataCache.topicConfig(topicName)).thenReturn(props)
+    val topicNames = testCases.map { case (description, _, _) => description.replaceAll(" ", "-") }
+    stubTopicConfigs(metadataCache, topicNames.zip(testCases.map(_._2)).toMap)
+
+    testCases.zip(topicNames).foreach { case ((description, _, expected), topicName) =>
       assertEquals(expected, metadataView.isDisklessTopic(topicName), s"Failed on case: '$description'")
     }
   }
@@ -136,9 +141,10 @@ class InklessMetadataViewTest {
       ("unrelated properties", {val p = new Properties(); p.put("foo", "bar"); p}, false),
     )
 
-    testCases.foreach { case (description, props, expected) =>
-      val topicName = description.replaceAll(" ", "-")
-      when(metadataCache.topicConfig(topicName)).thenReturn(props)
+    val topicNames = testCases.map { case (description, _, _) => description.replaceAll(" ", "-") }
+    stubTopicConfigs(metadataCache, topicNames.zip(testCases.map(_._2)).toMap)
+
+    testCases.zip(topicNames).foreach { case ((description, _, expected), topicName) =>
       assertEquals(expected, metadataView.isRemoteStorageEnabled(topicName), s"Failed on case: '$description'")
     }
   }
@@ -148,25 +154,86 @@ class InklessMetadataViewTest {
     val metadataCache = mock(classOf[KRaftMetadataCache])
     val metadataView = new InklessMetadataView(metadataCache, null)
 
-    val consolidating = createTopicProps(diskless = Some("true"), remoteStorageEnable = Some("true"))
-    when(metadataCache.topicConfig("consolidating")).thenReturn(consolidating)
+    stubTopicConfigs(metadataCache, Map(
+      "consolidating" -> createTopicProps(diskless = Some("true"), remoteStorageEnable = Some("true")),
+      "diskless-only" -> createTopicProps(diskless = Some("true")),
+      "remote-only" -> createTopicProps(remoteStorageEnable = Some("true")),
+      "neither" -> new Properties()))
+
     assertTrue(metadataView.isConsolidatingDisklessTopic("consolidating"))
-
-    when(metadataCache.topicConfig("diskless-only")).thenReturn(createTopicProps(diskless = Some("true")))
     assertFalse(metadataView.isConsolidatingDisklessTopic("diskless-only"))
-
-    when(metadataCache.topicConfig("remote-only")).thenReturn(createTopicProps(remoteStorageEnable = Some("true")))
     assertFalse(metadataView.isConsolidatingDisklessTopic("remote-only"))
-
-    when(metadataCache.topicConfig("neither")).thenReturn(new Properties())
     assertFalse(metadataView.isConsolidatingDisklessTopic("neither"))
+  }
+
+  @Test
+  def testTopicFlagsThrowOnValueThatIsNotBoolean(): Unit = {
+    val metadataCache = mock(classOf[KRaftMetadataCache])
+    val metadataView = new InklessMetadataView(metadataCache, null)
+    stubTopicConfigs(metadataCache, Map(
+      "padded-diskless" -> createTopicProps(diskless = Some(" true")),
+      "word-diskless" -> createTopicProps(diskless = Some("yes")),
+      "padded-remote" -> createTopicProps(diskless = Some("true"), remoteStorageEnable = Some(" true"))))
+
+    assertThrows(classOf[IllegalArgumentException], () => metadataView.isDisklessTopic("padded-diskless"))
+    assertThrows(classOf[IllegalArgumentException], () => metadataView.isDisklessTopic("word-diskless"))
+    assertThrows(classOf[IllegalArgumentException], () => metadataView.isRemoteStorageEnabled("padded-remote"))
+    assertThrows(classOf[IllegalArgumentException], () => metadataView.isConsolidatingDisklessTopic("padded-remote"))
+  }
+
+  @Test
+  def testUpdateTopicConfigWarnsOnFlagThatIsNotBoolean(): Unit = {
+    Using.resource(LogCaptureAppender.createAndRegister()) { appender =>
+      appender.setClassLogger(classOf[InklessMetadataView], Level.WARN)
+
+      metadataView.updateTopicConfig("padded", createTopicProps(diskless = Some(" true"), remoteStorageEnable = Some("TRUE")))
+      metadataView.updateTopicConfig("canonical", createTopicProps(diskless = Some("true"), remoteStorageEnable = Some("false")))
+
+      val warnings = appender.getMessages(Level.WARN.name())
+      assertEquals(1, warnings.size(), s"Unexpected warnings: $warnings")
+      assertTrue(warnings.get(0).contains(s"Topic padded has ${TopicConfig.DISKLESS_ENABLE_CONFIG}=' true'"), warnings.get(0))
+    }
+  }
+
+  @Test
+  def testTopicFlagsReadOneImageWithoutCopyingTopicConfig(): Unit = {
+    val metadataCache = mock(classOf[KRaftMetadataCache])
+    val metadataView = new InklessMetadataView(metadataCache, null)
+    stubTopicConfigs(metadataCache, Map(
+      "consolidating" -> createTopicProps(diskless = Some("true"), remoteStorageEnable = Some("true"))))
+
+    assertTrue(metadataView.isConsolidatingDisklessTopic("consolidating"))
+    verify(metadataCache, times(1)).currentImage()
+
+    assertTrue(metadataView.isDisklessTopic("consolidating"))
+    assertTrue(metadataView.isRemoteStorageEnabled("consolidating"))
+    verify(metadataCache, never()).topicConfig(anyString())
+  }
+
+  @Test
+  def testGetDisklessTopicPartitionsReadOneImageForAllTopics(): Unit = {
+    val metadataCache = mock(classOf[KRaftMetadataCache])
+    val metadataView = new InklessMetadataView(metadataCache, null)
+    val uuidA = Uuid.randomUuid()
+    val uuidB = Uuid.randomUuid()
+    stubTopicConfigs(metadataCache,
+      configs = Map(
+        "diskless-a" -> createTopicProps(diskless = Some("true")),
+        "diskless-b" -> createTopicProps(diskless = Some("true"))),
+      topics = Map("diskless-a" -> (uuidA, 1), "diskless-b" -> (uuidB, 1), "classic" -> (Uuid.randomUuid(), 1)))
+
+    assertEquals(
+      util.Set.of(new TopicIdPartition(uuidA, 0, "diskless-a"), new TopicIdPartition(uuidB, 0, "diskless-b")),
+      metadataView.getDisklessTopicPartitions)
+    verify(metadataCache, times(1)).currentImage()
+    verifyNoMoreInteractions(metadataCache)
   }
 
   @Test
   def testGetConsolidatingDisklessTopicPartitionsEmptyWhenNoTopics(): Unit = {
     val metadataCache = mock(classOf[KRaftMetadataCache])
     val metadataView = new InklessMetadataView(metadataCache, null)
-    when(metadataCache.getAllTopics()).thenReturn(Collections.emptySet())
+    stubTopicConfigs(metadataCache, configs = Map.empty)
     assertTrue(metadataView.getConsolidatingDisklessTopicPartitions.isEmpty)
   }
 
@@ -174,15 +241,16 @@ class InklessMetadataViewTest {
   def testGetConsolidatingDisklessTopicPartitionsExcludesTopicsThatAreNotConsolidating(): Unit = {
     val metadataCache = mock(classOf[KRaftMetadataCache])
     val metadataView = new InklessMetadataView(metadataCache, null)
-    val topics = new util.HashSet[String]()
-    topics.add("plain")
-    topics.add("diskless-only")
-    when(metadataCache.getAllTopics()).thenReturn(topics)
-    when(metadataCache.topicConfig("plain")).thenReturn(new Properties())
-    when(metadataCache.topicConfig("diskless-only")).thenReturn(createTopicProps(diskless = Some("true")))
+    stubTopicConfigs(metadataCache,
+      configs = Map(
+        "diskless-only" -> createTopicProps(diskless = Some("true")),
+        "remote-only" -> createTopicProps(remoteStorageEnable = Some("true"))),
+      topics = Map(
+        "plain" -> (Uuid.randomUuid(), 1),
+        "diskless-only" -> (Uuid.randomUuid(), 1),
+        "remote-only" -> (Uuid.randomUuid(), 1)))
 
     assertTrue(metadataView.getConsolidatingDisklessTopicPartitions.isEmpty)
-    verify(metadataCache, never()).numPartitions(anyString())
   }
 
   @Test
@@ -191,17 +259,10 @@ class InklessMetadataViewTest {
     val metadataView = new InklessMetadataView(metadataCache, null)
     val uuidA = Uuid.randomUuid()
     val uuidB = Uuid.randomUuid()
-    val topics = new util.HashSet[String]()
-    topics.add("topic-a")
-    topics.add("topic-b")
-    when(metadataCache.getAllTopics()).thenReturn(topics)
     val consolidatingProps = createTopicProps(diskless = Some("true"), remoteStorageEnable = Some("true"))
-    when(metadataCache.topicConfig("topic-a")).thenReturn(consolidatingProps)
-    when(metadataCache.topicConfig("topic-b")).thenReturn(consolidatingProps)
-    when(metadataCache.numPartitions("topic-a")).thenReturn(Optional.of(2))
-    when(metadataCache.numPartitions("topic-b")).thenReturn(Optional.of(1))
-    when(metadataCache.getTopicId("topic-a")).thenReturn(uuidA)
-    when(metadataCache.getTopicId("topic-b")).thenReturn(uuidB)
+    stubTopicConfigs(metadataCache,
+      configs = Map("topic-a" -> consolidatingProps, "topic-b" -> consolidatingProps),
+      topics = Map("topic-a" -> (uuidA, 2), "topic-b" -> (uuidB, 1)))
 
     val result = metadataView.getConsolidatingDisklessTopicPartitions
 
@@ -211,11 +272,66 @@ class InklessMetadataViewTest {
     assertTrue(result.contains(new TopicIdPartition(uuidB, 0, "topic-b")))
   }
 
+  @Test
+  def testGetConsolidatingDisklessTopicPartitionsListsTopicsFromImageNotFromConfigs(): Unit = {
+    val metadataCache = mock(classOf[KRaftMetadataCache])
+    val metadataView = new InklessMetadataView(metadataCache, null)
+    stubTopicConfigs(metadataCache,
+      configs = Map("deleted" -> createTopicProps(diskless = Some("true"), remoteStorageEnable = Some("true"))))
+
+    assertTrue(metadataView.getConsolidatingDisklessTopicPartitions.isEmpty)
+  }
+
+  @Test
+  def testGetDisklessReplicaCountCountsDisklessPartitionsWithTheBrokerInTheReplicas(): Unit = {
+    val metadataCache = mock(classOf[KRaftMetadataCache])
+    val metadataView = new InklessMetadataView(metadataCache, null)
+    stubTopicConfigs(metadataCache,
+      configs = Map("diskless-a" -> createTopicProps(diskless = Some("true")),
+        "diskless-b" -> createTopicProps(diskless = Some("true")), "classic" -> createTopicProps(),
+        "diskless-deleted" -> createTopicProps(diskless = Some("true"))),
+      topics = Map("diskless-a" -> (Uuid.randomUuid(), 3), "diskless-b" -> (Uuid.randomUuid(), 2),
+        "classic" -> (Uuid.randomUuid(), 2)),
+      replicas = Map("diskless-a" -> util.List.of(1, 2), "diskless-b" -> util.List.of(2, 3),
+        "classic" -> util.List.of(1, 2, 3)))
+
+    assertEquals(3, metadataView.getDisklessReplicaCount(1))
+    assertEquals(5, metadataView.getDisklessReplicaCount(2))
+    assertEquals(2, metadataView.getDisklessReplicaCount(3))
+    assertEquals(0, metadataView.getDisklessReplicaCount(4))
+  }
+
   private def createTopicProps(diskless: Option[String] = None, remoteStorageEnable: Option[String] = None): Properties = {
     val props = new Properties()
     diskless.foreach(v => props.put(TopicConfig.DISKLESS_ENABLE_CONFIG, v))
     remoteStorageEnable.foreach(v => props.put(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG, v))
     props
+  }
+
+  // Wires cache.currentImage() to a real image holding the topic overrides,
+  // and the topics as (topic ID, partition count).
+  private def stubTopicConfigs(cache: KRaftMetadataCache,
+                               configs: Map[String, Properties],
+                               topics: Map[String, (Uuid, Int)] = Map.empty,
+                               replicas: Map[String, util.List[Integer]] = Map.empty): Unit = {
+    val delta = new MetadataDelta(MetadataImage.EMPTY)
+    topics.foreach { case (topic, (topicId, partitionCount)) =>
+      delta.replay(new TopicRecord().setName(topic).setTopicId(topicId))
+      (0 until partitionCount).foreach { partitionId =>
+        delta.replay(new PartitionRecord().setTopicId(topicId).setPartitionId(partitionId)
+          .setReplicas(replicas.getOrElse(topic, util.List.of(1))).setIsr(util.List.of(1)).setLeader(1).setLeaderEpoch(0))
+      }
+    }
+    configs.foreach { case (topic, props) =>
+      props.stringPropertyNames().forEach { key =>
+        delta.replay(new ConfigRecord()
+          .setResourceType(ConfigResource.Type.TOPIC.id)
+          .setResourceName(topic)
+          .setName(key)
+          .setValue(props.getProperty(key)))
+      }
+    }
+    when(cache.currentImage()).thenReturn(delta.apply(MetadataProvenance.EMPTY))
   }
 
   private def partitionRegistration(disklessLeaderEpoch: Option[Int] = None,
@@ -335,6 +451,37 @@ class InklessMetadataViewTest {
     assertEquals(List(false, true, true, false),
       List(bornDiskless, pending, phaseOne, phaseTwo).map(tp =>
         metadataView.isClassicPrefixOnlyOnLocalDisks(tp.topic, tp.partition)))
+  }
+
+  @Test
+  def testGetLastClassicLeaderEpochReadsTheRecordedTagFromTheImage(): Unit = {
+    val topicId = Uuid.randomUuid()
+    val delta = new TopicsDelta(TopicsImage.EMPTY)
+    delta.replay(new TopicRecord().setName("switched").setTopicId(topicId))
+    Seq(0, 1).foreach { partitionId =>
+      delta.replay(new PartitionRecord().setTopicId(topicId).setPartitionId(partitionId)
+        .setReplicas(util.List.of(1, 2)).setIsr(util.List.of(1, 2)).setLeader(1).setLeaderEpoch(5))
+    }
+    val flag = new PartitionChangeRecord().setTopicId(topicId).setPartitionId(0).setLeader(1)
+    flag.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicToDisklessStartOffset(42L))
+    flag.unknownTaggedFields().add(InitDisklessLogFields.encodeDisklessLeaderEpoch(5))
+    flag.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicPrefixInRemoteStorage())
+    flag.unknownTaggedFields().add(InitDisklessLogFields.encodeLastClassicLeaderEpoch(3))
+    delta.replay(flag)
+    delta.replay(new PartitionChangeRecord().setTopicId(topicId).setPartitionId(0).setIsr(util.List.of(1)))
+    val image = mock(classOf[MetadataImage])
+    when(metadataCache.currentImage()).thenReturn(image)
+    when(image.topics()).thenReturn(delta.apply())
+
+    val recorded = new TopicPartition("switched", 0)
+    assertEquals(3, metadataView.getLastClassicLeaderEpoch(recorded))
+    assertEquals(5, metadataView.getDisklessLeaderEpoch(recorded))
+    assertEquals(PartitionRegistration.NO_LAST_CLASSIC_LEADER_EPOCH,
+      metadataView.getLastClassicLeaderEpoch(new TopicPartition("switched", 1)))
+    assertEquals(PartitionRegistration.NO_LAST_CLASSIC_LEADER_EPOCH,
+      metadataView.getLastClassicLeaderEpoch(new TopicPartition("switched", 2)))
+    assertEquals(PartitionRegistration.NO_LAST_CLASSIC_LEADER_EPOCH,
+      metadataView.getLastClassicLeaderEpoch(new TopicPartition("missing", 0)))
   }
 
   @Test

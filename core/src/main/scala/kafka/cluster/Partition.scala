@@ -164,6 +164,7 @@ object Partition {
       logManager = replicaManager.logManager,
       alterIsrManager = replicaManager.alterPartitionManager)
     partition.replicationStopOffset = () => replicaManager.replicationStopOffset(topicPartition)
+    partition.consolidationLeaderEpoch = () => replicaManager.consolidationLeaderEpoch(topicPartition)
     partition
   }
 
@@ -352,6 +353,8 @@ class Partition(val topicPartition: TopicPartition,
   // constructor parameter, so Java callers such as the JMH benchmarks keep compiling.
   @volatile private[cluster] var replicationStopOffset: () => Option[Long] = () => None
 
+  @volatile private[cluster] var consolidationLeaderEpoch: () => Option[Int] = () => None
+
   // Logs belonging to this partition. Majority of time it will be only one log, but if log directory
   // is getting changed (as a result of ReplicaAlterLogDirs command), we may have two logs until copy
   // completes and a switch to new location is performed.
@@ -466,33 +469,58 @@ class Partition(val topicPartition: TopicPartition,
 
   /**
    * Seal this Partition so that no more records can be appended locally.
-   * After aborting in-flight transactions, the active segment is force-rolled so the
-   * boundary [base_active, LEO) becomes a closed tiering candidate. Without this roll,
-   * an idle switched topic never copies its classic tail to remote (KC-234) because
-   * RemoteLogManager only tiers closed segments.
-   * @throws KafkaStorageException If transaction abortion or segment rolling fails due to an I/O error.
+   * The active segment is force-rolled so the boundary [base_active, LEO) becomes a closed
+   * tiering candidate. Without this roll, an idle switched topic never copies its classic
+   * tail to remote (KC-234) because RemoteLogManager only tiers closed segments.
+   * Sealing doesn't abort open transactions. Only the leader does, with
+   * [[abortOngoingTransactionsAsSealedLeader]], and a follower replicates the leader's markers.
+   * @throws KafkaStorageException If segment rolling fails due to an I/O error.
    */
   def seal(): Unit = inWriteLock(leaderIsrUpdateLock) {
     if (!_sealed) {
-      val leaderLog = localLogOrException
-      if (leaderLog.producerStateManager().firstUndecidedOffset().isPresent) {
-        abortOngoingTransactions(leaderLog)
-      }
+      val localLog = localLogOrException
       _sealed = true
-      // Force-roll the active segment so the boundary becomes a closed tiering candidate.
       // The empty new segment [seal, seal) stays as the active segment (truncateTo(seal) is
       // only called when LEO > seal, which is not the case here); it is harmless — no records,
       // not tiered by RLM, and reused if the switch is aborted.
-      if (leaderLog.activeSegment().size() > 0) {
-        try {
-          leaderLog.roll()
-        } catch {
-          case e: java.io.IOException =>
-            throw new KafkaStorageException(s"Failed to roll active segment while sealing " +
-              s"partition $topicPartition for diskless switch", e)
-        }
+      rollActiveSegmentOfSealedLog(localLog)
+      stateChangeLogger.info(s"Sealed partition $topicPartition for diskless switch with LEO ${localLog.logEndOffset}")
+    }
+  }
+
+  /**
+   * Aborts every undecided transaction in the sealed log of this leader, then rolls the
+   * active segment so the markers are in a closed segment.
+   * Call it after `makeLeader`: the markers must carry the leader epoch in which this broker
+   * leads. A marker in an earlier epoch is a record that the leader of that epoch didn't write.
+   * It doesn't depend on whether `seal()` ran in this call sequence, because a replica that
+   * sealed as a follower can become the leader with an open transaction in its log.
+   * @throws KafkaStorageException If transaction abortion or segment rolling fails due to an I/O error.
+   */
+  def abortOngoingTransactionsAsSealedLeader(): Unit = inWriteLock(leaderIsrUpdateLock) {
+    if (!_sealed) {
+      throw new IllegalStateException(s"Partition $topicPartition must be sealed before the leader aborts its open transactions")
+    }
+    leaderLogIfLocal.foreach { leaderLog =>
+      if (leaderLog.producerStateManager().firstUndecidedOffset().isPresent) {
+        abortOngoingTransactions(leaderLog)
+        rollActiveSegmentOfSealedLog(leaderLog)
+        // With an ISR of only this leader, no follower fetch advances the high watermark past the
+        // markers, and the switch waits for HW == LEO.
+        maybeIncrementLeaderHW(leaderLog)
       }
-      stateChangeLogger.info(s"Sealed partition $topicPartition for diskless switch with LEO ${leaderLog.logEndOffset}")
+    }
+  }
+
+  private def rollActiveSegmentOfSealedLog(log: UnifiedLog): Unit = {
+    if (log.activeSegment().size() > 0) {
+      try {
+        log.roll()
+      } catch {
+        case e: java.io.IOException =>
+          throw new KafkaStorageException(s"Failed to roll active segment after sealing " +
+            s"partition $topicPartition for diskless switch", e)
+      }
     }
   }
 
@@ -511,6 +539,7 @@ class Partition(val topicPartition: TopicPartition,
    * Abort all ongoing transactions by appending ABORT markers directly to the log.
    * Diskless topics do not support transactions, so any in-flight transaction must
    * be resolved before the switch from classic to diskless proceeds.
+   * The append bypasses `appendRecordsToLeader`, which rejects every append to a sealed partition.
    * @throws KafkaStorageException If transaction abortion fails due to an I/O error.
    */
   private def abortOngoingTransactions(leaderLog: UnifiedLog): Unit = {
@@ -533,7 +562,7 @@ class Partition(val topicPartition: TopicPartition,
         RequestLocal.noCaching(), VerificationGuard.SENTINEL)
       stateChangeLogger.info(s"Aborted ongoing transaction for producer $producerId " +
         s"(epoch=$producerEpoch, txnFirstOffset=$txnFirstOffset) " +
-        s"on partition $topicPartition before sealing for diskless switch")
+        s"on partition $topicPartition after sealing for diskless switch")
     }
   }
 
@@ -917,19 +946,29 @@ class Partition(val topicPartition: TopicPartition,
       // has changed.
       if (isNewLeaderEpoch) {
         val leaderEpochStartOffset = leaderLog.logEndOffset
+        val cachedLowerConsolidationEpoch = consolidationLeaderEpoch().filter { epoch =>
+          epoch < partitionState.leaderEpoch && leaderLog.leaderEpochCache.epochEntry(epoch).isPresent
+        }
+        val skippedEpochCacheEntry = cachedLowerConsolidationEpoch match {
+          case Some(epoch) => s" Skipped the leader epoch cache entry because consolidation appends in epoch $epoch."
+          case None => ""
+        }
         stateChangeLogger.info(s"Leader $topicPartition with topic id $topicId starts at " +
           s"leader epoch ${partitionState.leaderEpoch} from offset $leaderEpochStartOffset " +
           s"with partition epoch ${partitionState.partitionEpoch}, high watermark ${leaderLog.highWatermark}, " +
           s"ISR ${isr.mkString("[", ",", "]")}, adding replicas ${addingReplicas.mkString("[", ",", "]")} and " +
           s"removing replicas ${removingReplicas.mkString("[", ",", "]")} ${if (isUnderMinIsr) "(under-min-isr)" else ""}. " +
-          s"Previous leader $leaderReplicaIdOpt and previous leader epoch was $leaderEpoch.")
+          s"Previous leader $leaderReplicaIdOpt and previous leader epoch was $leaderEpoch.$skippedEpochCacheEntry")
 
         // In the case of successive leader elections in a short time period, a follower may have
         // entries in its log from a later epoch than any entry in the new leader's log. In order
         // to ensure that these followers can truncate to the right offset, we must cache the new
         // leader epoch and the start offset since it should be larger than any epoch that a follower
         // would try to query.
-        leaderLog.assignEpochStartOffset(partitionState.leaderEpoch, leaderEpochStartOffset)
+        // The consolidation skip breaks that: the latest cached epoch stays below the leader epoch, so
+        // LeaderEpochFileCache.endOffsetFor answers undefined for the current epoch.
+        if (cachedLowerConsolidationEpoch.isEmpty)
+          leaderLog.assignEpochStartOffset(partitionState.leaderEpoch, leaderEpochStartOffset)
 
         // Initialize lastCaughtUpTime of replicas as well as their lastFetchTimeMs and
         // lastFetchLeaderLogEndOffset.
@@ -1189,7 +1228,12 @@ class Partition(val topicPartition: TopicPartition,
     leaderLogIfLocal.exists { leaderLog =>
       val followerEndOffset = followerReplica.stateSnapshot.logEndOffset
       val replicationStop = sealedReplicationStopOffset
-      followerEndOffset >= capAt(leaderLog.highWatermark, replicationStop) &&
+      // Inkless: `ReplicaManager` fences a phase 1 leader whose log ends below the committed seal, but only after the
+      // become-leader transition. A follower fetch in between must not expand the ISR, or the controller records a
+      // full ISR and a recovered leader for a partition that the leader can't serve. The check reads the stop offset
+      // directly because `seal()` runs after `makeLeader` on a restarted leader.
+      !replicationStopOffset().exists(leaderLog.logEndOffset < _) &&
+        followerEndOffset >= capAt(leaderLog.highWatermark, replicationStop) &&
         leaderEpochStartOffsetOpt.exists(epochStart => followerEndOffset >= capAt(epochStart, replicationStop))
     }
   }

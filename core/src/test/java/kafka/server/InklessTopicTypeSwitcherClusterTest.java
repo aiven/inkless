@@ -25,7 +25,8 @@ import org.apache.kafka.clients.admin.AlterConfigOp;
 import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.clients.admin.CreateTopicsResult;
 import org.apache.kafka.clients.admin.NewTopic;
-import org.apache.kafka.clients.admin.OffsetSpec;
+import org.apache.kafka.clients.admin.TransactionDescription;
+import org.apache.kafka.clients.admin.TransactionState;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -39,6 +40,7 @@ import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.common.errors.InvalidConfigurationException;
+import org.apache.kafka.common.errors.InvalidRequestException;
 import org.apache.kafka.common.message.DescribeTopicPartitionsResponseData;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
@@ -79,6 +81,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
@@ -542,45 +545,144 @@ public class InklessTopicTypeSwitcherClusterTest {
     }
 
     @Test
-    public void testAlterDisklessSwitchOverridesSealOffset() throws Exception {
-        final String topic = "switch-seal-override-" + UUID.randomUUID().toString().substring(0, 8);
+    public void testAlterDisklessSwitchRejectsReArmAndNonLowerSealOnCommittedSwitch() throws Exception {
+        final String topic = "switch-alter-committed-" + UUID.randomUUID().toString().substring(0, 8);
 
         try (Admin admin = AdminClient.create(baseClientConfigs())) {
-            // Create a classic topic; partition 0 starts out un-switched (-1).
             admin.createTopics(List.of(
                 new NewTopic(topic, 1, (short) 3)
                     .configs(Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "false"))
             )).all().get(30, TimeUnit.SECONDS);
-            // createTopics returns once the controller commits the topic, but metadata propagation
-            // to brokers is asynchronous. Wait for the topic to be visible before polling the seal
-            // offset so readSealOffset doesn't mask a genuinely missing topic as a transient delay.
             TopicMetadataProbe.awaitVisible(admin, topic);
-            waitForSealOffset(admin, topic, 0,
-                offset -> offset == PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET);
 
-            // Produce some records so the partition has a non-empty log; a concrete seal must point at
-            // or below the log end offset, otherwise the broker marks the partition offline.
-            final TopicPartition tp = new TopicPartition(topic, 0);
-            try (Producer<byte[], byte[]> producer = new KafkaProducer<>(producerConfigs())) {
-                for (int i = 0; i < 10; i++) {
-                    producer.send(new ProducerRecord<>(topic, 0, null,
-                        ("value-" + i).getBytes(StandardCharsets.UTF_8))).get(10, TimeUnit.SECONDS);
-                }
-            }
-            final long endOffset = admin.listOffsets(Map.of(tp, OffsetSpec.latest()))
-                .all().get(20, TimeUnit.SECONDS).get(tp).offset();
-            log.warn("[stage=produced] topic={} endOffset={}", topic, endOffset);
-
-            // Switch to diskless
             alterTopicConfigWithIncrementalAlterConfigs(
                 admin, topic, Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true"));
-            waitForSealOffset(admin, topic, 0, offset -> offset != PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET);
+            final long sealOffset = waitForSealOffset(admin, topic, 0, offset -> offset >= 0);
 
-            // Force a concrete seal at the end offset via the operator admin API.
-            admin.alterDisklessSwitch(topic, 0, endOffset).all().get(20, TimeUnit.SECONDS);
-            waitForSealOffset(admin, topic, 0, offset -> offset == endOffset);
-            log.warn("[stage=sealed] topic={} forced seal offset={}", topic, endOffset);
+            // A committed seal can't be re-armed, aborted, or raised: the controller accepts only a lower seal.
+            for (long requested : List.of(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING,
+                    PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET, sealOffset, sealOffset + 1)) {
+                final ExecutionException ex = assertThrows(ExecutionException.class, () ->
+                    admin.alterDisklessSwitch(topic, 0, requested).all().get(20, TimeUnit.SECONDS));
+                assertInstanceOf(InvalidRequestException.class, ex.getCause());
+                assertEquals(sealOffset, readSealOffset(admin, topic, 0));
+            }
         }
+    }
+
+    @Test
+    public void testTransactionOpenAtSwitchIsAbortedAndCompletes() throws Exception {
+        final String suffix = UUID.randomUUID().toString().substring(0, 8);
+        final String switchedTopic = "switch-open-txn-" + suffix;
+        final String classicTopic = "switch-open-txn-classic-" + suffix;
+        final String transactionalId = "switch-open-txn-id-" + suffix;
+        final TopicPartition switchedTp = new TopicPartition(switchedTopic, 0);
+        final int recordsInOpenTransaction = 5;
+
+        final Map<String, Object> transactionalProducerConfigs = producerConfigs();
+        transactionalProducerConfigs.put(ProducerConfig.TRANSACTIONAL_ID_CONFIG, transactionalId);
+
+        try (Admin admin = AdminClient.create(baseClientConfigs());
+             Producer<byte[], byte[]> producer = new KafkaProducer<>(transactionalProducerConfigs)) {
+            admin.createTopics(List.of(
+                new NewTopic(switchedTopic, 1, (short) 3).configs(Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "false")),
+                new NewTopic(classicTopic, 1, (short) 3).configs(Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "false"))
+            )).all().get(30, TimeUnit.SECONDS);
+            TopicMetadataProbe.awaitVisible(admin, switchedTopic);
+            TopicMetadataProbe.awaitVisible(admin, classicTopic);
+
+            // The transaction writes to the partition while the topic is classic, and the producer doesn't end it.
+            producer.initTransactions();
+            producer.beginTransaction();
+            for (int i = 0; i < recordsInOpenTransaction; i++) {
+                producer.send(new ProducerRecord<>(switchedTopic, 0, null,
+                    ("open-txn-" + i).getBytes(StandardCharsets.UTF_8))).get(10, TimeUnit.SECONDS);
+            }
+
+            alterTopicConfigWithIncrementalAlterConfigs(
+                admin, switchedTopic, Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true"));
+            final long seal = waitForSealOffset(admin, switchedTopic, 0, offset -> offset >= 0);
+            log.warn("[stage=sealed] topic={} seal offset={}", switchedTopic, seal);
+
+            // The classic prefix is the records of the open transaction and one `ABORT` marker.
+            final long markerOffset = recordsInOpenTransaction;
+            assertEquals(markerOffset + 1, seal);
+
+            // The leader writes the marker in the leader epoch of the switch, and the followers replicate it.
+            // A replica that wrote its own marker has it in another epoch.
+            final Map<Integer, Integer> markerEpochByBroker = new HashMap<>();
+            final Map<Integer, Integer> lastRecordEpochByBroker = new HashMap<>();
+            for (final Map.Entry<Integer, BrokerServer> broker : cluster.brokers().entrySet()) {
+                final UnifiedLog localLog = broker.getValue().replicaManager().getLog(switchedTp).get();
+                markerEpochByBroker.put(broker.getKey(),
+                    localLog.leaderEpochCache().epochForOffset(markerOffset).orElse(-1));
+                lastRecordEpochByBroker.put(broker.getKey(),
+                    localLog.leaderEpochCache().epochForOffset(markerOffset - 1).orElse(-1));
+            }
+            assertEquals(1, Set.copyOf(markerEpochByBroker.values()).size(),
+                "Replicas disagree on the leader epoch of the ABORT marker: " + markerEpochByBroker);
+            assertEquals(1, Set.copyOf(lastRecordEpochByBroker.values()).size(),
+                "Replicas disagree on the leader epoch of the last record: " + lastRecordEpochByBroker);
+            final int markerEpoch = markerEpochByBroker.values().iterator().next();
+            final int lastRecordEpoch = lastRecordEpochByBroker.values().iterator().next();
+            assertTrue(markerEpoch > lastRecordEpoch,
+                "The ABORT marker epoch " + markerEpoch + " must be past the pre-switch leader epoch " + lastRecordEpoch);
+
+            // The coordinator completes the transaction, although the partition doesn't take its marker.
+            producer.commitTransaction();
+            awaitTransactionState(admin, transactionalId, TransactionState.COMPLETE_COMMIT);
+
+            // The `transactional.id` is usable again.
+            producer.beginTransaction();
+            producer.send(new ProducerRecord<>(classicTopic, 0, null,
+                "after-switch".getBytes(StandardCharsets.UTF_8))).get(10, TimeUnit.SECONDS);
+            producer.commitTransaction();
+            awaitTransactionState(admin, transactionalId, TransactionState.COMPLETE_COMMIT);
+
+            // The switch aborted the records on the switched partition.
+            assertEquals(0, countCommittedRecordsUpTo(switchedTp, seal));
+            assertEquals(1, countCommittedRecordsUpTo(new TopicPartition(classicTopic, 0), 2));
+        }
+    }
+
+    private void awaitTransactionState(final Admin admin,
+                                       final String transactionalId,
+                                       final TransactionState expectedState) throws Exception {
+        final long deadline = System.currentTimeMillis() + Duration.ofSeconds(30).toMillis();
+        TransactionDescription last = null;
+        while (System.currentTimeMillis() < deadline) {
+            last = admin.describeTransactions(List.of(transactionalId))
+                .description(transactionalId).get(10, TimeUnit.SECONDS);
+            if (last.state() == expectedState && last.topicPartitions().isEmpty()) {
+                return;
+            }
+            Thread.sleep(200);
+        }
+        throw new AssertionError("Transaction " + transactionalId + " did not reach " + expectedState
+            + " with no pending partitions within timeout; last observed=" + last);
+    }
+
+    /**
+     * Returns the number of records that a `read_committed` consumer gets from the partition
+     * before its position reaches `endOffset`.
+     */
+    private int countCommittedRecordsUpTo(final TopicPartition tp, final long endOffset) {
+        final Map<String, Object> configs = baseConsumerConfigs();
+        configs.put(ConsumerConfig.ISOLATION_LEVEL_CONFIG, "read_committed");
+        int count = 0;
+        try (Consumer<byte[], byte[]> consumer = new KafkaConsumer<>(configs)) {
+            consumer.assign(List.of(tp));
+            consumer.seekToBeginning(List.of(tp));
+            final long deadline = System.currentTimeMillis() + Duration.ofSeconds(60).toMillis();
+            while (consumer.position(tp) < endOffset) {
+                if (System.currentTimeMillis() > deadline) {
+                    throw new AssertionError("Consumer position of " + tp + " stopped at " + consumer.position(tp)
+                        + " before " + endOffset);
+                }
+                count += consumer.poll(Duration.ofMillis(500)).count();
+            }
+        }
+        return count;
     }
 
     private long waitForSealOffset(final Admin admin,
