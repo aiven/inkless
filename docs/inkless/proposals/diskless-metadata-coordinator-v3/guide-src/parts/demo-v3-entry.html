@@ -1,0 +1,26 @@
+<div class="demo" id="demo-v3-entry">
+    <div class="demo-head"><h5>Try it: deliver events in any order</h5><span class="tag">Interactive</span></div>
+    <div class="demo-body">
+      <p class="hint">Follow cp1's entry for one object at its tracking partition. Click events in any order, or load a scenario. Both trackers receive the same events. The naive tracker on the left stores an entry only after the tracking part, and lets each answer overwrite the last. It ignores finish reports.</p>
+      <div class="controls">
+        <button id="re-sc-early">Scenario: early release</button>
+        <button id="re-sc-late">Scenario: late "referenced"</button>
+        <button id="re-reset">Start over</button>
+      </div>
+      <div class="controls">
+        <button id="re-track">Tracking part records</button>
+        <button id="re-answered">Finish report: answered</button>
+        <button id="re-exception">Finish report: exception</button>
+        <button id="re-lease">Lease ends</button>
+        <button id="re-ref">Fence answers "referenced"</button>
+        <button id="re-rel">Fence answers "released"</button>
+        <button class="primary" id="re-report">cp1 release report</button>
+      </div>
+      <div class="grid2">
+        <div class="panel" id="re-v2"></div>
+        <div class="panel" id="re-v3"></div>
+      </div>
+      <div class="small muted" id="re-history" style="margin-top:0.6rem"></div>
+      <div class="readout" id="re-readout"></div>
+    </div>
+  </div>

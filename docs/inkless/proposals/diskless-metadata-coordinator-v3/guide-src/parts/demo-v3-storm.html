@@ -1,0 +1,21 @@
+<div class="demo" id="demo-v3-storm">
+    <div class="demo-head"><h5>Try it: size a fence storm</h5><span class="tag">Interactive</span></div>
+    <div class="demo-body">
+      <p class="hint">Choose a correlated failure and the cluster size. The left panel counts fence ranges under the three fence rules before batching. The right panel shows what reaches the recovering partition after batching.</p>
+      <div class="controls">
+        <label>Failure <select id="fx-event"><option value="outage">One coordinator partition unavailable</option><option value="restart">Rolling restart of every broker</option><option value="az">An availability zone goes down</option></select></label>
+        <label>Coordinator partitions (N) <select id="fx-n"><option>4</option><option selected>8</option><option>16</option></select></label>
+      </div>
+      <div class="controls">
+        <label style="flex:1; min-width: 220px;">Brokers <input type="range" id="fx-b" min="3" max="300" step="3" value="30"></label>
+        <span class="chip info" id="fx-b-label"></span>
+        <label style="flex:1; min-width: 220px;" id="fx-d-wrap">Outage <input type="range" id="fx-d" min="5" max="600" step="5" value="60"></label>
+        <span class="chip info" id="fx-d-label"></span>
+      </div>
+      <div class="grid2">
+        <div class="panel" id="fx-before"></div>
+        <div class="panel" id="fx-after"></div>
+      </div>
+      <div class="readout" id="fx-readout"></div>
+    </div>
+  </div>

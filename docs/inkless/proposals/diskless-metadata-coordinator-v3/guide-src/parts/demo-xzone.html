@@ -1,0 +1,23 @@
+<div class="demo" id="demo-xzone">
+    <div class="demo-head"><h5>Try it: how many bytes cross zones?</h5><span class="tag">Interactive</span></div>
+    <div class="demo-body">
+      <p class="hint">Move the slider to change how much data producers write. The demo assumes three zones, a replication factor of 3, producers spread evenly across zones, and consumers that read from a replica in their own zone.</p>
+      <div class="controls">
+        <label style="flex:1; min-width: 240px;">Produce rate <input type="range" id="xz-rate" min="10" max="1000" step="10" value="100"></label>
+        <span class="chip info" id="xz-rate-label">100 MB/s</span>
+      </div>
+      <div class="grid2">
+        <div class="panel">
+          <h6>Classic topic</h6>
+          <div class="svgbox" id="xz-classic-svg"></div>
+          <div class="small" id="xz-classic-text"></div>
+        </div>
+        <div class="panel">
+          <h6>Diskless topic</h6>
+          <div class="svgbox" id="xz-diskless-svg"></div>
+          <div class="small" id="xz-diskless-text"></div>
+        </div>
+      </div>
+      <div class="readout" id="xz-readout"></div>
+    </div>
+  </div>

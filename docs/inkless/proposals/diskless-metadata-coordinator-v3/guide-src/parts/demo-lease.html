@@ -1,0 +1,16 @@
+<div class="demo" id="demo-lease">
+    <div class="demo-head"><h5>Try it: the lease meter</h5><span class="tag">Interactive</span></div>
+    <div class="demo-body">
+      <p class="hint">To keep the picture readable, this demo uses <code>K = 16</code> instead of 1024. Each tick, the broker closes one file. Watch renewals happen in the background. Then take the tracking partition down, or make the broker go idle.</p>
+      <div class="controls">
+        <button class="primary" id="ls-tick">Tick (close a file)</button>
+        <button class="toggle" id="ls-play">Auto-play</button>
+        <span class="sep"></span>
+        <button class="toggle" id="ls-down">cp2 (the tracking partition) is down</button>
+        <button class="toggle" id="ls-idle">Broker goes idle</button>
+        <button id="ls-reset">Reset</button>
+      </div>
+      <div id="ls-view"></div>
+      <div class="readout" id="ls-readout"></div>
+    </div>
+  </div>

@@ -1,0 +1,28 @@
+TLC2 Version 2026.11.06.222357 (rev: d8fb231)
+Running breadth-first search Model-Checking with fp 63 and seed -8698891820854705435 with 4 workers on 16 cores with 3641MB heap and 64MB offheap memory [pid: 15336] (Mac OS X 26.6.2 aarch64, Homebrew 17.0.18 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /Users/viktor.somogyi-vass/dev/github/aiven/workspace-inkless/diskless-metadata/.scratch/diskless-metadata-coordinator-v3/model/EpochRetirement.tla
+Parsing file /private/var/folders/j4/ypdmld110ds5dz6hl6h91jqh0000gn/T/tlc-16660081371584909143/Naturals.tla (jar:file:/Users/viktor.somogyi-vass/dev/github/aiven/workspace-inkless/diskless-metadata/.scratch/diskless-metadata-coordinator-v3/model/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /private/var/folders/j4/ypdmld110ds5dz6hl6h91jqh0000gn/T/tlc-16660081371584909143/FiniteSets.tla (jar:file:/Users/viktor.somogyi-vass/dev/github/aiven/workspace-inkless/diskless-metadata/.scratch/diskless-metadata-coordinator-v3/model/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /private/var/folders/j4/ypdmld110ds5dz6hl6h91jqh0000gn/T/tlc-16660081371584909143/Sequences.tla (jar:file:/Users/viktor.somogyi-vass/dev/github/aiven/workspace-inkless/diskless-metadata/.scratch/diskless-metadata-coordinator-v3/model/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /private/var/folders/j4/ypdmld110ds5dz6hl6h91jqh0000gn/T/tlc-16660081371584909143/TLC.tla (jar:file:/Users/viktor.somogyi-vass/dev/github/aiven/workspace-inkless/diskless-metadata/.scratch/diskless-metadata-coordinator-v3/model/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /private/var/folders/j4/ypdmld110ds5dz6hl6h91jqh0000gn/T/tlc-16660081371584909143/_TLCTrace.tla (jar:file:/Users/viktor.somogyi-vass/dev/github/aiven/workspace-inkless/diskless-metadata/.scratch/diskless-metadata-coordinator-v3/model/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /private/var/folders/j4/ypdmld110ds5dz6hl6h91jqh0000gn/T/tlc-16660081371584909143/TLCExt.tla (jar:file:/Users/viktor.somogyi-vass/dev/github/aiven/workspace-inkless/diskless-metadata/.scratch/diskless-metadata-coordinator-v3/model/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /private/var/folders/j4/ypdmld110ds5dz6hl6h91jqh0000gn/T/tlc-16660081371584909143/Integers.tla (jar:file:/Users/viktor.somogyi-vass/dev/github/aiven/workspace-inkless/diskless-metadata/.scratch/diskless-metadata-coordinator-v3/model/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module EpochRetirement
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module EpochRetirement
+Starting... (2026-11-18 11:16:14)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-11-18 11:16:14.
+Progress(15) at 2026-11-18 11:16:17: 4,280,890 states generated (4,280,890 s/min), 606,285 distinct states found (606,285 ds/min), 311,999 states left on queue.
+Progress(20) at 2026-11-18 11:17:17: 87,695,907 states generated (83,415,017 s/min), 9,528,468 distinct states found (8,922,183 ds/min), 3,919,994 states left on queue.
+Progress(21) at 2026-11-18 11:18:17: 167,497,613 states generated (79,801,706 s/min), 17,450,218 distinct states found (7,921,750 ds/min), 6,894,971 states left on queue.
+Progress(22) at 2026-11-18 11:19:17: 246,179,770 states generated (78,682,157 s/min), 24,403,623 distinct states found (6,953,405 ds/min), 9,081,415 states left on queue.

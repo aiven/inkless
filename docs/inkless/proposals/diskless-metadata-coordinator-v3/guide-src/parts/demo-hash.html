@@ -1,0 +1,14 @@
+<div class="demo" id="demo-hash">
+    <div class="demo-head"><h5>Try it: where does my partition go?</h5><span class="tag">Interactive</span></div>
+    <div class="demo-body">
+      <p class="hint">This demo runs Kafka's real <code>murmur2</code> function in your browser. To keep it readable, it hashes the topic <i>name</i> plus the partition index. The real design hashes the topic <i>ID</i>, so real assignments differ, but the behavior is the same. Change <code>N</code> and press <b>Double N</b> to see which partitions move.</p>
+      <div class="controls">
+        <label>Topic <input type="text" id="hs-topic" value="orders" style="width: 8rem;"></label>
+        <label>Partitions <input type="number" id="hs-parts" value="16" min="1" max="64" style="width: 4.5rem;"></label>
+        <label>N <select id="hs-n"><option>1</option><option>2</option><option selected>4</option><option>8</option><option>16</option></select></label>
+        <button class="primary" id="hs-double">Double N</button>
+      </div>
+      <div class="table-wrap"><table><thead><tr><th>User partition</th><th>murmur2 (positive)</th><th>Slot (of 4096)</th><th>Coordinator at N</th><th>Coordinator at 2N</th></tr></thead><tbody id="hs-table"></tbody></table></div>
+      <div class="readout" id="hs-readout"></div>
+    </div>
+  </div>

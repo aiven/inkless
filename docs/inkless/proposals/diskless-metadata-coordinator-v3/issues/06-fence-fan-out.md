@@ -21,6 +21,8 @@ Settle these points, after [When the tracking partition fences silent participan
 
 Resolved on 2026-11-12 in a grilling session.
 
+Amended by [Consequences for the cross-cutting sections](18-cross-cutting-consequences.md#fan-out-at-the-gateway-default): the count of about `B × D / 0.25` exception fences is the gateways-off worst case, because it assumes every file has a part at `t`.
+
 Each tracking partition keeps at most one fence request in flight per participant, and fence needs that pile up meanwhile merge into the next request. A recovering partition therefore receives at most `N - 1` fence requests at once, whatever the broker count or the outage length. The session also found a race in the deferred fences, and `finishedThrough` now covers the whole broker epoch to close it.
 
 ### Cost of a fence

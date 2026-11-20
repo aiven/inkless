@@ -1,0 +1,162 @@
+
+<!-- ============================================================ PART 1 -->
+<div class="part-title" data-part="Part 1 · The problem">
+  <span class="num">Part 1</span>
+  <h2>Why a diskless topic needs a coordinator, and why build a new one</h2>
+  <p>Before you can understand a design, you need to know what the thing does and why it has to change. This part starts with classic Kafka, removes one piece at a time until the coordinator's job is the only thing left, and then explains why that job can't stay where it runs today.</p>
+</div>
+
+<section class="chapter" id="ch-classic" data-title="Classic Kafka in one picture">
+  <h3><span class="n">1</span>Classic Kafka in one picture</h3>
+  <div class="why">
+    <span class="label">Why this exists</span>
+    <p>Diskless topics exist to remove a cost that classic topics can't avoid. To see that cost, you first need to see how a classic topic stores data.</p>
+    <div class="prompted"><span>KIP-1150: Diskless Topics</span><span>KIP-1163: motivation</span></div>
+  </div>
+  <p>A Kafka topic is split into <b>partitions</b>. Each partition is an append-only <b>log</b>: a list of records where every record gets the next number, called its <b>offset</b>. Offsets are how consumers keep their place: "I've read up to offset 1,400."</p>
+  <p>In a classic topic, each partition has one <b>leader</b> broker and a few <b>followers</b>. The producer sends its records to the leader. The leader writes them to its local disk and gives them offsets, and the followers copy them. With three copies in three availability zones, the data survives the loss of a whole zone.</p>
+  <p>That safety has a price. Cloud providers charge for every byte that crosses from one zone to another. The producer's zone matches the leader's zone only one time in three, and the two follower copies always cross a zone. The leader also needs a disk big enough for all the data it keeps.</p>
+
+  {{demo:xzone}}
+
+  <div class="takeaway"><span class="label">Takeaway</span><p>A classic topic pays for durability twice: with disks on every broker and with data copied across zones.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>What if brokers didn't copy data to each other at all, and something else kept the copies?</p></div>
+</section>
+
+<section class="chapter" id="ch-diskless" data-title="Diskless topics">
+  <h3><span class="n">2</span>Diskless topics: let object storage keep the copies</h3>
+  <div class="why">
+    <span class="label">Why this exists</span>
+    <p>Object storage, such as Amazon S3, Google Cloud Storage, or Azure Blob Storage, already stores data durably across zones, and writing to it from inside a zone doesn't add a cross-zone charge. KIP-1150 and KIP-1163 propose that Kafka hand replication to object storage instead of doing it itself.</p>
+    <div class="prompted"><span>KIP-1163: "Kafka delegates replication of diskless topics to object storage"</span></div>
+  </div>
+  <p>In a diskless topic, the producer sends its records to <b>any broker</b>, usually one in its own zone. The broker doesn't write them to disk. It collects produce requests in a buffer for a short time, about 250 milliseconds or a few megabytes, and then uploads the whole buffer to object storage as one object.</p>
+  <p>That object is called a <b>WAL object</b> or <b>WAL file</b>. WAL stands for write-ahead log. Because the broker accepts produce requests for every partition, one WAL object holds batches for many partitions, often from many topics.</p>
+  <p>Why mix partitions in one object? Object storage charges per request. If each broker uploaded one object per partition every 250 milliseconds, a cluster with thousands of partitions would make thousands of uploads per second. Mixing ties the number of uploads to the number of brokers, not to the number of partitions. KIP-1163 says it directly: mixing "is necessary to keep the object storage write operation costs reasonable." Keep this sentence in mind. Almost every hard problem later in this guide comes from it.</p>
+
+  {{demo:wal}}
+
+  <div class="takeaway"><span class="label">Takeaway</span><p>A WAL object mixes batches from many partitions, and its batches have no offsets yet. Any broker can write any partition.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>If three brokers write batches for the same partition at the same moment, which batch comes first? Who gives out the offsets?</p></div>
+</section>
+
+<section class="chapter" id="ch-job" data-title="What the coordinator does">
+  <h3><span class="n">3</span>Data without order: what the coordinator does</h3>
+  <div class="why">
+    <span class="label">Why this exists</span>
+    <p>In a classic topic, the leader orders the data because it's the only writer. A diskless partition has many writers, so ordering has to move somewhere else. KIP-1163 separates the data, which goes to object storage, from the <b>metadata</b> about the data, which needs strong consistency. The component that owns that metadata is the <b>diskless coordinator</b>, and KIP-1164 describes it.</p>
+    <div class="prompted"><span>KIP-1163: "decouple the handling of batch data and batch metadata"</span><span>KIP-1164: role of the coordinator</span></div>
+  </div>
+  <p>Think of a warehouse. Brokers drop boxes into it: the WAL objects. Each box holds pages from many different books: the partitions. Nobody numbers the pages when the box is packed. The coordinator is the <b>catalog</b> at the front desk. When a box arrives, the broker tells the catalog what's inside, and the catalog writes down: "pages 100 to 149 of the book <i>orders-0</i> are in box X, starting at byte 4,096."</p>
+  <p>That catalog entry is called a <b>batch coordinate</b>. The coordinator does three kinds of work with coordinates:</p>
+  <ul>
+    <li><b>Commit.</b> After an upload, the broker sends the coordinator a list of the batches in the object. The coordinator checks them, for example rejecting a duplicate from an idempotent producer, gives each batch its offsets, and stores the coordinates. Only then does the producer get its answer. In the code, this is <code>commitFile</code>.</li>
+    <li><b>Find.</b> When a consumer asks for offset 1,400 of <i>orders-0</i> and the broker doesn't have it cached, the broker asks the coordinator where those batches are. In the code, this is <code>findBatches</code>. Related lookups, such as "what's the latest offset," go through <code>listOffsets</code>.</li>
+    <li><b>Housekeeping.</b> Retention, <code>DeleteRecords</code>, and topic deletion remove coordinates. Once no coordinate points into an object, the object can be deleted from storage.</li>
+  </ul>
+
+  {{demo:seq}}
+
+  <p>One rule matters for everything that follows: the coordinator decides the order, so <b>offsets for one partition must come from one place</b>. If two components handed out offsets for <i>orders-0</i>, two batches could get offset 100.</p>
+
+  <div class="takeaway"><span class="label">Takeaway</span><p>The coordinator is the single source of truth for which batch has which offset and where it lives. Brokers ask it to commit after every upload and to find batches on every cache miss.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>Where does the coordinator itself run, and where does it keep its catalog?</p></div>
+</section>
+
+<section class="chapter" id="ch-where" data-title="Where should the catalog live?">
+  <h3><span class="n">4</span>Where should the catalog live?</h3>
+  <div class="why">
+    <span class="label">Why this exists</span>
+    <p>Inkless runs the coordinator on PostgreSQL today, and that can't go into Apache Kafka. KIP-1164 compares the places the catalog could live and picks an internal Kafka topic. The north-star RFC adds a second reason: today the truth about diskless data is split across three systems.</p>
+    <div class="prompted"><span>KIP-1164: Rejected alternatives</span><span>KIP-1163: Coordinator-less approaches</span><span>North-star RFC</span></div>
+  </div>
+  <p>In Inkless today, the coordinator is a PostgreSQL database. Brokers talk to it through a Java interface called <code>ControlPlane</code>. A commit is a SQL transaction that inserts the batch rows, and a lookup is a SQL query. It works and ships, but it has three costs:</p>
+  <ul>
+    <li><b>Another system to run.</b> Every Kafka cluster with diskless topics also needs a highly available PostgreSQL deployment, with its own backups, upgrades, and on-call rotation.</li>
+    <li><b>One database for the whole cluster.</b> Every commit and every cache-miss lookup from every broker goes to the same primary, which limits both scale and availability.</li>
+    <li><b>Upstream Kafka can't depend on it.</b> KIP-1164 rejects an external system "to keep Kafka self-sufficient."</li>
+  </ul>
+  <p>There's a fourth, longer-term cost. The north-star RFC counts three sources of truth for one diskless partition: KRaft knows the partition exists, PostgreSQL knows its batches, and the remote log metadata manager knows its tiered segments. Each change that spans two of them needs care, and each answer to "where is offset X?" has to ask more than one place. The RFC's goal is one metadata component for every form diskless data takes. A coordinator inside Kafka is the first step toward it.</p>
+  <p>So where should the catalog live instead? The KIPs weigh five options. Click each one to see how it fares.</p>
+
+  <div class="demo" id="demo-where">
+    <div class="demo-head"><h5>Try it: pick a home for the catalog</h5><span class="tag">Interactive</span></div>
+    <div class="demo-body">
+      <p class="hint">Each option is scored against the questions the KIPs ask. A green check means the option meets that need. The verdict quotes or paraphrases the KIP that decided it.</p>
+      <div class="tabs" id="wh-tabs"></div>
+      <div class="grid2">
+        <div class="panel" id="wh-desc"></div>
+        <div class="panel" id="wh-score"></div>
+      </div>
+      <div class="readout" id="wh-readout"></div>
+    </div>
+  </div>
+
+  <p>KIP-1164 chooses the last option. The diskless coordinator is built the way Kafka already builds its group coordinator: the group coordinator keeps consumer group state in the internal topic <code>__consumer_offsets</code>, its partition leaders act as coordinators, and the work runs on a shared runtime called <code>CoordinatorRuntime</code>. The diskless coordinator keeps its state in a new internal topic, <code>__diskless_metadata</code>, with the same model.</p>
+  <p>The design in this guide implements that choice as a third <code>ControlPlane</code> implementation, <code>DisklessMetadataControlPlane</code>, next to PostgreSQL and an in-memory one used in tests. An operator selects it with <code>inkless.control.plane.class</code>. It's for new clusters only: migrating a PostgreSQL-backed cluster is out of scope.</p>
+
+  <div class="takeaway"><span class="label">Takeaway</span><p>The catalog moves into Kafka: an internal topic is the storage, and the leaders of its partitions are the coordinators. Kafka stays self-sufficient, cluster metadata stays fast, and the coordinator can grow with the cluster.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>"Inside Kafka" isn't a quality bar. How safe and how fast must the new coordinator be before it can replace PostgreSQL?</p></div>
+</section>
+
+<section class="chapter" id="ch-bars" data-title="The two bars">
+  <h3><span class="n">5</span>The two bars every decision must pass</h3>
+  <div class="why">
+    <span class="label">Why this exists</span>
+    <p>A new coordinator replaces one that works. It must not lose data that a classic topic would keep, and it must not be slower than PostgreSQL. The design writes both demands down as bars, and every later chapter cites them, because they decide which ideas survive.</p>
+    <div class="prompted"><span>Design goals</span><span>Reviews of earlier versions</span></div>
+  </div>
+  <h4>The data-loss bar: Kafka parity</h4>
+  <p>The first bar compares the coordinator with a classic topic. It has three clauses:</p>
+  <ol>
+    <li><b>Survive what a classic topic survives.</b> Any failure that a classic topic survives, diskless topics survive too.</li>
+    <li><b>Keep the damage in one place.</b> A failure that a classic topic doesn't survive can be an accepted risk only if its damage stays within the user partitions of the failed coordinator partition, and it loses no more than a classic topic loses to the same failure. One named exception: losing every replica of a coordinator partition. The design accepts it because it enforces three replicas spread across racks, which makes that loss as rare as it can be.</li>
+    <li><b>Never let one loss spread.</b> A failure that lets one coordinator partition's loss delete or resurrect <i>another</i> partition's data can't be an accepted risk. It needs a fix or a bound. The exceptions are three causes that also lose classic data: a lost tail of the log, a bug in the code that applies records, and someone deleting objects from outside Kafka.</li>
+  </ol>
+  <p>Two terms from the clauses come back often. <b>Kafka parity</b> means the coordinator is as safe as a classic topic. The <b>blast radius</b> is the share of diskless partitions a failure can reach. If the coordinator is split into <code>N</code> pieces, as Part 2 explains, losing one piece reaches about <code>1/N</code> of every diskless topic.</p>
+  <h4>The performance bar: no worse than PostgreSQL</h4>
+  <p>The second bar compares the coordinator with the PostgreSQL backend it replaces. Produce latency at the 50th and 99th percentiles must stay within 1.1 times PostgreSQL's at the same throughput, and object storage must see the same number of uploads. Part 6 shows how benchmarks make this testable. Until then, the bar works as a design rule: <b>no step may sit on the produce path that PostgreSQL doesn't have</b>.</p>
+
+  <div class="demo" id="demo-bar">
+    <div class="demo-head"><h5>Try it: hold a failure against the data-loss bar</h5><span class="tag">Interactive</span></div>
+    <div class="demo-body">
+      <p class="hint">Pick a failure. The left panel shows what a classic topic loses. The right panel shows what the coordinator must do, and the verdict names the clause that decides it. Later chapters explain each mechanism.</p>
+      <div class="controls"><label>Failure <select id="bar-fail"></select></label></div>
+      <div class="grid2">
+        <div class="panel" id="bar-classic"></div>
+        <div class="panel" id="bar-coord"></div>
+      </div>
+      <div class="readout" id="bar-readout"></div>
+    </div>
+  </div>
+
+  <div class="takeaway"><span class="label">Takeaway</span><p>The coordinator must lose no more than a classic topic loses, keep any loss inside one coordinator partition, and add no waiting that PostgreSQL doesn't have.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>KIP-1164 sketches the mechanisms. Which of them meet these bars, and which ones does the design change?</p></div>
+</section>
+
+<section class="chapter" id="ch-plan" data-title="From the KIP to this design">
+  <h3><span class="n">6</span>From the KIP to this design: a road map</h3>
+  <div class="why">
+    <span class="label">Why this exists</span>
+    <p>KIP-1164 is a sketch: it names the mechanisms and leaves the details open. Held against the two bars, some of its ideas carry over as they are, and some need a different shape. This chapter lists both, so you know where the rest of the guide is going.</p>
+    <div class="prompted"><span>KIP-1164</span><span>Data-loss bar</span><span>Performance bar</span></div>
+  </div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>KIP-1164 proposes</th><th>This design</th><th>Why</th><th>Chapter</th></tr></thead>
+    <tbody>
+      <tr><td>The <code>__diskless_metadata</code> topic is the source of truth</td><td>Kept</td><td>A replicated log already gives durability and one order.</td><td><a href="#ch-log">7</a></td></tr>
+      <tr><td>SQLite as a local cache of the log</td><td>Kept, with group apply and a background checkpoint</td><td>The state is too large for memory, and SQLite must stay off the commit path.</td><td><a href="#ch-sqlite">8</a>, <a href="#ch-group">11</a></td></tr>
+      <tr><td>Check, append, wait, apply, reply, with pending operations</td><td>Kept, on <code>CoordinatorRuntime</code></td><td>Pipelined commits without changing SQLite before replication.</td><td><a href="#ch-overlay">9</a></td></tr>
+      <tr><td>Snapshots and log pruning as in KIP-630</td><td>Kept, with a rule for when the log start may move</td><td>The log start must never pass what two replicas can rebuild without.</td><td><a href="#ch-snap">12</a></td></tr>
+      <tr><td>Several partitions, each an independent coordinator</td><td>Kept, with a hash instead of a stored mapping</td><td>A hash needs no stored state and leaves room to grow.</td><td><a href="#ch-shard">13</a></td></tr>
+      <tr><td>An owner list per WAL file, with hand-overs</td><td>Replaced by one tracking partition per broker</td><td>Order, not time, must decide when an object is safe to delete.</td><td><a href="#ch-tracking">22</a></td></tr>
+      <tr><td>A background scanner that deletes unknown objects</td><td>Rejected</td><td>A scanner fails toward data loss. The books fail toward a leak.</td><td><a href="#ch-scanner">17</a></td></tr>
+      <tr><td>Produce gateways per rack, chosen by the broker count</td><td>Kept, computed by every broker with no new protocol</td><td>A file then talks to one or two coordinator partitions instead of all of them.</td><td><a href="#ch-fanout-cost">29</a> to <a href="#ch-gw-limits">33</a></td></tr>
+      <tr><td><code>findBatches</code> served by followers</td><td>Leader only</td><td>A follower can answer from an older state, and the leader has a guard for the one dangerous answer.</td><td><a href="#ch-barrier">34</a></td></tr>
+      <tr><td>Adding partitions to <code>__diskless_metadata</code></td><td>Out of scope; the hash keeps it possible</td><td>Moving a user partition between coordinators needs its own design.</td><td><a href="#ch-future">45</a></td></tr>
+    </tbody>
+  </table></div>
+  <p>Parts 2 to 5 build these pieces in order. Part 2 turns a Kafka topic into a coordinator. Part 3 solves deletion, the hardest problem. Part 4 cuts the cost of files that span many coordinators. Part 5 protects the coordinator partition itself, which is a Kafka partition with Kafka's habits.</p>
+  <div class="takeaway"><span class="label">Takeaway</span><p>The design keeps the KIP's storage model and changes its deletion model. Most of the new machinery exists because WAL objects mix partitions.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>A database gives you transactions, indexes, and durability for free. How do you get the same from a Kafka topic?</p></div>
+</section>

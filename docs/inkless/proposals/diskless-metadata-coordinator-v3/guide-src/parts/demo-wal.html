@@ -1,0 +1,15 @@
+<div class="demo" id="demo-wal">
+    <div class="demo-head"><h5>Try it: build WAL objects</h5><span class="tag">Interactive</span></div>
+    <div class="demo-body">
+      <p class="hint">Producers in three zones send batches to the broker in their own zone. Each color is a partition. Press <b>Produce</b> a few times, then <b>Close files and upload</b>. Look at what ends up inside each object, and what's missing from it.</p>
+      <div class="controls">
+        <button class="primary" id="wal-produce">Produce a round of batches</button>
+        <button id="wal-upload">Close files and upload</button>
+        <button id="wal-reset">Reset</button>
+      </div>
+      <div class="grid3" id="wal-brokers"></div>
+      <h6 style="margin: 1rem 0 0.4rem; font-size: 0.86rem;">Object storage</h6>
+      <div class="panel"><div class="storage-objects" id="wal-storage"><span class="muted small">Empty</span></div></div>
+      <div class="readout" id="wal-readout">Nothing uploaded yet.</div>
+    </div>
+  </div>

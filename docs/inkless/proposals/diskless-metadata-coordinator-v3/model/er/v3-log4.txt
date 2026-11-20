@@ -1,0 +1,36 @@
+TLC2 Version 2026.11.06.222357 (rev: d8fb231)
+Running breadth-first search Model-Checking with fp 28 and seed 3476341879404771223 with 4 workers on 16 cores with 5461MB heap and 64MB offheap memory [pid: 19817] (Mac OS X 26.6.2 aarch64, Homebrew 17.0.18 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /Users/viktor.somogyi-vass/dev/github/aiven/workspace-inkless/diskless-metadata/.scratch/diskless-metadata-coordinator-v3/model/EpochRetirement.tla
+Parsing file /private/var/folders/j4/ypdmld110ds5dz6hl6h91jqh0000gn/T/tlc-108199120425893908/Naturals.tla (jar:file:/Users/viktor.somogyi-vass/dev/github/aiven/workspace-inkless/diskless-metadata/.scratch/diskless-metadata-coordinator-v3/model/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /private/var/folders/j4/ypdmld110ds5dz6hl6h91jqh0000gn/T/tlc-108199120425893908/FiniteSets.tla (jar:file:/Users/viktor.somogyi-vass/dev/github/aiven/workspace-inkless/diskless-metadata/.scratch/diskless-metadata-coordinator-v3/model/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /private/var/folders/j4/ypdmld110ds5dz6hl6h91jqh0000gn/T/tlc-108199120425893908/Sequences.tla (jar:file:/Users/viktor.somogyi-vass/dev/github/aiven/workspace-inkless/diskless-metadata/.scratch/diskless-metadata-coordinator-v3/model/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /private/var/folders/j4/ypdmld110ds5dz6hl6h91jqh0000gn/T/tlc-108199120425893908/TLC.tla (jar:file:/Users/viktor.somogyi-vass/dev/github/aiven/workspace-inkless/diskless-metadata/.scratch/diskless-metadata-coordinator-v3/model/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /private/var/folders/j4/ypdmld110ds5dz6hl6h91jqh0000gn/T/tlc-108199120425893908/_TLCTrace.tla (jar:file:/Users/viktor.somogyi-vass/dev/github/aiven/workspace-inkless/diskless-metadata/.scratch/diskless-metadata-coordinator-v3/model/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /private/var/folders/j4/ypdmld110ds5dz6hl6h91jqh0000gn/T/tlc-108199120425893908/TLCExt.tla (jar:file:/Users/viktor.somogyi-vass/dev/github/aiven/workspace-inkless/diskless-metadata/.scratch/diskless-metadata-coordinator-v3/model/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /private/var/folders/j4/ypdmld110ds5dz6hl6h91jqh0000gn/T/tlc-108199120425893908/Integers.tla (jar:file:/Users/viktor.somogyi-vass/dev/github/aiven/workspace-inkless/diskless-metadata/.scratch/diskless-metadata-coordinator-v3/model/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module EpochRetirement
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module EpochRetirement
+Starting... (2026-11-18 11:46:45)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-11-18 11:46:45.
+Progress(17) at 2026-11-18 11:46:48: 3,238,145 states generated (3,238,145 s/min), 409,844 distinct states found (409,844 ds/min), 160,971 states left on queue.
+Progress(24) at 2026-11-18 11:47:48: 72,884,636 states generated (69,646,491 s/min), 6,265,761 distinct states found (5,855,917 ds/min), 1,202,484 states left on queue.
+Progress(27) at 2026-11-18 11:48:48: 137,834,290 states generated (64,949,654 s/min), 10,435,149 distinct states found (4,169,388 ds/min), 1,095,678 states left on queue.
+Model checking completed. No error has been found.
+  Estimates of the probability that TLC did not check all reachable states
+  because two distinct states had the same fingerprint:
+  calculated (optimistic):  val = 1.3E-4
+  based on the actual fingerprints:  val = 2.5E-5
+193044571 states generated, 12913887 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 35.
+The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 13 and the 95th percentile is 4).
+Finished in 02min 56s at (2026-11-18 11:49:41)

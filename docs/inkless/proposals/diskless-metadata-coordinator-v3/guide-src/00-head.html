@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The diskless metadata coordinator: a guide from first principles</title>
+<style>
+{{css}}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="hero-inner">
+    <p class="eyebrow">Inkless · Diskless topics · A guide for newcomers</p>
+    <h1>The diskless metadata coordinator, from first principles</h1>
+    <p class="lede">Diskless topics keep Kafka data in object storage instead of on broker disks. Something still has to put that data in order, remember where every batch lives, and decide when an object in storage can be deleted. This guide builds that component, the diskless metadata coordinator, one idea at a time. Every idea starts with the problem that prompted it, and most come with a demo you can play with.</p>
+    <div class="chain" aria-label="The chain of questions this guide answers">
+      <a href="#ch-classic"><b>Part 1</b>Why does a diskless topic need a coordinator, and why build a new one?</a>
+      <a href="#ch-log"><b>Part 2</b>How do you build a coordinator out of Kafka's own parts?</a>
+      <a href="#ch-orphans"><b>Part 3</b>When is it safe to delete an object, and how do you prove it without clocks?</a>
+      <a href="#ch-fanout-cost"><b>Part 4</b>How do you keep one file from talking to every coordinator?</a>
+      <a href="#ch-barrier"><b>Part 5</b>How is the coordinator itself protected?</a>
+      <a href="#ch-endtoend"><b>Part 6</b>What does it look like all together, and what was rejected?</a>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+<nav class="toc" aria-label="Contents">
+  <div class="progress"><span id="read-progress"></span></div>
+  <div id="toc-links"></div>
+</nav>
+
+<main id="main">
+
+<div class="note">
+  <span class="label">How to read this guide</span>
+  <p>The chapters form a chain. Each one solves a problem and, in doing so, uncovers the next one. Every chapter opens with a purple <b>Why this exists</b> box. It says what prompted the idea: a sentence in a Kafka Improvement Proposal (KIP-1150, KIP-1163, or KIP-1164), a failure the design must survive, or one of the two bars every decision has to pass. Each chapter closes with a green <b>Takeaway</b> and an orange <b>What this leaves open</b> box that leads into the next chapter. The boxes marked <b>Try it</b> are interactive. Click around in them: nothing you do can break anything.</p>
+  <p>You don't need to know the earlier versions of this design. Where an obvious idea fails, the guide shows the obvious idea first and then why the design does something else. Part 6 collects the earlier versions and every other rejected idea in one place.</p>
+</div>

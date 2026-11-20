@@ -1,0 +1,23 @@
+<div class="demo" id="demo-flush">
+    <div class="demo-head"><h5>Try it: power loss on every replica</h5><span class="tag">Interactive</span></div>
+    <div class="demo-body">
+      <p class="hint">Commit a few files, then cut power to all three replicas. Switch between the two flush policies and compare: with <code>flush.messages=1</code>, every commit turns solid blue at once; with the classic default, commits stay pale until the OS writes them out.</p>
+      <div class="controls">
+        <button class="toggle on" id="fl-one">flush.messages=1</button>
+        <button class="toggle" id="fl-default">Classic default (the OS flushes later)</button>
+        <span class="sep"></span>
+        <button class="primary" id="fl-commit">Commit a file</button>
+        <button id="fl-osflush">OS writes memory to disk</button>
+        <button class="danger" id="fl-power">Power loss on all replicas</button>
+        <button id="fl-reset">Reset</button>
+      </div>
+      <div class="legend log">
+        <span><span class="cell" style="background:var(--cp0);padding:0 0.35rem">#1</span>On disk: survives a power loss</span>
+        <span><span class="cell unflushed" style="padding:0 0.35rem">#2</span>In memory only: gone after a power loss</span>
+        <span><span class="cell lost" style="padding:0 0.35rem">#3</span>Acknowledged, then lost</span>
+        <span><span class="cell" style="background:var(--warn);padding:0 0.35rem">#4</span>Reuses a lost commit's offsets</span>
+      </div>
+      <div id="fl-replicas"></div>
+      <div class="readout" id="fl-readout"></div>
+    </div>
+  </div>

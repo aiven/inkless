@@ -1,0 +1,361 @@
+
+<!-- ============================================================ PART 3 -->
+<div class="part-title" data-part="Part 3 · Deleting safely">
+  <span class="num">Part 3</span>
+  <h2>The hard problem: deleting objects safely</h2>
+  <p>Committing and finding batches is the smaller half of the coordinator's job. This part covers the hard half: deciding when an object in storage can be deleted. It explains why the problem is hard, then builds the answer one idea at a time, until you can follow any object from upload to deletion.</p>
+</div>
+
+<section class="chapter" id="ch-orphans" data-title="How objects get left behind">
+  <h3><span class="n">16</span>Three ways an object gets left behind</h3>
+  <div class="why">
+    <span class="label">Why this exists</span>
+    <p>Objects cost money for as long as they exist, so every object must eventually be deleted. Deleting one too early loses data. KIP-1163 lists the failure that leaves "garbage objects" behind, and KIP-1164 adds that an object spread across coordinators has "no one owner that controls the file lifetime."</p>
+    <div class="prompted"><span>KIP-1163: Error handling and segment object garbage collection</span><span>KIP-1164: WAL file management</span></div>
+  </div>
+  <p>Deleting an object is safe only when two things are true: <b>no committed batch points into it</b>, and <b>no commit can point into it later</b>. The second condition is the tricky one. Here are the three situations the design must handle:</p>
+  <ul>
+    <li><b>The orphan.</b> The broker uploaded the object and crashed before any commit. The object sits in storage, and no coordinator knows it exists.</li>
+    <li><b>The shared object.</b> The object's batches are committed on cp0, cp1, and cp3. Retention removes the cp0 batches after one day, but the cp3 batches live for a week. cp0 knows it's done with the object. It doesn't know about cp3.</li>
+    <li><b>The unknown outcome.</b> A commit part timed out. The broker gave up and told the producer it failed. But the request may still be sitting in the leader's queue, and it may commit later. Until something rules that out, nobody can say the object is unreferenced.</li>
+  </ul>
+
+  {{demo:crash}}
+
+  <div class="takeaway"><span class="label">Takeaway</span><p>An object can be unknown to everyone, known to only some coordinator partitions, or the target of a commit that may still arrive. A safe deletion design must handle all three.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>There are two broad ways to find deletable objects: look at storage, or keep records. Which one is safer?</p></div>
+</section>
+
+<section class="chapter" id="ch-scanner" data-title="Scan or keep the books?">
+  <h3><span class="n">17</span>Scan the bucket, or keep the books?</h3>
+  <div class="why">
+    <span class="label">Why this exists</span>
+    <p>KIP-1164 proposes a background scanner that lists the bucket and deletes objects that no coordinator knows. The design compares that scanner with deletion driven only by the coordinator's own records, and chooses the records.</p>
+    <div class="prompted"><span>KIP-1164: Orphan files</span><span>Data-loss bar</span></div>
+  </div>
+  <p>KIP-1164's scanner works like this: before each pass, it asks every coordinator for the age of the oldest object it knows. It lists the bucket for objects older than that, asks every coordinator whether it knows each one, and deletes the ones nobody knows.</p>
+  <p>The alternative is to <b>keep the books</b>: the coordinator records every object before or when it's created, tracks who still references it, and deletes only objects its own records name.</p>
+  <p>The deciding difference is the <b>direction of failure</b>. Every system has bugs and bad days. The question is what happens on a bad day:</p>
+  <ul>
+    <li>A scanner deletes <i>what nobody knows</i>. If a coordinator wrongly answers "unknown," live data is deleted. That's <b>data loss</b>.</li>
+    <li>Bookkeeping deletes <i>only what it recorded and resolved</i>. If a record is lost or a bug skips a step, an object stays in storage. That's a <b>leak</b>: it costs money, and nothing is lost.</li>
+  </ul>
+
+  {{demo:scan}}
+
+  <div class="takeaway"><span class="label">Takeaway</span><p>A leak costs storage. Deleting live data loses records forever. So the coordinator deletes only objects its own records name, and the KIP's deleting scanner is out. A scanner that only <i>reports</i> suspected orphans stays possible as future work.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>Bookkeeping has to learn about an object before anyone can lose track of it, including the orphan from a crash right after upload. The obvious way is a message to the coordinator before every upload, which puts a new step on the produce path and fails the performance bar. Is there a way to learn about objects without a message per object?</p></div>
+</section>
+
+<section class="chapter" id="ch-idempotent" data-title="The broker as idempotent producer">
+  <h3><span class="n">18</span>The broker as an idempotent producer</h3>
+  <div class="why">
+    <span class="label">Why this exists</span>
+    <p>To reject a late or repeated commit, a coordinator partition has to remember something. If it remembers object keys, it needs one entry per object, plus a timer to forget them, and timers depend on clocks. Kafka's idempotent producer solves the same problem with one number per producer and no clock. The design reuses that idea for brokers.</p>
+    <div class="prompted"><span>Kafka's idempotent producer (KIP-98)</span><span>Data-loss bar</span></div>
+  </div>
+  <p>Kafka's <b>idempotent producer</b> works like this. Each producer has an ID, an epoch, and a sequence number that goes up by one with every batch. The partition leader remembers the last sequence it accepted from each producer. A batch with the same sequence is a retry, so the leader answers "already done." A lower sequence is stale, so the leader rejects it. No clock is involved: order alone decides.</p>
+  <p>The design treats each <b>uploading broker</b> the same way:</p>
+  <ul>
+    <li>The broker's <b>epoch</b> comes from KRaft. Every time a broker registers, for example after a restart, it gets a new, higher epoch. KRaft uses the offset of the registration record in the metadata log as the epoch, which chapter 39 puts to use. Nothing needs to be saved across restarts: the new epoch is higher than everything from before.</li>
+    <li>When <code>FileCommitter</code> closes a file, it gives the file the current broker epoch and the next <b>sequence number</b>. Every commit part of that file carries the pair <code>(epoch, sequence)</code>. Pairs compare epoch first, then sequence.</li>
+    <li>Every coordinator partition keeps one <b>broker row</b> per uploading broker: the last pair that committed there, and the complete per-batch result of that commit.</li>
+    <li>Gaps are fine. A file that failed to upload uses a sequence and never commits it. Nothing requires <code>last + 1</code>.</li>
+  </ul>
+  <p>Why a number and not a random ID such as a UUID? Because order lets a partition keep <i>one</i> value per broker instead of a growing set of keys, spot a sequence that's missing, and decide all of it without a clock.</p>
+  <div class="analogy"><span class="label">Analogy</span><p>A bank doesn't remember every check you ever wrote. It remembers the highest check number it cashed from your account. A check with that number again is a duplicate. A check with a lower number is stale. A new checkbook, a new epoch, voids every check from the old one.</p></div>
+
+  {{demo:row}}
+
+  <p>The stored result is the key to safe retries. It doesn't depend on the batch rows, so a retry still gets its original answer after retention or <code>DeleteRecords</code> removed the batches. Broker rows are never deleted. There's one per broker ID the cluster ever used, so they stay small, and deleting one would let a late commit look like a new broker.</p>
+  <p>When a broker's epoch ends, every leader writes that down as a <b>broker-epoch-retired</b> record once its metadata image shows the newer epoch. The record carries one number, <code>retiredThrough</code>: every epoch at or below it is gone. Applying the record makes every replica reject the old epoch at the same log position, whatever its own image says. Chapter 39 shows how the leader picks that number safely when the image lags.</p>
+  <p>A commit whose batches all fail their checks, for example every batch is a duplicate, still counts as a commit. The leader records it with every batch's outcome and moves the row forward. A retry then gets exactly the first answer.</p>
+
+  <div class="takeaway"><span class="label">Takeaway</span><p>One row per broker, holding the last <code>(epoch, sequence)</code> and its result, tells each coordinator partition whether a commit is new, a retry, or stale. No clock, and no per-key memory.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>To clean up an object that never committed, the coordinator must know its name. If the key is random, only the broker knows it. How can the coordinator know which keys a broker might have uploaded?</p></div>
+</section>
+
+<section class="chapter" id="ch-keys" data-title="Predictable object names">
+  <h3><span class="n">19</span>Object names you can predict</h3>
+  <div class="why">
+    <span class="label">Why this exists</span>
+    <p>If the object key is random, the coordinator needs a message per object to learn it. If the key is built from the broker's <code>(epoch, sequence)</code>, the coordinator can compute every key a broker could have uploaded, with no message at all.</p>
+    <div class="prompted"><span>Deterministic object keys</span><span>Performance bar</span></div>
+  </div>
+  <p>In this design, every object name has this form:</p>
+  <p style="text-align:center"><code style="font-size: 1rem;">&lt;clusterId&gt;.&lt;brokerId&gt;.&lt;brokerEpoch&gt;.&lt;sequence&gt;</code></p>
+  <ul>
+    <li><b>Known in advance.</b> If the coordinator knows broker 3 may use sequences 0 to 1023 in epoch 7, it knows the exact names of up to 1,024 objects, whether they were uploaded or not.</li>
+    <li><b>The cluster ID</b> keeps two clusters that share a bucket and prefix from overwriting or deleting each other's objects. KRaft never reuses a broker epoch inside one cluster, so the name is unique.</li>
+    <li><b>Upload retries are harmless.</b> Every attempt for one file uses the same name, and every supported object store overwrites the key.</li>
+    <li><b>The prefix comes from the uploader.</b> A deletion builds the full path with the uploading broker's <code>inkless.object.key.prefix</code>, which the lease records. A cluster whose brokers differ in prefix would otherwise delete keys that were never written and leak the real ones.</li>
+  </ul>
+
+  {{demo:key}}
+
+  <div class="takeaway"><span class="label">Takeaway</span><p>An object's name is a function of who uploaded it and which number it used. The coordinator can name, and so delete, objects it never heard about.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>The coordinator still has to know <i>which</i> sequence numbers a broker may use, before the broker uses them, without a round trip per file.</p></div>
+</section>
+
+<section class="chapter" id="ch-lease" data-title="Leases">
+  <h3><span class="n">20</span>Leases: numbers handed out ahead of time</h3>
+  <div class="why">
+    <span class="label">Why this exists</span>
+    <p>A message before every upload would put a replicated, fsynced append on the produce path, which PostgreSQL doesn't have. A <b>lease</b> moves that round trip off the produce path: the broker reserves a whole range of sequence numbers in advance, in the background. Every key the broker may upload is then on record before the upload, with no message per object.</p>
+    <div class="prompted"><span>Performance bar</span><span>Orphans from chapter 16</span></div>
+  </div>
+  <p>Each broker leases its numbers from one coordinator partition, its <b>tracking partition</b>. Chapter 22 describes everything else it does, and chapter 32 explains how a broker picks it. For now, picture broker 3 with tracking partition cp2.</p>
+  <h4>Getting and using a lease</h4>
+  <ul>
+    <li><b>Ask for a range.</b> The broker asks its tracking partition for a range <code>[a, b]</code> of sequences for its current epoch. The tracking partition appends a <b>sequences-leased</b> record and replies once it applies, so a confirmed lease survives a leader change. A range holds at most <code>K = 1024</code> sequences.</li>
+    <li><b>Use it.</b> At file close, the broker takes the next leased sequence. No request is needed.</li>
+    <li><b>Renew early.</b> When fewer than half the range is left, the broker asks for the next range in the background, and uses up the rest of its current range first.</li>
+    <li><b>Nothing leased, no upload.</b> If the broker has no leased sequence, the file fails at once with a retriable error and isn't uploaded. Nothing unrecorded ever reaches storage.</li>
+  </ul>
+  <p>Why 1024? With one file every 250 ms, a range lasts about four minutes, and about 85 seconds when a broker closes files as fast as it can. When a lease ends early, the unused numbers become deletes of keys that were never written. Those are cheap: deletes are free on S3, Google Cloud Storage, and Azure. <code>K</code> is a protocol constant, not a config, because nobody would tune it.</p>
+  <h4>Keeping a lease alive</h4>
+  <p>A lease can end, and its unused numbers are then cleaned up. Three events end one: the broker's epoch is retired, the broker asks for a lease at a newer epoch, or the tracking partition writes a <b>lease-ended</b> record. The tracking partition also has an <b>idle timer</b>: if it hears nothing from a broker for 15 minutes, it ends that broker's lease. That timer exists for brokers that are cut off or paused, so their leftover keys still get collected.</p>
+  <p>A live broker must never be caught by the idle timer. If a quiet broker's lease ended without its knowledge, its first file after the quiet period would fail. So a live broker never relies on the timer:</p>
+  <ul>
+    <li><b>Keepalives.</b> If the broker has had no answer from its tracking partition for half the idle timeout, it sends a <b>keepalive</b>: a lease request for a range it already holds. The tracking partition treats it as a retry, confirms the range, appends nothing, and restarts its timer.</li>
+    <li><b>Switch at once.</b> If the tracking partition doesn't answer a renewal, the broker walks an ordered list of other coordinator partitions and leases from the first one that answers. As soon as a range at another partition is confirmed, the broker <b>switches</b> to it and <b>abandons</b> its old ranges, including the unused rest of the current one. When a later renewal reaches the preferred partition again, it switches back the same way.</li>
+    <li><b>Lease releases.</b> The broker ends every range it abandons with a <b>lease release</b> to that partition, scoped to the highest range end <code>b</code> it gives up there. It sends the release only once every file with a sequence at or below <code>b</code> is finished, and once no sequence it still plans to use is at or below <code>b</code>.</li>
+  </ul>
+  <p>Why switch at once instead of finishing the old range first? Picture a broker that falls back to cp5 at a low file rate. If it kept using cp2's remainder, cp5's new range would get no parts for a long time, and cp5's idle timer could fire first. Ending that range fences it, and Chapter 21 shows that a fence raises a floor at every partition, past sequences the broker still plans to use. Switching at once means a lease end or a release never cuts a range in use. Four reasons start a renewal, and a metric counts each: fewer than half left, an unanswered keepalive, a failed tracking part, and a change in the broker's preferred tracking partition.</p>
+
+  <div class="demo" id="demo-lease">
+    <div class="demo-head"><h5>Try it: the lease meter</h5><span class="tag">Interactive</span></div>
+    <div class="demo-body">
+      <p class="hint">To keep the picture readable, this demo uses <code>K = 16</code> instead of 1024 and an idle timeout of 6 ticks instead of 15 minutes. Each tick, a busy broker closes one file. Renewals happen in the background. Take cp2 down, make the broker quiet, or cut it off completely, and watch which mechanism answers.</p>
+      <div class="controls">
+        <button class="primary" id="lz-tick">Tick</button>
+        <button class="toggle" id="lz-play">Auto-play</button>
+        <span class="sep"></span>
+        <button class="toggle" id="lz-down">cp2 is down</button>
+        <button class="toggle" id="lz-quiet">Broker is quiet: no files</button>
+        <button class="toggle" id="lz-cut">Broker is cut off</button>
+        <button id="lz-reset">Reset</button>
+      </div>
+      <div id="lz-view"></div>
+      <div class="readout" id="lz-readout"></div>
+    </div>
+  </div>
+
+  <h4>What the produce path waits for</h4>
+  <p>This chart uses the median figures from KIP-1163: buffering up to 250 ms, an upload around 100 ms, and a commit around 10 ms. A message before each upload costs about one commit. At the median the difference looks small, but that message's tail latency and availability would apply to every single produce. With leases, the produce path has the same steps as PostgreSQL.</p>
+  <div class="figure" id="lat-chart"></div>
+
+  <div class="takeaway"><span class="label">Takeaway</span><p>A broker reserves numbers in bulk, ahead of time, off the produce path. Every key it may upload is on record before the upload. Keepalives and an immediate switch keep a live broker's lease from ever ending under it, and the idle timer only collects after brokers that are cut off.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>Leased numbers can go unused, and commit parts can time out and arrive late. Before an object is deleted, every late commit that could reference it must become impossible. How, without waiting for a timer?</p></div>
+</section>
+
+<section class="chapter" id="ch-fence" data-title="Floors and fences">
+  <h3><span class="n">21</span>Floors and fences: closing the door without a clock</h3>
+  <div class="why">
+    <span class="label">Why this exists</span>
+    <p>The obvious way to stop late commits is time: reject any part older than a few minutes. That makes safety depend on two brokers' clocks agreeing, and the rejected-alternatives chapter shows how that loses data. This design uses order instead: it raises a <b>floor</b>, and every pair at or below the floor is rejected forever.</p>
+    <div class="prompted"><span>Data-loss bar</span><span>No clock decides safety</span></div>
+  </div>
+  <p>Each broker row has a <b>fenced-through</b> mark next to its last commit. The <b>floor</b> is the highest of three things: the last commit, the fenced-through mark, and the first pair after <code>retiredThrough</code>. A new commit needs a pair above the floor. The floor only rises:</p>
+  <ul>
+    <li><b>The broker commits a newer file</b> at that partition. This happens all the time on a busy broker.</li>
+    <li><b>A broker epoch is retired.</b> Every pair of the old epoch is now below the floor.</li>
+    <li><b>A fence.</b> Another coordinator partition asks: "Which of broker 3's sequences between <code>a</code> and <code>b</code> in epoch 7 do you hold?" The asked partition appends a <b>sequences-fenced</b> record that raises its fenced-through mark to <code>(7, b)</code>, and answers with the sequences it holds batches for. Every other sequence in the range is now <b>released</b>: it never committed or its batches are gone, and it can never commit there again.</li>
+  </ul>
+  <p>The fenced-through mark is kept apart from the last commit. A fence that overwrote the last commit would make a retry of that commit look stale while the broker still waits for its answer.</p>
+  <p>A fence needs no clock and no waiting. What about a part that's in flight at the same moment as the fence? The leader handles them one at a time, in log order, so there are only two possible orders, and both give a true answer. Try it:</p>
+
+  {{demo:race}}
+
+  <h4>Unknown outcomes, closed by order</h4>
+  <p>Remember the part that timed out in chapter 16. Its producer got <code>KAFKA_STORAGE_ERROR</code> and retries. The late request can still commit, but only until something raises the floor at that partition: the broker's next commit there, a fence, the broker's epoch being retired, or its lease ending. After that, the late part is stale. An idempotent producer never sees a duplicate, because Kafka's producer checks catch it. A non-idempotent producer has the same small duplicate window it has with an <code>acks=all</code> timeout on a classic topic, or with PostgreSQL today.</p>
+
+  <div class="takeaway"><span class="label">Takeaway</span><p>A fence asks a partition what it holds and makes everything else in the range impossible, in one step. Late parts can't sneak in afterward, however late they are and whatever the clocks say.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>Who sends fences, who collects the answers, and who finally deletes the object?</p></div>
+</section>
+
+<section class="chapter" id="ch-tracking" data-title="The tracking partition">
+  <h3><span class="n">22</span>The tracking partition: one bookkeeper per broker</h3>
+  <div class="why">
+    <span class="label">Why this exists</span>
+    <p>An object's batches live on several coordinator partitions, and none of them can see the others. One place has to collect what they know and decide. KIP-1164 picks an owner per object and hands the object from owner to owner. This design picks one bookkeeper per <i>broker</i>, fixed before any upload: the tracking partition that issued the lease. Because it issued the lease, it already knows every key the broker may upload.</p>
+    <div class="prompted"><span>KIP-1164: WAL file management</span><span>Performance bar</span></div>
+  </div>
+  <p>The tracking partition has three jobs for the brokers it serves:</p>
+  <ul>
+    <li><b>Leases</b>: the ranges from chapter 20.</li>
+    <li><b>Tracking entries</b>: for each committed object, which participants still reference it. Every file sends a part to its tracking partition, the <b>tracking part</b>, even when the tracking partition holds none of the file's batches. That part carries the <b>participant set</b>. If the tracking partition holds some of the file's batches, it's a participant too, and its own entry is handled locally.</li>
+    <li><b>The deletion queue</b>: keys that are safe to delete, each with the time it was marked. Only tracking partitions keep a queue.</li>
+  </ul>
+  <p>Nothing outside the broker computes its tracking partition. Every commit part names it, and every report goes to the partition the part names, so no agreement across brokers or versions is needed.</p>
+  <h4>Releases</h4>
+  <p>When an apply removes batches, through retention, <code>DeleteRecords</code>, topic purge, or consolidation pruning, the participant checks each object it touched: does any batch still point into it? An index on <code>batches(file_id)</code> makes the check cheap, and it runs in the same SQLite transaction. If the answer is no, the participant has <b>released</b> the object, and it reports the release to the object's tracking partition.</p>
+  <p>Why not keep a count of live batches per object instead? A count fails toward data loss: one code path that adds a batch without raising the count, and the count reaches zero while batches remain. The query reads the batch rows themselves, so it can't drift. PostgreSQL makes the same check today.</p>
+  <h4>Deletion</h4>
+  <p>Once every participant of an object has released it, the tracking partition puts its key in the deletion queue. The existing <code>FileCleaner</code> runs on every broker. On this backend, it only finds rows on brokers that lead a tracking partition. It waits the existing one-minute grace period, so readers that cached coordinates can finish, deletes the keys from storage, and appends a <b>files-deleted</b> record. Deleting a key that doesn't exist counts as success, which covers numbers that were leased but never used. The queue is in SQLite on every replica, so if leadership moves halfway through, the new leader deletes the key again, which is harmless.</p>
+  <div class="takeaway"><span class="label">Takeaway</span><p>Each broker has one bookkeeper. It leases the broker's numbers, records each object's participants, collects their releases, and queues the object once all of them let go.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>A participant whose part never arrived will never send a release. The tracking partition has to fence it instead. But when is it safe to fence a participant that hasn't said anything yet?</p></div>
+</section>
+
+<section class="chapter" id="ch-finish" data-title="Finish reports">
+  <h3><span class="n">23</span>Finish reports: when is it safe to fence?</h3>
+  <div class="why">
+    <span class="label">Why this exists</span>
+    <p>A fence makes every part at or below its range impossible. Sent too early, it rejects a part that's still on its way, and a healthy produce fails. Only the broker knows when it has stopped sending a file's parts, so the broker must tell the tracking partition. A review of an earlier version found that the obvious rule, "fence the participants you haven't heard from," turns every routine leader change into failed produces.</p>
+    <div class="prompted"><span>Review finding: an empty tracking part fences parts in flight</span><span>Data-loss bar</span></div>
+  </div>
+  <p>Here's the obvious rule: once the tracking partition and every participant it has heard from are released, fence each participant it hasn't heard from. It sounds safe. The demo shows how it breaks when the tracking part holds no batches: the tracking partition's own entry is released the moment the part is recorded, so the rule fires while the other parts are still in flight.</p>
+
+  {{demo:v3-empty}}
+
+  <p>So the tracking partition fences a participant only <b>after the broker has finished the file</b>, and the broker says which files are finished in a <b>finish report</b>:</p>
+  <ul>
+    <li><b><code>finishedThrough</code></b>: every file of this broker epoch with a sequence at or below this number is finished. A file is finished when every part, the tracking part included, has committed, got an error that retrying won't fix, or passed the commit deadline. Files finish out of order, so this number trails the slowest unfinished file. It covers the whole epoch, because a participant keeps one floor per broker, not one per tracking partition.</li>
+    <li><b>Exception ranges</b>: the participants that didn't <b>answer</b>. A participant answered when its reply came from a recorded commit. Each reply carries a <code>Recorded</code> flag that says so, because an error code alone can't tell a commit whose batches all failed from a rejection. Everything else is an exception: a rejection before the producer checks, <code>NOT_COORDINATOR</code> until the deadline, an unknown outcome at the deadline, or a part the broker never sent. A report holds at most one exception range per participant.</li>
+  </ul>
+  <p>The report rides on messages the broker sends anyway: every tracking part, lease request, keepalive, and lease release. A report with an exception is <b>urgent</b>, because a part with an unknown outcome could still commit late. A busy broker's next tracking part carries it. A quiet broker sends an early keepalive within one commit interval to carry it.</p>
+  <p>The rule that comes out of this is short: <b>the tracking partition never fences a participant that answered</b>. It waits for that participant's release instead. Why not trust a broker that says "this part was rejected, call it released"? Because then a bug in the broker could delete data. A rejected part stays an exception, and its fence costs nothing at the participant, because the sequence is already below the floor there.</p>
+  <div class="takeaway"><span class="label">Takeaway</span><p>The broker reports which files are finished and which participants didn't answer. The tracking partition fences only those participants, and only after the file is finished, so no fence ever races a live part.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>Exceptions are one reason to fence. What are the others, and what stops a burst of failures from flooding a recovering partition with fences?</p></div>
+</section>
+
+<section class="chapter" id="ch-fence-rules" data-title="Three reasons to fence">
+  <h3><span class="n">24</span>Three reasons to fence, and keeping fences in check</h3>
+  <div class="why">
+    <span class="label">Why this exists</span>
+    <p>Finish reports cover a broker that's alive and talking. A tracking part can also fail on its own, and a broker can die. Each case needs a fence with a different reach. A partition that recovers from an outage can then face thousands of fence ranges at once, so a review asked for a bound on that work.</p>
+    <div class="prompted"><span>Orphan cases</span><span>Review finding: fence storms</span></div>
+  </div>
+  <p>The tracking partition sends fences in exactly three cases. Each one waits until the broker has finished the files it covers, or can never send them again:</p>
+  <ul>
+    <li><b>Exceptions.</b> One range fence per exception range in a recorded finish report, to that participant. A report triggers at most <code>N - 1</code> fences.</li>
+    <li><b>Missed sequences.</b> A sequence in a leased range is <b>missed</b> once a recorded <code>finishedThrough</code> reaches it while the tracking partition has no record of it. Its tracking part failed, but its other parts may have committed. The tracking partition doesn't know its participants, so it fences the sequence at <b>all <code>N</code></b> partitions and builds the participant set from the "I hold it" answers. The broker never supplies the set, because a broker bug that left a participant out would delete an object that the participant still references.</li>
+    <li><b>Lease ends.</b> One range fence per partition, from the sequence after the recorded <code>finishedThrough</code> to the end of the ended range. It covers used sequences without a report, missed sequences, and numbers never used. Keys that nobody holds go straight to the deletion queue.</li>
+  </ul>
+  <p>When one record does both, for example a lease release whose finish report reaches a sequence the tracking partition never recorded, the missed-sequence rule goes first. Otherwise the lease-end range would start above that sequence, and nothing would fence its key.</p>
+  <h4>Batching</h4>
+  <p>Each tracking partition keeps <b>at most one fence request in flight per participant</b>. Fence ranges that pile up meanwhile go into the next request, so batching needs no timer. Within one broker epoch, ranges merge into their hull, from the lowest start to the highest end. That's safe for fences, because a fence's effect depends only on its upper end, and every sequence in the hull is one the broker finished or can never send. A request is capped at 512 KiB, and fences aren't rate-limited. A fence whose entries are all held or released is skipped, because those sequences can't commit there again.</p>
+
+  {{demo:v3-storm}}
+
+  <div class="takeaway"><span class="label">Takeaway</span><p>Fences go to exceptions, to missed sequences at every partition, and to the rest of an ended lease. However many brokers fail, a participant receives at most <code>N - 1</code> fence requests at a time.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>Answers now arrive from three directions: finish reports, fence answers, and release reports. They can arrive in any order. How does the tracking partition keep its entries straight?</p></div>
+</section>
+
+<section class="chapter" id="ch-entries" data-title="Entries that only move forward">
+  <h3><span class="n">25</span>Tracking entries that only move forward</h3>
+  <div class="why">
+    <span class="label">Why this exists</span>
+    <p>The network reorders messages. A release report can arrive before the tracking part that names the participant, and a late "referenced" fence answer can arrive after a release. A naive tracker drops the early report or lets the late answer overwrite the release, and in both cases the object waits forever: a leak. A review of an earlier version found both.</p>
+    <div class="prompted"><span>Review finding: release ordering</span><span>Leaks</span></div>
+  </div>
+  <p>For each object, the tracking partition keeps one <b>entry per participant</b>. An entry moves through four states and never goes back:</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>State</th><th>Meaning</th><th>How it gets there</th></tr></thead>
+    <tbody>
+      <tr><td><b>Pending</b></td><td>The participant set is recorded. Nothing has covered this participant yet.</td><td>The tracking part records.</td></tr>
+      <tr><td><b>Fencing</b></td><td>A range fence that covers the entry is out, with no answer yet.</td><td>A finish report lists the participant as an exception, or the lease ends.</td></tr>
+      <tr><td><b>Held</b></td><td>The participant holds batches and owes a release report.</td><td>A finish report says it answered, or a fence answers "referenced."</td></tr>
+      <tr><td><b>Released</b></td><td>Done. Nothing can change it again.</td><td>The participant's release report arrives, or a fence answers "released."</td></tr>
+    </tbody>
+  </table></div>
+  <p>Released is terminal because of an invariant: once a participant releases a sequence, it can't come to reference that sequence again. Either the part committed and a retry gets the stored answer, or the sequence is below the participant's floor. A "referenced" answer that arrives after a release only means the network reordered two messages that the participant's log already put in order.</p>
+  <p>An early release report gets stored, not dropped. A participant whose batches all failed releases the object in the same apply that records its part, so its report often beats the tracking part. If no entry exists yet, the tracking partition compares the sequence with a bound. Above the bound, it stores the entry as released and merges the participant set into it later. At or below the bound, the object is already resolved, and the report is a harmless repeat.</p>
+
+  {{demo:v3-entry}}
+
+  <h4>Release reports in batches</h4>
+  <p>A retention pass can release thousands of objects at once. Each participant keeps at most one release report in flight per tracking partition, and releases that pile up meanwhile go into the next one. A report groups sequence ranges by broker and epoch. Unlike a fence, a report can't merge ranges into their hull: if a participant released sequences 1 and 3 and still holds 2, a range from 1 to 3 would release 2 while a batch still references it. The tracking partition applies a whole report in one transaction, and the participant then records that the report was accepted, so a new participant leader resends only what wasn't.</p>
+  <p>Two metrics watch for entries that never clear: <code>TrackingEntryOldestAgeMs</code> by state, and <code>PendingReleaseCount</code> for releases waiting on an accepted report.</p>
+  <div class="takeaway"><span class="label">Takeaway</span><p>Entries only move forward, and released is final. Messages can arrive in any order, and the tracking partition still ends up with the same answer.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>That's every piece of the deletion model. What does it look like when they work together?</p></div>
+</section>
+
+<section class="chapter" id="ch-life" data-title="Follow an object">
+  <h3><span class="n">26</span>Follow an object from upload to deletion</h3>
+  <div class="why">
+    <span class="label">Why this exists</span>
+    <p>The orphan, the shared object, and the unknown outcome from chapter 16 each need a path to the deletion queue that never deletes a referenced object. This chapter replays each one through the pieces from chapters 18 to 25.</p>
+    <div class="prompted"><span>Orphan cases</span><span>Data-loss bar</span></div>
+  </div>
+
+  <div class="demo" id="demo-life">
+    <div class="demo-head"><h5>Try it: follow an object from upload to deletion</h5><span class="tag">Step through</span></div>
+    <div class="demo-body">
+      <p class="hint">Broker 3, epoch 7, has tracking partition cp2, and <code>N = 4</code>. Its file holds batches for <i>orders-0</i> (cp0), <i>clicks-1</i> (cp1), and <i>logs-2</i> (cp3), so the tracking part to cp2 is empty. Pick a scenario and step through it. Highlighted panels changed in the last step. The lease is shortened to 16 numbers.</p>
+      <div class="tabs" id="lf-tabs"></div>
+      <div class="steps"><button id="lf-prev">Back</button><button class="primary" id="lf-next">Next step</button><button id="lf-reset">Start over</button><span class="step-count" id="lf-count"></span></div>
+      <div class="narration" id="lf-narr"></div>
+      <div class="grid4" id="lf-cps"></div>
+      <h6 style="margin: 0.9rem 0 0.4rem; font-size: 0.86rem;">Object storage</h6>
+      <div class="panel" id="lf-storage"></div>
+    </div>
+  </div>
+
+  <div class="table-wrap"><table>
+    <thead><tr><th>Orphan case</th><th>Path to the deletion queue</th></tr></thead>
+    <tbody>
+      <tr><td>A broker stops before the upload</td><td>Its restart ends the lease. The lease-end fence answers "released," and the never-written key is queued.</td></tr>
+      <tr><td>A broker stops after the upload, before any part commits</td><td>If it keeps running, its next finish report reaches the sequence, which is missed, so it's fenced everywhere. If it restarts or goes silent, the lease end covers it.</td></tr>
+      <tr><td>A broker stops after some parts commit</td><td>No finish report covers the file, so the lease end does. Committed participants answer "referenced" and release later. The others answer "released."</td></tr>
+      <tr><td>A part has an unknown outcome</td><td>It's an exception in the next finish report. The range fence answers "referenced" or "released."</td></tr>
+      <tr><td>Leadership moves during a delete</td><td>The queue is in SQLite on every replica. The new leader deletes the key again, at most twice.</td></tr>
+    </tbody>
+  </table></div>
+  <div class="takeaway"><span class="label">Takeaway</span><p>Every orphan case reaches the deletion queue through a lease end, a finish report, or a fence answer. No case queues an object that a batch still points into.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>The design still has timers: the idle timeout, keepalives, the grace period. Do any of them decide whether a delete is safe?</p></div>
+</section>
+
+<section class="chapter" id="ch-clocks" data-title="Clocks decide when">
+  <h3><span class="n">27</span>Clocks decide when, never whether</h3>
+  <div class="why">
+    <span class="label">Why this exists</span>
+    <p>Clocks on different brokers drift apart, pause, and jump. A design whose safety depends on them fails the data-loss bar, because a classic topic doesn't lose acknowledged data when two clocks disagree. The rule here is strict: no clock decides <i>whether</i> deleting a key is safe. A key enters the deletion queue only at a log position where a record makes it impossible to reference. Clocks decide only <i>when</i> things happen.</p>
+    <div class="prompted"><span>Data-loss bar</span><span>Clock skew</span></div>
+  </div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Timer</th><th>Whose clock</th><th>Its role</th></tr></thead>
+    <tbody>
+      <tr><td>Idle lease timeout, 15 minutes</td><td>The tracking leader's monotonic clock. It saves nothing and restarts at each election.</td><td>A backstop that collects a cut-off broker's leftover keys. Fences and floors keep data safe, not the timer.</td></tr>
+      <tr><td>Keepalive, half the idle timeout</td><td>The broker's monotonic clock</td><td>Keeps a live broker's lease from ending idle.</td></tr>
+      <tr><td>Urgent-report flush, one commit interval</td><td>The broker's clock</td><td>Gets an exception to the tracking partition quickly, which closes the duplicate window.</td></tr>
+      <tr><td><code>FileCleaner</code> grace period, 1 minute</td><td>The marking leader's wall clock, written on the record, against the deleting leader's</td><td>Lets readers with cached coordinates finish, and shrinks the late-upload leak.</td></tr>
+      <tr><td>Commit deadline</td><td>The uploading broker's clock</td><td>Decides when the broker gives up on a part. The sequence rules resolve what happens next.</td></tr>
+      <tr><td>Retention, <code>retention.ms</code></td><td>The coordinator leader's wall clock</td><td>Removes old batches. A clock far ahead removes them early, as on a classic topic.</td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="demo" id="demo-clock">
+    <div class="demo-head"><h5>Try it: break a clock</h5><span class="tag">Interactive</span></div>
+    <div class="demo-body">
+      <p class="hint">Pick a clock fault. The panels show what happens and what it costs. Watch the last line: does any committed batch end up pointing at a deleted object?</p>
+      <div class="controls"><label>Fault <select id="ck-fault"></select></label></div>
+      <div class="grid2">
+        <div class="panel" id="ck-what"></div>
+        <div class="panel" id="ck-cost"></div>
+      </div>
+      <div class="readout" id="ck-readout"></div>
+    </div>
+  </div>
+
+  <div class="takeaway"><span class="label">Takeaway</span><p>In this design, time only affects how quickly things happen, or how long a reader may use cached coordinates. Safety comes from records, floors, and fences.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>Is anything still left behind? And is there any path that deletes objects outside the books?</p></div>
+</section>
+
+<section class="chapter" id="ch-leak" data-title="The leaks left">
+  <h3><span class="n">28</span>The leaks left, and why the broker no longer deletes</h3>
+  <div class="why">
+    <span class="label">Why this exists</span>
+    <p>A design that only deletes what its books name can still leak, and a broker that deletes on its own can still bypass the books. The design checks both. It accepts two small leaks and turns off the broker's own delete for this backend.</p>
+    <div class="prompted"><span>Data-loss bar</span><span>Partial sends</span></div>
+  </div>
+  <h4>The accepted leaks</h4>
+  <p>Object storage can finish a write <i>after</i> the tracking partition deleted that key. For example, an upload request is stuck in the network, the broker gives up, the lease ends, the key is fenced and deleted, and then storage completes the old write. Nothing will ever delete that object again, because no batch row points to it, and a bucket lifecycle rule can't help, because topics can keep data forever.</p>
+  <p>The leak is bounded and costs storage, not data. One upload attempt leaks at most one object. A broker cut off from the cluster can upload at most the rest of its lease, at most <code>K</code> files. The one-minute grace period also covers uploads that land within a minute. PostgreSQL today leaks more: when a commit fails, the broker deletes the object only if <code>isSafeToDeleteFile</code> allows it, and nothing collects the rest.</p>
+  <p>The second leak needs a bug: a held entry whose participant no longer holds batches and never reports, because a broker wrongly claimed "answered" or a participant skipped its emptiness check. Note the direction: a wrong claim leaks, it never deletes. A future scanner that only reports suspected orphans would make both leaks visible.</p>
+  <h4>The broker's direct delete</h4>
+  <p>Today, if a commit fails because the control plane is unavailable, <code>FileCommitJob</code> deletes the object itself. With split commits, that's dangerous. Picture part 1 sent with an unknown outcome, then part 2 failing because the control plane became unavailable. No part confirmed, so the broker would delete the object, while part 1 can still commit into it.</p>
+  <p>The new backend declares a capability that turns off the broker's direct delete, and <code>FileCommitJob</code> checks it first. Every upload already has a leased sequence that the tracking partition resolves, so the backend never needs the direct delete. PostgreSQL and the in-memory backend keep their current behavior.</p>
+  <div class="takeaway"><span class="label">Takeaway</span><p>Only the tracking partition's queue deletes objects. What's left are two bounded leaks that cost storage, never data.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>Deletion is safe. But chapter 10 showed that each part costs a flush on every replica, and a file talks to almost every coordinator partition. Can the design cut the number of parts?</p></div>
+</section>

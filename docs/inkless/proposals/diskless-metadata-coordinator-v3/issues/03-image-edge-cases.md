@@ -27,6 +27,10 @@ Named test: a broker that is unregistered, re-registers with the same ID, and co
 
 Resolved on 2026-11-12 in a grilling session.
 
+Amended by [Protocol model](17-protocol-model.md#a-kafka-dependency): an image at offset `X` shows every registration at an epoch at or below `X` only for a broker with no prior registration, and a new test pins that controller behavior. The retirement rule doesn't change.
+
+Amended by [Consequences for the cross-cutting sections](18-cross-cutting-consequences.md#metric-names): the rejection meter is named `UnreconciledPartitionRejectRate`, which replaces `UnreconciledPartitionRejectCount` in [Unreconciled partitions](#unreconciled-partitions), [Failure modes](#failure-modes), and [Tests](#tests).
+
 Both findings come from a coordinator row that exists ahead of the leader's metadata image. The fix compares the image's last contained offset with an offset that the row carries. A KRaft broker epoch is the metadata offset of its registration: `QuorumController.registerBroker` passes `offsetControl.nextWriteOffset()` as the new epoch. An image at offset `X` has therefore seen every registration at an epoch at or below `X`.
 
 v2 has a third case of the same shape. A leader whose image lags a new broker's registration sees no registration and appends the unregistered form of broker-epoch-retired, which retires a live broker forever.

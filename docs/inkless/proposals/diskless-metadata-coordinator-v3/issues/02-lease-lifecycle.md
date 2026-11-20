@@ -28,6 +28,8 @@ Named tests: a low-rate broker after a lease fallback, and a broker that resumes
 
 Resolved on 2026-11-12 in a grilling session.
 
+Amended by [Protocol model](17-protocol-model.md#protocol-changes): a lease release also waits until no planned sequence is at or below `b`. This adds a condition to [Lease release](#lease-release).
+
 A live broker never relies on the idle timer. It keeps its lease with keepalives, switches at once to a range at a new partition after a fallback, and ends every range it abandons with a scoped lease release that carries its final finish report. The idle timer becomes a backstop for brokers that are cut off or paused.
 
 ### Terms

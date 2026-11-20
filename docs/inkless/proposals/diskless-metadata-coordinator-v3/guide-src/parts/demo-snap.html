@@ -1,0 +1,16 @@
+<div class="demo" id="demo-snap">
+    <div class="demo-head"><h5>Try it: when may the leader move the log start?</h5><span class="tag">Interactive</span></div>
+    <div class="demo-body">
+      <p class="hint">All three replicas have applied the same log. Append records, take snapshots on different replicas, and watch where the leader allows the log start to go. Here <code>min.insync.replicas</code> is 2, so the leader needs one in-sync follower with a covering snapshot.</p>
+      <div class="controls">
+        <button class="primary" id="sn-append">Append 1,000 records</button>
+        <button id="sn-L">Leader snapshots</button>
+        <button id="sn-F1">Follower 1 snapshots</button>
+        <button id="sn-F2">Follower 2 snapshots</button>
+        <button class="toggle" id="sn-f1out">Follower 1 leaves the in-sync set</button>
+        <button id="sn-reset">Reset</button>
+      </div>
+      <div id="sn-view"></div>
+      <div class="readout" id="sn-readout"></div>
+    </div>
+  </div>

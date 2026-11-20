@@ -1,0 +1,18 @@
+<div class="demo" id="demo-v3-image">
+    <div class="demo-head"><h5>Try it: move the leader's image</h5><span class="tag">Interactive</span></div>
+    <div class="demo-body">
+      <p class="hint">Pick a case, then drag the offset of the image the leader acts on. The timeline marks the metadata records that the image contains. In the first case, the returning broker's first commit at epoch 480 arrives after the leader acts on its image.</p>
+      <div class="controls">
+        <label>Case <select id="ie-case"><option value="broker">The broker ID returns</option><option value="lag">The image lags a new registration</option><option value="topic">The image lags a new topic</option></select></label>
+        <label style="flex:1; min-width: 260px;">Leader's image offset <input type="range" id="ie-x" min="100" max="700" step="10" value="400"></label>
+        <span class="chip info" id="ie-x-label"></span>
+      </div>
+      <div class="bar-track" id="ie-track" aria-label="Metadata timeline"></div>
+      <div class="small" id="ie-events" style="margin:0.6rem 0 0.8rem"></div>
+      <div class="grid2">
+        <div class="panel" id="ie-v2"></div>
+        <div class="panel" id="ie-v3"></div>
+      </div>
+      <div class="readout" id="ie-readout"></div>
+    </div>
+  </div>

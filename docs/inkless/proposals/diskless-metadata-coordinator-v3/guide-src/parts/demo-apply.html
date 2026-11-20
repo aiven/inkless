@@ -1,0 +1,17 @@
+<div class="demo" id="demo-apply">
+    <div class="demo-head"><h5>Try it: log, high watermark, and SQLite</h5><span class="tag">Interactive</span></div>
+    <div class="demo-body">
+      <p class="hint">The leader appends commit records. Followers fetch them. The high watermark moves once every in-sync replica has a record, and only then does SQLite apply it. Faded cells are in the log but not applied. Try taking a follower out of the in-sync set, or wiping a follower's database.</p>
+      <div class="controls">
+        <button class="primary" id="ap-append">Leader appends a commit</button>
+        <button id="ap-f1">Follower 1 fetches</button>
+        <button id="ap-f2">Follower 2 fetches</button>
+        <span class="sep"></span>
+        <button class="toggle" id="ap-f2isr">Follower 2 leaves the in-sync set</button>
+        <button class="danger" id="ap-wipe">Wipe follower 1's SQLite</button>
+        <button id="ap-reset">Reset</button>
+      </div>
+      <div class="grid3" id="ap-replicas"></div>
+      <div class="readout" id="ap-readout"></div>
+    </div>
+  </div>

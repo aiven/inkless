@@ -1,0 +1,210 @@
+
+<!-- ============================================================ PART 2 -->
+<div class="part-title" data-part="Part 2 · Kafka parts">
+  <span class="num">Part 2</span>
+  <h2>Building a coordinator out of Kafka parts</h2>
+  <p>This part explains how a Kafka topic, a local SQLite database, and a few strict rules together replace a PostgreSQL server. These pieces are the foundation for everything after it.</p>
+</div>
+
+<section class="chapter" id="ch-log" data-title="The log is the truth">
+  <h3><span class="n">7</span>The log is the truth</h3>
+  <div class="why">
+    <span class="label">Why this exists</span>
+    <p>A database guarantees that a committed change survives and that everyone sees changes in the same order. A replicated Kafka log gives the same two guarantees, so KIP-1164 makes the log of <code>__diskless_metadata</code> the coordinator's source of truth.</p>
+    <div class="prompted"><span>KIP-1164: "The source of truth for the coordinator will be the __diskless_metadata topic"</span></div>
+  </div>
+  <p>Every decision the coordinator makes becomes a <b>record</b> in the log. "Object X was committed, and its batch for <i>orders-0</i> got offsets 100 to 149" is a record. "Retention removed every batch of <i>orders-0</i> below offset 500" is a record. "Topic <i>clicks</i> was deleted" is a record.</p>
+  <p>The leader of the coordinator partition is the <b>only writer</b>. It runs every request through the same four steps that KIP-1164 describes, which also match how the KRaft controller works:</p>
+  <ol class="flow">
+    <li><b>Check</b> the request against the current state. For example: is this a duplicate, and what's the next free offset?</li>
+    <li><b>Append</b> one record that describes the outcome, including every value it chose, such as the offsets.</li>
+    <li><b>Wait</b> until the followers have copied the record. Kafka tracks this with the <b>high watermark</b>: the offset below which every in-sync replica has the record.</li>
+    <li><b>Reply</b> to the broker that asked.</li>
+  </ol>
+  <p>One rule makes this work: <b>applying a record never reads anything outside the log</b>. It never reads a clock, and it never reads the broker's own view of cluster metadata, which Kafka calls the <b>metadata image</b>. The record carries every value it needs. Suppose one replica applied "delete topic <i>clicks</i>" when its own image said so, and another replica did it a moment later. They would delete at different positions in the log and end up with different state. Because every replica reads the same records in the same order, every replica ends up with the same state.</p>
+  <div class="analogy"><span class="label">Analogy</span><p>A bank keeps a journal of transactions. The balance of every account can be recomputed from the journal at any time. If a clerk wrote "the balance is whatever my watch says it should be," two branches would disagree. The coordinator's log is the journal, and every value goes into the journal.</p></div>
+  <div class="takeaway"><span class="label">Takeaway</span><p>The coordinator writes its decisions as records to a replicated topic. The leader decides, the followers copy, and every replica rebuilds the same state from the same records.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>A log is good for writing, but a consumer's question, "where is offset 1,400 of <i>orders-0</i>?", needs an index. Replaying the whole log for every lookup is far too slow.</p></div>
+</section>
+
+<section class="chapter" id="ch-sqlite" data-title="SQLite: a rebuildable copy">
+  <h3><span class="n">8</span>SQLite: a copy you can always rebuild</h3>
+  <div class="why">
+    <span class="label">Why this exists</span>
+    <p>Kafka's other coordinators keep their whole state in memory. KIP-1164 notes that the diskless coordinator's state is much larger, "up to hundreds of megabytes or even gigabytes," so it proposes SQLite, an embedded database, to hold the state on disk with indexes.</p>
+    <div class="prompted"><span>KIP-1164: Local state machine</span></div>
+  </div>
+  <p>Every replica of a coordinator partition keeps its own <b>SQLite database</b>. SQLite runs inside the broker process, so a query has no network hop. The tables hold the same things PostgreSQL holds today: logs, files, batches, and producer state.</p>
+  <p>Each replica <b>applies</b> records from the log to its SQLite database, in log order, and only up to the high watermark. With each apply, it stores the offset it applied, and the leader epoch of that record, in the same SQLite transaction. After a restart, it reads that offset and continues from the next record.</p>
+  <p>Why only up to the high watermark? A record above the high watermark isn't safe yet. If the leader fails, the new leader may not have that record, and the log is truncated to match the new leader. If SQLite had already applied the record, it would need to undo it, and undo is where bugs hide. By waiting, SQLite only ever moves forward.</p>
+  <p>The database is a <b>cache, not a source of truth</b>. If it's lost or corrupt, the replica deletes it and rebuilds from the log.</p>
+
+  {{demo:apply}}
+
+  <div class="takeaway"><span class="label">Takeaway</span><p>Each replica turns the log into an indexed SQLite database. It applies only what the high watermark covers, so it never has to undo anything, and it can always rebuild from the log.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>If the leader may only apply a commit after replication, does every commit have to wait for the previous one to replicate before it can even be checked?</p></div>
+</section>
+
+<section class="chapter" id="ch-overlay" data-title="Speculative state">
+  <h3><span class="n">9</span>Speculative state: checking ahead of replication</h3>
+  <div class="why">
+    <span class="label">Why this exists</span>
+    <p>KIP-1164 names two requirements that pull against each other. Commits should be pipelined, so the next one can start while the current one replicates. But the local state should only change after replication. The coordinator meets both with an in-memory <b>overlay</b> of pending records.</p>
+    <div class="prompted"><span>KIP-1164: How operations are performed</span><span>Performance bar</span></div>
+  </div>
+  <p>Picture two commits for <i>orders-0</i>, a few milliseconds apart. The first one gets offsets 100 to 149. Its record is on its way to the followers, so SQLite doesn't have it yet. If the leader checked the second commit against SQLite alone, it would also hand out offset 100.</p>
+  <p>The fix is the <b>overlay</b>: a list, in the leader's memory, of records it has appended but not yet applied. The leader checks each new commit against SQLite <i>plus</i> every overlay entry. The second commit sees the first in the overlay and gets offsets 150 to 199.</p>
+  <ul>
+    <li><b>Batching.</b> The leader can share one log append between commits that queue while it's busy. One replication round trip and one disk sync then cover many commits. This waiting time is called the <b>linger</b>.</li>
+    <li><b>Apply on the high watermark.</b> When the high watermark passes an entry, the leader applies it to SQLite, removes it from the overlay, and replies.</li>
+    <li><b>Failure.</b> If an append fails, the leader drops that entry <i>and every entry after it</i>, and those requests get a retriable error. Later entries took their offsets from the failed one, so they're wrong too.</li>
+    <li><b>Only the leader.</b> Followers keep no overlay. A new leader starts with an empty one.</li>
+    <li><b>A cap.</b> The overlay holds at most <code>4 × B</code> entries, where <code>B</code> is the broker count. Above that, the leader answers <code>COORDINATOR_NOT_AVAILABLE</code>. Normal load never gets close. The cap only trips on a bug or a high watermark that stopped moving, and then it keeps the leader's memory bounded.</li>
+  </ul>
+  <p>This loop isn't new code. It runs on <code>CoordinatorRuntime</code>, the runtime that the group and share coordinators use. The runtime already provides the single writer thread, the shared appends, the revert after a failed append, and the parked replies. The design adds a custom loader, because this coordinator's state lives in SQLite instead of memory.</p>
+  <div class="analogy"><span class="label">Analogy</span><p>A restaurant host writes reservations in pencil while waiting for the manager to confirm them in ink. New guests are seated around the pencil marks, so no table is booked twice. If the manager rejects one reservation, every pencil mark written after it is erased, because those were planned around it.</p></div>
+
+  {{demo:overlay}}
+
+  <div class="takeaway"><span class="label">Takeaway</span><p>The leader plans ahead in memory and writes to SQLite only what replication confirmed. Many commits share one replication round trip, and a failure cleanly cancels everything that depended on it.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>"Replicated" means copied to the followers' memory. What happens if every replica loses power at the same time?</p></div>
+</section>
+
+<section class="chapter" id="ch-durable" data-title="Durability and fsync">
+  <h3><span class="n">10</span>Durability: every batch reaches the disk</h3>
+  <div class="why">
+    <span class="label">Why this exists</span>
+    <p>Clause 3 of the data-loss bar forbids one coordinator partition's loss from damaging another's data. A lost tail of the coordinator log does exactly that, because object storage doesn't lose power along with the brokers. So the design makes flushing every batch to disk mandatory, with no weaker mode.</p>
+    <div class="prompted"><span>Data-loss bar, clause 3</span><span>Correlated power loss</span></div>
+  </div>
+  <p>The coordinator writes to <code>__diskless_metadata</code> the way the safest classic producer does:</p>
+  <ul>
+    <li><b><code>acks=-1</code></b>: an append counts only when every in-sync replica has it.</li>
+    <li><b>Replication factor 3 with <code>min.insync.replicas=2</code></b>: if fewer than two replicas are in sync, appends fail at once with <code>NOT_ENOUGH_REPLICAS</code> instead of hanging. The upstream coordinators append with <code>acks=1</code>, so Inkless brings its own writer for this topic.</li>
+    <li><b>No unclean leader election</b>: a replica that's missing acknowledged records never becomes leader.</li>
+  </ul>
+  <p>Classic Kafka usually doesn't force each batch to disk with <code>fsync</code>. It relies on copies in different zones: if one broker loses power, the others still have the data. But if every replica loses power at once, a <b>correlated power loss</b>, each one loses what was still in memory. On a classic topic that loses the unflushed tail of that one partition, and nothing else.</p>
+  <p>On the coordinator, the damage spreads:</p>
+  <ul>
+    <li><b>Reused offsets.</b> A lost commit record frees its offsets. The next commit takes them for different data. Brokers that cached the old coordinates now serve different records for the same offset. One coordinator partition holds this for its share of every diskless partition in the cluster.</li>
+    <li><b>Deleted objects that the index still points to.</b> Part 3 shows that deleting an object takes records on two coordinator partitions. If one partition's record survives and the other's is lost, the object can be deleted while batch rows elsewhere still point at it. Part 3 names three more versions of this problem.</li>
+  </ul>
+  <p>So <code>__diskless_metadata</code> requires <code>flush.messages=1</code>: every replica syncs every batch to disk before it counts as appended. Thanks to shared appends, that's one sync per batch of commits, not one per commit.</p>
+
+  {{demo:flush}}
+
+  <h4>What flushing costs</h4>
+  <p>The flush isn't free, and the design counts it honestly. The leader flushes before the record counts, and each follower flushes before the fetch that moves the high watermark, so every commit waits for <b>two flushes in a row</b>. The leader's flush matches what PostgreSQL does on every commit. The follower's flush is a second one that PostgreSQL pays only with a synchronous standby. The design calls it the price of Kafka parity: the KRaft metadata log pays the same price for the same reason.</p>
+  <p>The count also grows with the number of coordinator partitions a file talks to. Chapter 14 shows that one file can send a <b>part</b> to each of them, and each part costs one flush on each replica. With 8 coordinator partitions and 3 replicas, one file costs up to <code>8 × 3 = 24</code> flushes. That number is the main reason for Part 4, which brings it down to about 3 on larger clusters.</p>
+  <p>The shared append is adaptive by default, the same as for the group coordinator: a write that arrives while the leader is idle gets its own append right away, and only writes that queue up share one. A fixed linger would cut flushes on paper, but on a small cluster the brokers' commit timers run out of step, so there's little to share, and every part would pay the wait.</p>
+
+  <div class="takeaway"><span class="label">Takeaway</span><p>An acknowledged coordinator record is on the disk of at least two replicas. A correlated power loss loses nothing that a producer was told is committed. The cost is up to one flush per part per replica, which later chapters work to reduce.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>Every applied record is also a SQLite write. Can SQLite keep up, and can it ever stall the thread that answers commits?</p></div>
+</section>
+
+<section class="chapter" id="ch-group" data-title="Applying in groups">
+  <h3><span class="n">11</span>Keeping SQLite off the commit path</h3>
+  <div class="why">
+    <span class="label">Why this exists</span>
+    <p>A review of an earlier version found two stalls hiding in SQLite. One transaction per record pays SQLite's commit cost on every record, and SQLite's automatic checkpoint runs on whichever thread happens to cross its threshold, which can be the thread that answers commits. Either one adds waiting that PostgreSQL doesn't have.</p>
+    <div class="prompted"><span>Performance bar</span><span>Review finding: checkpoint on the shard thread</span></div>
+  </div>
+  <p>SQLite runs in <b>WAL mode</b>: a change goes to a write-ahead file first, and a <b>checkpoint</b> later copies it into the main database file. The design keeps three kinds of SQLite work apart:</p>
+  <ul>
+    <li><b>Group apply.</b> When the high watermark advances past several records, the replica applies them all in <b>one SQLite transaction</b>, up to 4 MiB of log bytes. Each record gets a <b>savepoint</b>, a marker inside the transaction. If one record can't be applied, the replica rolls back to that record's savepoint, commits everything before it, and stops. The applied offset stays exact.</li>
+    <li><b>A checkpoint thread.</b> Automatic checkpoints are off. One thread per broker runs a non-blocking checkpoint, called PASSIVE, for every coordinator database once its write-ahead file reaches 1,000 pages. A PASSIVE checkpoint never blocks the thread that applies records.</li>
+    <li><b>A follower-applier thread.</b> On followers, Kafka's replica fetcher thread only fetches bytes. A separate thread per broker applies them to SQLite, so a slow apply never slows down replication.</li>
+  </ul>
+  <p>SQLite's <code>synchronous=NORMAL</code> setting is enough here, because a lost SQLite transaction is replayed from the log, which is already on disk. The design also requires a SQLite version that fixes a known bug in WAL-mode checkpoints.</p>
+
+  {{demo:v3-apply}}
+
+  <div class="takeaway"><span class="label">Takeaway</span><p>Records apply in groups with exact rollback points, checkpoints run on their own thread, and followers apply off the fetch path. SQLite never stalls a commit.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>The log now grows forever, because nothing ever deletes old records. A replica that rebuilds from offset 0 after a year would replay a year of commits.</p></div>
+</section>
+
+<section class="chapter" id="ch-snap" data-title="Snapshots">
+  <h3><span class="n">12</span>Snapshots: keep the log short</h3>
+  <div class="why">
+    <span class="label">Why this exists</span>
+    <p>KIP-1164 proposes to "take snapshots of the local state" and prune the log behind them, the way KRaft does under KIP-630. Without that, the log and the rebuild time grow without limit.</p>
+    <div class="prompted"><span>KIP-1164: Metadata log size management</span></div>
+  </div>
+  <p>A <b>snapshot</b> is a copy of a replica's SQLite file at a known log offset. Once enough replicas hold a snapshot at offset X, nobody needs the records below X: a replica that loses its database can load the snapshot and replay from X. The leader can then move the log's start forward, and Kafka deletes the old segments. The topic's normal retention is off, with <code>retention.ms=-1</code>, so this rule is the only thing that ever deletes coordinator log segments.</p>
+  <ul>
+    <li><b>Every replica snapshots itself.</b> Each one copies its own SQLite every hour or every 1 GiB of applied log, whichever comes first, and keeps exactly two snapshots: the newest and one older.</li>
+    <li><b>The leader moves the log start carefully.</b> It only advances to an offset that at least <code>min.insync.replicas</code> in-sync replicas, the leader included, hold a covering snapshot for. It uses its <i>older</i> snapshot, so the one it keeps after its next rotation still covers the log start.</li>
+    <li><b>Followers report their snapshots</b> to the leader on a private request. A report counts only while the replica is in sync. If a replica drops out, its report is ignored, because it may have lost its files meanwhile.</li>
+    <li><b>A replica that needs records below the log start</b>, for example a brand-new replica, fetches a snapshot in 8 MiB chunks. It asks an in-sync follower first and uses the leader only when no follower has one, because the leader is already the busiest broker. A broker runs at most one transfer at a time by default.</li>
+  </ul>
+  <p>One detail shows how careful the design is about positions. The snapshot's offset is read from the applied-offset row <i>inside the finished copy</i>, never from the live database. A tag read before the copy could be too low. A tag read after could be too high, which would let the leader delete records the copy doesn't contain.</p>
+
+  {{demo:snap}}
+
+  <div class="takeaway"><span class="label">Takeaway</span><p>The log stays about as long as the snapshot interval, and the log start only moves past records that two replicas can rebuild without.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>So far there's one coordinator for the whole cluster. Its leader handles every commit and every cache miss from every broker. Is one leader enough?</p></div>
+</section>
+
+<section class="chapter" id="ch-shard" data-title="Many coordinators">
+  <h3><span class="n">13</span>Many coordinators: splitting the work by hash</h3>
+  <div class="why">
+    <span class="label">Why this exists</span>
+    <p>KIP-1164 gives <code>__diskless_metadata</code> multiple partitions, "effectively creating multiple coordinators and sharding the space of user partitions for scalability." It also limits the damage of a failure to one share of the cluster, which is what clause 2 of the data-loss bar asks for.</p>
+    <div class="prompted"><span>KIP-1164: Partitioning of __diskless_metadata</span><span>Data-loss bar, clause 2</span></div>
+  </div>
+  <p>The topic has <code>N</code> partitions, 8 by default. The default stays provisional until a benchmark confirms it. Each partition is a complete, independent coordinator, with its own log, SQLite databases, snapshots, overlay, and leader. Kafka spreads the leaders across brokers as it does for any topic. This guide calls them <b>coordinator partitions</b> and writes them as <span class="chip cp" style="background:var(--cp0)">cp0</span>, <span class="chip cp" style="background:var(--cp1)">cp1</span>, and so on. A partition of a normal topic, such as <i>orders-0</i>, is a <b>user partition</b>.</p>
+  <p>Every user partition belongs to exactly one coordinator partition, so it keeps exactly one place that hands out its offsets. The mapping is a hash, so no broker needs to store a table:</p>
+  <ol>
+    <li>Build the <b>log key</b>: the 16 bytes of the topic ID followed by the partition index as 4 bytes.</li>
+    <li>Hash it with Kafka's <code>murmur2</code> and take the result modulo 4096. That's the <b>slot</b>. The 4096 is a fixed protocol constant.</li>
+    <li>The coordinator partition is <code>slot % N</code>.</li>
+  </ol>
+  <p>Why the extra step through 4096 slots? It keeps a door open. <code>N</code> must be a power of two. If a later version doubles <code>N</code>, every slot either stays where it is or moves from <code>p</code> to <code>p + N</code>, so exactly half of each partition's work moves and nothing else changes. In this design <code>N</code> is fixed after creation, and the controller refuses <code>CreatePartitions</code> on the topic. The slot layer still costs nothing at runtime: with a power-of-two <code>N</code>, it gives the same answer as <code>murmur2 % N</code>.</p>
+  <p>KIP-1164 proposed storing each user partition's coordinator in the partition metadata. The hash avoids that stored state. Each leader also recomputes the mapping for every request it receives and rejects a mismatch with <code>INVALID_REQUEST</code>, because a broker that mapped differently would create a second writer for a user partition.</p>
+
+  {{demo:hash}}
+
+  <div class="takeaway"><span class="label">Takeaway</span><p>The cluster runs <code>N</code> independent coordinators. A hash decides which one owns each user partition, so each user partition still has exactly one writer, and one coordinator's failure touches about <code>1/N</code> of the cluster.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>A WAL object mixes batches from many user partitions. Those user partitions map to different coordinator partitions. Which coordinator does the broker commit the object to?</p></div>
+</section>
+
+<section class="chapter" id="ch-parts" data-title="One file, many coordinators">
+  <h3><span class="n">14</span>One file, many coordinators: commit parts</h3>
+  <div class="why">
+    <span class="label">Why this exists</span>
+    <p>KIP-1163 lets any broker write any partition, so a WAL object usually spans many coordinators. KIP-1164 calls this "undesirable": in the worst case, committing one file takes one network call per coordinator, "which increases the chances for partial failure and higher tail latencies." Before the design can reduce the split, it has to make the split safe.</p>
+    <div class="prompted"><span>KIP-1164: Reducing multi-DC commit operations</span><span>Performance bar</span></div>
+  </div>
+  <p>The coordinator partitions that an object's batches map to are its <b>participants</b>. When a broker commits an object, it splits the commit into one <b>part</b> per participant and sends the parts in parallel. Each part carries only that coordinator partition's batches. Each part succeeds or fails on its own.</p>
+  <p>Wouldn't it be safer to make the parts all-or-nothing with a two-phase commit? It would cost an extra round trip on every commit, and it would protect a guarantee Kafka doesn't offer: a non-transactional produce to two partitions isn't atomic in classic Kafka either. The existing <code>commitFile</code> already returns a separate result for each batch. So if one part fails, the producers of those partitions get a retriable error and retry only those partitions, as they would for any partial produce failure.</p>
+  <h4>Commit queues</h4>
+  <p>Today the broker's <code>FileCommitter</code> commits files on one thread, one file after the other. That keeps a broker's commits in order. With many coordinators, that thread becomes a trap: most files have batches for most coordinator partitions, so if one coordinator partition is slow or offline, every later file waits behind it, on every broker.</p>
+  <p>The order that matters is the order <i>within a user partition</i>, which here means within a coordinator partition. So <code>FileCommitter</code> keeps one ordered queue per coordinator partition. A file's part on cp2 waits only for the same broker's previous part on cp2. Every part shares its file's commit deadline, so a stuck queue delays each waiting part by at most one deadline. PostgreSQL and the in-memory backend map everything to one queue, which keeps today's behavior.</p>
+
+  {{demo:fanout}}
+
+  <p>Two blunter fixes were considered and rejected. Uploading one object per coordinator partition would remove the split entirely, but it multiplies object-storage writes by up to <code>N</code>, which breaks the reason WAL objects mix partitions. Forcing each broker to write for only one coordinator partition would mean clients could no longer produce to any broker. Part 4 keeps the idea behind the second fix, but as a hint instead of a rule.</p>
+
+  <div class="takeaway"><span class="label">Takeaway</span><p>A commit fans out into independent parts. A slow coordinator partition hurts only its own user partitions, and never stalls the rest.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>One produce request can hold batches for several partitions, which map to several coordinator partitions. When does the producer get its answer?</p></div>
+</section>
+
+<section class="chapter" id="ch-slowest" data-title="Per-request completion">
+  <h3><span class="n">15</span>A produce waits only for its own parts</h3>
+  <div class="why">
+    <span class="label">Why this exists</span>
+    <p>If every produce request in a file waits for the whole file, a request that only touches cp2 still waits for a slow or stuck cp5. One sick coordinator partition would then raise the latency of every producer, which breaks the isolation that chapter 14 bought. A review of an earlier version, which completed requests per file, flagged it.</p>
+    <div class="prompted"><span>Performance bar</span><span>Review finding: per-file completion</span></div>
+  </div>
+  <p>A file holds batches from many produce requests. Each request completes as soon as <b>the parts that hold its batches</b> have finished. A part finishes when it commits, when it gets an error that retrying won't fix, or when the file's commit deadline passes.</p>
+  <ul>
+    <li>Batches on parts that confirmed get their offsets.</li>
+    <li>Batches on a part that didn't confirm by the deadline get <code>KAFKA_STORAGE_ERROR</code>, the same error a whole failed commit gets today. The producer retries only those partitions.</li>
+    <li>The file itself still finishes only when every part has finished. Part 3 shows why that moment matters: it's when cleanup decisions can start.</li>
+  </ul>
+
+  {{demo:v3-slowest}}
+
+  <div class="takeaway"><span class="label">Takeaway</span><p>Each produce request pays only for the coordinator partitions it touches. A stuck partition delays only the requests that have batches for it, and only until the deadline.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>Each coordinator partition knows its own batches. Only one thing spans all of them: the object itself. Who decides when it's safe to delete it?</p></div>
+</section>

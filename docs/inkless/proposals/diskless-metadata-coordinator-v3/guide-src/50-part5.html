@@ -1,0 +1,182 @@
+
+<!-- ============================================================ PART 5 -->
+<div class="part-title" data-part="Part 5 · Protecting the coordinator">
+  <span class="num">Part 5</span>
+  <h2>Protecting the coordinator</h2>
+  <p>The coordinator lives inside an ordinary Kafka topic, so everything that can happen to a Kafka topic can happen to it: a leader that doesn't know it was replaced, an admin who deletes the topic, a disk that gets wiped, a broker running an older binary. This part closes each of those doors.</p>
+</div>
+
+<section class="chapter" id="ch-barrier" data-title="Reads and deposed leaders">
+  <h3><span class="n">34</span>Reads, and the leader that doesn't know it was replaced</h3>
+  <div class="why">
+    <span class="label">Why this exists</span>
+    <p>A KRaft broker that loses contact with the controller doesn't step down. It keeps answering from its own state until it learns about the new leader. For most reads, an older answer only makes a consumer re-read. One answer is different: "that offset doesn't exist yet." A consumer that believes it resets its position and can skip records. KIP-1164 lets followers serve <code>findBatches</code>, which widens this problem to every replica. This design serves reads from the leader only, and adds a barrier for the one dangerous answer.</p>
+    <div class="prompted"><span>KIP-1164: <code>DisklessFindBatches</code> on followers</span><span>Kafka parity</span></div>
+  </div>
+  <h4>Only the leader answers</h4>
+  <p><code>findBatches</code>, <code>listOffsets</code>, and every other call go to the leader of the user partition's coordinator partition. Brokers absorb most lookups in the existing batch coordinate cache, so only cache misses reach the leader.</p>
+  <ul>
+    <li><b>Reads don't block commits.</b> The leader answers reads from a read pool with 4 threads, each with a read-only SQLite connection. Only commits, leases, releases, and fences use the single coordinator thread. Without the pool, a cache storm would put about <code>8B</code> scans in front of every commit part.</li>
+    <li><b>Reads don't block the caller.</b> <code>findBatches</code> becomes asynchronous on every backend, so a slow coordinator partition holds no shared thread.</li>
+    <li><b>Reads are bounded.</b> Each broker allows at most 8 read parts in flight per coordinator partition. A part that fails or passes its 1000 ms deadline gives its user partitions <code>KAFKA_STORAGE_ERROR</code>, and the rest of the fetch returns normally. The consumer fetches again, so the delegate doesn't retry reads.</li>
+  </ul>
+  <h4>The deposed window</h4>
+  <p>Unclean election is off, so a deposed leader's state is a committed prefix of the new leader's log. Every answer it gives is lower than or equal to the current answer, or unknown. A lower answer makes a consumer re-read, and an unknown answer makes it retry. The exception is <code>findBatches</code> for an offset above the deposed leader's high watermark: it says <code>OFFSET_OUT_OF_RANGE</code>, which can be false. Classic topics avoid this with KIP-320's leader epochs, but a coordinator leader change doesn't bump the user partition's epoch.</p>
+  <p>The <b>barrier</b> fixes it. When a request asks above the high watermark, the leader appends a barrier record and waits for it to commit. A deposed leader's barrier never commits, because the new leader stopped fetching from it, so after 500 ms the request gets the retriable <code>OFFSET_NOT_AVAILABLE</code> and the consumer refreshes. A current leader commits the barrier in one replication round trip, then answers truthfully. A consumer that keeps up never reaches the barrier, because an offset equal to the high watermark is in range.</p>
+
+  {{demo:barrier}}
+
+  <p>Why not a leader lease, so a deposed leader stops answering on its own? Every failover would then wait one lease before the new leader serves, and safety would depend on clock drift rates.</p>
+  <div class="takeaway"><span class="label">Takeaway</span><p>Reads go to the leader, off the commit thread, with bounds on every side. A deposed leader can only give older answers, and the barrier turns its one dangerous answer into a retry.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>The coordinator's topic is an ordinary topic as far as admin tools know. What stops an admin, or a config change, from breaking it?</p></div>
+</section>
+
+<section class="chapter" id="ch-guards" data-title="Guarding the topic">
+  <h3><span class="n">35</span>Guarding the topic from admins and configs</h3>
+  <div class="why">
+    <span class="label">Why this exists</span>
+    <p>Deleting <code>__diskless_metadata</code> loses the batch index for every diskless partition, every lease, and every deletion queue, and there's no rollback to PostgreSQL. Kafka's internal-topic flag guards only produce and <code>DeleteRecords</code>, and produce has a bypass. Every other admin request, and every config that weakens durability, needs its own guard.</p>
+    <div class="prompted"><span>Data-loss bar</span><span>Operator mistakes</span></div>
+  </div>
+  <p>The topic joins Kafka's internal topics, and explicit controller and broker checks cover the rest. None has a bypass, and they key on the topic's name only, so the other internal topics keep upstream behavior.</p>
+
+  {{demo:guard}}
+
+  <p>Some topic configs are fixed. Setting a key to its required value passes. Other topic configs stay alterable.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Config</th><th>Rule</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td><code>flush.messages</code></td><td>Must be <code>1</code></td><td>A lost unflushed tail can delete objects that live batches reference, as the durability chapter shows.</td></tr>
+      <tr><td><code>unclean.leader.election.enable</code></td><td>Must be <code>false</code></td><td>An unclean leader truncates acknowledged records.</td></tr>
+      <tr><td><code>retention.ms</code>, <code>retention.bytes</code></td><td>Must be <code>-1</code></td><td>Segment deletion would move the log start past the snapshots.</td></tr>
+      <tr><td><code>cleanup.policy</code></td><td>Must be <code>delete</code></td><td>Compaction removes records from a log that replicas replay in full.</td></tr>
+      <tr><td><code>min.insync.replicas</code></td><td>Fixed at creation</td><td>A lower value acknowledges records on fewer replicas.</td></tr>
+    </tbody>
+  </table></div>
+  <p>The guards take two incident workarounds away from operators: lowering <code>min.insync.replicas</code>, and an unclean election. With two of three replicas down, a coordinator partition stops until one returns, the same trade KRaft's own metadata log makes.</p>
+  <div class="takeaway"><span class="label">Takeaway</span><p>No request and no config change can delete the topic, write foreign records into it, or weaken its durability.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>Durability also depends on where the replicas sit. Three replicas in one rack can all fail at once.</p></div>
+</section>
+
+<section class="chapter" id="ch-rack" data-title="Replicas across racks">
+  <h3><span class="n">36</span>Replicas across racks</h3>
+  <div class="why">
+    <span class="label">Why this exists</span>
+    <p>The data-loss bar's only exception is losing every replica of a coordinator partition. That's only an acceptable risk if it's rare: at least 3 replicas, spread as widely as the racks allow. So the controller enforces both, at creation and on every reassignment.</p>
+    <div class="prompted"><span>Data-loss bar, clause 2</span><span>Blast radius</span></div>
+  </div>
+  <ul>
+    <li><b>Replication factor 3 or more.</b> Controller startup rejects a lower value. An internal config lowers it for tests, and the controller then warns that the data-loss exception doesn't apply. The replica count is fixed at creation.</li>
+    <li><b>Maximal spread.</b> Replicas span <code>min(replication factor, number of racks)</code> racks. Kafka's <code>StripedReplicaPlacer</code> already does this at creation.</li>
+    <li><b>Reassignments can't narrow it.</b> A reassignment whose target spans fewer racks than the current set and fewer than maximal spread gets <code>INVALID_REPLICA_ASSIGNMENT</code>. A move within a rack, to decommission a broker, passes.</li>
+    <li><b>Drift is visible.</b> A broker that re-registers with another rack can leave a partition below maximal spread without any request to reject. The gauge <code>CoordinatorPartitionsBelowRackSpread</code> shows it, and a reassignment fixes it.</li>
+  </ul>
+
+  {{demo:v3-rack}}
+
+  <p>The smallest supported cluster has 3 brokers. Below that, the controller never creates the topic. On a 3-broker cluster, an operator must add a replacement before decommissioning a broker, because the replica count is fixed.</p>
+  <div class="takeaway"><span class="label">Takeaway</span><p>At least 3 replicas, one per rack when there are 3 racks, and no reassignment can quietly undo that.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>Replicas in different racks can still lose power together. Which one may lead when they come back?</p></div>
+</section>
+
+<section class="chapter" id="ch-election" data-title="Electing a safe leader">
+  <h3><span class="n">37</span>Electing a safe leader after a power loss</h3>
+  <div class="why">
+    <span class="label">Why this exists</span>
+    <p>When every replica restarts uncleanly, Kafka elects the last known leader. If that broker came back with a wiped or replaced disk, it leads with an empty log, and the surviving replicas truncate to match it. On a classic topic that loses one partition's tail. Here, every follower truncates to offset 0, and the coordinator partition loses its whole batch index, leases, and deletion queues, while object storage doesn't roll back.</p>
+    <div class="prompted"><span>Data-loss bar</span><span>KIP-966: eligible leader replicas</span></div>
+  </div>
+  <p>The rule: <b>storage identity, not shutdown cleanliness, decides whether a replica may lead</b>.</p>
+  <ul>
+    <li><b>Storage change guard.</b> When a broker registers, the controller removes it from the eligible leader replicas (ELR) and the last-known-leader list of every coordinator partition whose log directory isn't in the new registration. Formatting always creates a new directory ID, so this catches a wiped, replaced, or reformatted disk. Registration comes before unfencing, so the guard runs before the broker can be elected.</li>
+    <li><b>ELR across an unclean shutdown.</b> With <code>flush.messages=1</code>, every replica holds every acknowledged record on disk, so an unclean shutdown keeps it eligible, as a clean one does. The first returning replica wins a clean election.</li>
+    <li><b>No cluster-wide ELR clear.</b> A cluster-level <code>min.insync.replicas</code> change normally clears every ELR. It skips this topic, whose own setting is fixed.</li>
+  </ul>
+
+  {{demo:elect}}
+
+  <div class="takeaway"><span class="label">Takeaway</span><p>A replica whose storage changed can't lead. A replica whose storage survived an unclean shutdown can, so a correlated power loss doesn't keep the coordinator offline.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>Brokers in a cluster run different versions during an upgrade. What happens when a replica reads a record type it doesn't know?</p></div>
+</section>
+
+<section class="chapter" id="ch-compat" data-title="Mixed versions">
+  <h3><span class="n">38</span>Mixed versions and upgrades</h3>
+  <div class="why">
+    <span class="label">Why this exists</span>
+    <p>Every replica replays the same log into SQLite. A replica that skips a record it doesn't understand ends up with different state from the leader, silently. Upgrades and downgrades therefore need a rule for which records a leader may write and which binaries may read them.</p>
+    <div class="prompted"><span>Rolling upgrades</span><span>Replicas must agree</span></div>
+  </div>
+  <p>A replica that meets an unknown record type <b>stops</b>, it never skips. Two features keep that from happening in a healthy cluster:</p>
+  <ul>
+    <li><b>An upstream feature</b>, for example <code>diskless.coordinator.version</code>, selects the backend. Level 0 means off. Each later level names the record types and versions a leader may write.</li>
+    <li><b>An Inkless-owned feature</b> gates Inkless's own extension fields, with each level declaring the upstream level it needs.</li>
+  </ul>
+  <p>The controller raises a level only when every registered broker supports it, and registration rejects a broker that lacks a finalized level. So the upgrade order is: roll every broker to the new binary, then raise the level. Raising the level is the point of no return. The controller refuses every downgrade of both features, because a downgrade would leave newer records in the log and snapshots, and brokers rolled back to an older binary would stop on them. There's no rollback onto PostgreSQL.</p>
+
+  {{demo:skip}}
+
+  <div class="takeaway"><span class="label">Takeaway</span><p>Features gate which records a leader writes. A binary that can't read them can't register, and a replica that meets one anyway stops instead of drifting.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>The coordinator acts on the metadata image: topics created and deleted, brokers registered and gone. Images lag. How does a leader avoid acting on an old one?</p></div>
+</section>
+
+<section class="chapter" id="ch-image" data-title="Acting on a lagging image">
+  <h3><span class="n">39</span>Acting on a metadata image that lags</h3>
+  <div class="why">
+    <span class="label">Why this exists</span>
+    <p>In the PostgreSQL design, the controller calls the control plane when a topic is created or deleted, and waits up to ten seconds on the request thread. The coordinator removes that call: each leader reconciles its state against its own metadata image. But images lag, and a leader that reads "absent" as "gone" could purge a live topic or reject a live broker forever. Absence only proves something when the image is past the point where the thing was created.</p>
+    <div class="prompted"><span>KIP-1164: Topic creation and deletion</span><span>Leader changes</span></div>
+  </div>
+  <h4>Topics</h4>
+  <ul>
+    <li>For each mapped diskless partition in the image that the leader doesn't hold, it appends a <b>partition-created</b> record with <code>metadataOffset</code>, the image offset it acted on.</li>
+    <li>For each topic it holds that the image no longer has, it appends <b>topic-deleted</b> only when the image is at or past the highest <code>metadataOffset</code> for that topic. Topic IDs are never reused, so absence past the creation offset proves the deletion.</li>
+    <li>A call that names a partition the leader hasn't created yet, an <b>unreconciled</b> partition, gets a retriable error and appends nothing. The caller retries until the leader's image catches up.</li>
+  </ul>
+  <h4>Broker epochs</h4>
+  <p>KRaft sets a broker's epoch to the offset of its registration record. So an image at offset <code>X</code> shows every registration at or below <code>X</code>. When the image shows a newer epoch <code>E</code> for a broker, the leader retires through <code>E - 1</code>. When it shows no registration, the leader retires through <code>X</code>. And the leader appends nothing when <code>retiredThrough</code> would be below the newest epoch its own rows already hold, which covers an image that lags a new registration.</p>
+
+  {{demo:v3-image}}
+
+  <div class="takeaway"><span class="label">Takeaway</span><p>The leader compares offsets before it trusts an absence. An old image can delay a creation or a retirement, never cause a wrong deletion or reject a live broker.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>One question is left about load: what stops one busy or slow coordinator partition from overwhelming its leader, or a recovering leader from being flooded?</p></div>
+</section>
+
+<section class="chapter" id="ch-bounds" data-title="Bounding the load">
+  <h3><span class="n">40</span>Bounding the load on a leader</h3>
+  <div class="why">
+    <span class="label">Why this exists</span>
+    <p>A coordinator leader shares a broker with that broker's own partitions. If the work arriving at it had no bound, a cache storm, a retry loop, or a recovery burst could stall every commit behind that leader. A review asked for every source of load to have a limit with its own test.</p>
+    <div class="prompted"><span>Review finding: unbounded queues</span><span>Co-tenancy</span></div>
+  </div>
+  <p>The design bounds load at the sender, not with an admission cap at the leader. Each limit is per commit queue or per coordinator partition, so work stuck on one coordinator partition never blocks another:</p>
+  <ul>
+    <li><b>Commit parts</b>: one in flight per commit queue. Producer retries land in later files, so they add batches, not parts.</li>
+    <li><b>Lease requests</b>: one renewal at a time per broker.</li>
+    <li><b>Release reports</b>: one in flight per participant and tracking partition.</li>
+    <li><b>Fences</b>: one batched request in flight per tracking partition and participant.</li>
+    <li><b>Read parts</b>: at most 8 in flight per coordinator partition on each calling broker.</li>
+    <li><b>Retries</b> wait with Kafka's exponential backoff: 100 ms, doubling to at most 1000 ms, with 0.2 jitter. A slow leader causes no retries. Only fast errors do.</li>
+  </ul>
+  <p>The only thing that sheds load is the overlay cap of <code>4 × B</code> entries from chapter 9, which only trips on a bug or a stalled high watermark. Why no admission cap? It would duplicate the in-flight limits, and shedding commit parts turns slowness into failed produce requests sooner.</p>
+
+  <div class="demo" id="demo-bounds">
+    <div class="demo-head"><h5>Try it: the worst case at one leader</h5><span class="tag">Interactive</span></div>
+    <div class="demo-body">
+      <p class="hint">Pick the cluster size and what's going wrong. The bars show the most work that can be waiting at one coordinator leader for one coordinator partition at a time, with and without the in-flight limits.</p>
+      <div class="controls">
+        <label>Brokers <input type="range" id="bd-b" min="3" max="96" step="3" value="24"> <b id="bd-b-v">24</b></label>
+        <label>Situation <select id="bd-case">
+          <option value="steady">Steady state</option>
+          <option value="storm">Every consumer restarts at once</option>
+          <option value="recover">The leader returns after a 2-minute outage</option>
+          <option value="retention">A day of objects expires at once</option>
+        </select></label>
+      </div>
+      <div id="bd-bars"></div>
+      <div class="readout" id="bd-readout"></div>
+    </div>
+  </div>
+
+  <div class="takeaway"><span class="label">Takeaway</span><p>A leader receives at most about <code>B</code> commit parts, <code>B</code> lease requests, <code>N - 1</code> fence batches, and <code>8B</code> read parts per coordinator partition it leads, whatever goes wrong elsewhere.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>That's every piece. The last part puts them together, shows how the design is checked, and lists what it gives up.</p></div>
+</section>

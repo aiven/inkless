@@ -1,0 +1,15 @@
+<div class="demo" id="demo-overlay">
+    <div class="demo-head"><h5>Try it: waiting versus the overlay</h5><span class="tag">Interactive</span></div>
+    <div class="demo-body">
+      <p class="hint">Eight commits for the same partition arrive 2 ms apart. One replication round trip, including the disk sync, takes 8 ms. Compare the two modes, then make one append fail and watch which commits are affected.</p>
+      <div class="controls">
+        <button class="toggle" id="ov-wait">Wait for each commit</button>
+        <button class="toggle on" id="ov-overlay">Overlay with 4 ms linger</button>
+        <span class="sep"></span>
+        <label>Fail the append of <select id="ov-fail"><option value="-1">nothing</option></select></label>
+      </div>
+      <div class="gantt" id="ov-gantt"></div>
+      <div class="table-wrap"><table><thead><tr><th>Commit</th><th>Offsets assigned</th><th>Checked against</th><th>Result</th></tr></thead><tbody id="ov-table"></tbody></table></div>
+      <div class="readout" id="ov-readout"></div>
+    </div>
+  </div>

@@ -1,0 +1,17 @@
+<div class="demo" id="demo-barrier">
+    <div class="demo-head"><h5>Try it: a consumer meets a deposed leader</h5><span class="tag">Step through</span></div>
+    <div class="demo-body">
+      <p class="hint">Broker 1 led cp0 and was cut off. Broker 2 is the new leader and committed <i>orders-0</i> up to offset 1,500. Broker 1 still thinks the high watermark is 1,000. A consumer resumes from its committed offset 1,400, and its fetch reaches broker 1.</p>
+      <div class="controls">
+        <button class="toggle" id="br-off">Without the barrier</button>
+        <button class="toggle on" id="br-on">With the barrier</button>
+        <label>auto.offset.reset <select id="br-reset"><option>earliest</option><option selected>latest</option></select></label>
+        <span class="sep"></span>
+        <button id="br-prev">Back</button><button class="primary" id="br-next">Next step</button>
+        <span class="step-count" id="br-count"></span>
+      </div>
+      <div class="narration" id="br-narr"></div>
+      <div class="svgbox" id="br-svg"></div>
+      <div class="readout" id="br-readout"></div>
+    </div>
+  </div>

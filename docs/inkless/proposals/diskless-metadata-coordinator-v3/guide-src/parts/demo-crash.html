@@ -1,0 +1,13 @@
+<div class="demo" id="demo-crash">
+    <div class="demo-head"><h5>Try it: crash the broker</h5><span class="tag">Interactive</span></div>
+    <div class="demo-body">
+      <p class="hint">A broker is committing one file with batches for cp0 and cp1. Pick the moment it crashes or loses its connection. The panel shows what's left in storage and what each coordinator partition knows.</p>
+      <div class="controls" id="cr-points"></div>
+      <div class="grid3">
+        <div class="panel" id="cr-storage"></div>
+        <div class="panel" id="cr-cp0"></div>
+        <div class="panel" id="cr-cp1"></div>
+      </div>
+      <div class="readout" id="cr-readout"></div>
+    </div>
+  </div>

@@ -1,0 +1,10 @@
+
+.tabs button.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 650; }
+.gw-table { width: auto; font-size: 0.8rem; }
+.gw-table th, .gw-table td { padding: 0.3rem 0.45rem; text-align: center; white-space: nowrap; }
+.gw-table th.clickable { cursor: pointer; }
+.gw-table th.clickable:hover { color: var(--bad); }
+.gw-table td.gw-on { outline: 2px solid var(--ink); outline-offset: -2px; font-weight: 750; }
+.rt-broker { display: flex; flex-wrap: wrap; gap: 0.25rem; align-items: center; width: 100%; margin: 0.2rem 0; text-align: left; }
+.rt-broker.picked { border-color: var(--good); box-shadow: 0 0 0 3px color-mix(in srgb, var(--good) 25%, transparent); }
+.rt-broker.off { opacity: 0.7; }

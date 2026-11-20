@@ -1,0 +1,16 @@
+<div class="demo" id="demo-v3-slowest">
+    <div class="demo-head"><h5>Try it: three requests share one file</h5><span class="tag">Interactive</span></div>
+    <div class="demo-body">
+      <p class="hint">Request A writes to partitions that map to cp0 and cp1, request B writes to every coordinator partition, and request C writes only to cp2. Set one latency per coordinator partition, mark one as stuck, and compare completing every request with the whole file against completing each request with its own parts. The commit deadline is 2,000 ms.</p>
+      <div class="controls">
+        <button class="toggle on" id="sp-v2">Complete with the whole file</button>
+        <button class="toggle" id="sp-v3">Complete per request (the design)</button>
+        <span class="sep"></span>
+        <label>Coordinator partitions <select id="sp-n"><option value="4">4</option><option value="8" selected>8</option><option value="16">16</option></select></label>
+        <label>Stuck part <select id="sp-failed"><option value="-1">none</option></select></label>
+      </div>
+      <div id="sp-inputs" class="controls" aria-label="Coordinator part latencies"></div>
+      <div class="gantt" id="sp-gantt"></div>
+      <div class="readout" id="sp-readout"></div>
+    </div>
+  </div>

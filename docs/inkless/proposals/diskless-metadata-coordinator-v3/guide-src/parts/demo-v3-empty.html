@@ -1,0 +1,17 @@
+<div class="demo" id="demo-v3-empty">
+    <div class="demo-head"><h5>Try it: an empty tracking part during failover</h5><span class="tag">Step through</span></div>
+    <div class="demo-body">
+      <p class="hint">The file uses sequence <code>(7, 41)</code>. Cp2 tracks it but holds no batches, so its part is empty. Compare the obvious rule, which fences participants it hasn't heard from, with the design's two outcomes: cp1 recovers within the deadline, or cp1 stays unavailable past it.</p>
+      <div class="controls">
+        <button class="toggle on" id="et-v2">Obvious rule: fence the silent</button>
+        <button class="toggle" id="et-v3">Finish reports: cp1 fails over, then commits</button>
+        <button class="toggle" id="et-v3x">Finish reports: cp1 misses the deadline</button>
+        <span class="sep"></span>
+        <button id="et-prev">Back</button><button class="primary" id="et-next">Next step</button><button id="et-reset">Start over</button>
+        <span class="step-count" id="et-count"></span>
+      </div>
+      <div class="narration" id="et-narr"></div>
+      <div class="grid3" id="et-parts"></div>
+      <div class="readout" id="et-readout"></div>
+    </div>
+  </div>

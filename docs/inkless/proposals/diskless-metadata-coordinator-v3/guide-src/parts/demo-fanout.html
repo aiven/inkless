@@ -1,0 +1,15 @@
+<div class="demo" id="demo-fanout">
+    <div class="demo-head"><h5>Try it: one coordinator partition goes bad</h5><span class="tag">Interactive</span></div>
+    <div class="demo-body">
+      <p class="hint">A broker closes a file every 250 ms. Each file uploads in 100 ms, then commits a part to each participant. A healthy part takes 20 ms. Make cp2 slow or offline and compare one commit thread with one queue per coordinator partition. The commit deadline is 2 seconds in this demo.</p>
+      <div class="controls">
+        <label>cp2 is <select id="fo-state"><option value="healthy">healthy</option><option value="slow" selected>slow (600 ms per part)</option><option value="offline">offline</option></select></label>
+        <button class="toggle on" id="fo-every">Every file touches cp2</button>
+        <span class="sep"></span>
+        <button class="toggle" id="fo-single">One commit thread</button>
+        <button class="toggle on" id="fo-queues">One queue per coordinator partition</button>
+      </div>
+      <div class="gantt" id="fo-gantt"></div>
+      <div class="readout" id="fo-readout"></div>
+    </div>
+  </div>

@@ -1,0 +1,15 @@
+<div class="demo" id="demo-skew">
+    <div class="demo-head"><h5>Try it: a late part and a skewed clock</h5><span class="tag">Interactive</span></div>
+    <div class="demo-body">
+      <p class="hint">A broker sends a commit part at minute 0. Its batches are removed almost at once by <code>DeleteRecords</code>, so the participant keeps a tombstone, and the object is deleted a few minutes later. A duplicate of the old request was stuck in a queue and arrives late. Move the sliders: how late it arrives, and how far the uploader's clock runs ahead.</p>
+      <div class="grid2">
+        <label>Late copy arrives at minute <input type="range" id="sk-arrive" min="0" max="20" step="0.5" value="12"><span class="chip" id="sk-arrive-l"></span></label>
+        <label>Uploader clock runs ahead by <input type="range" id="sk-skew" min="0" max="15" step="0.5" value="3"><span class="chip" id="sk-skew-l"></span></label>
+      </div>
+      <div class="svgbox" id="sk-svg" style="margin-top: 0.8rem;"></div>
+      <div class="grid2" style="margin-top: 0.6rem;">
+        <div class="readout" id="sk-v1"></div>
+        <div class="readout" id="sk-v2"></div>
+      </div>
+    </div>
+  </div>

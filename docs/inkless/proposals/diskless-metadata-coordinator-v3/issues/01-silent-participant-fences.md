@@ -24,6 +24,8 @@ Named test: an empty tracking part with a participant failover in the middle of 
 
 Resolved on 2026-11-12 in a grilling session.
 
+Amended by [Protocol model](17-protocol-model.md#protocol-changes): a sequence is missed once a recorded `finishedThrough` reaches it, and the tracking partition applies this rule before any lease end in the same record. This replaces "detects a missed sequence when it records a later one" in [Fences](#fences).
+
 The tracking partition fences a participant only after the broker has finished the file. The broker tells it which files are finished, and which participants didn't answer, in a finish report. The tracking partition never fences a participant that answered. It waits for that participant's release report.
 
 ### Terms

@@ -1,0 +1,14 @@
+<div class="demo" id="demo-elect">
+    <div class="demo-head"><h5>Try it: power loss on every replica of cp0</h5><span class="tag">Interactive</span></div>
+    <div class="demo-body">
+      <p class="hint">Brokers 1, 2, and 3 host cp0. Broker 1 was the leader. All three lose power within seconds. The controller noticed broker 3 first, while two replicas were still in sync, so broker 3 may miss the newest records and isn't in the ELR. Brokers 1 and 2 are. Pick which broker comes back first and whether its disk survived. The others come back later with their disks intact.</p>
+      <div class="controls">
+        <label>First to return <select id="el-first"><option value="1">Broker 1 (last leader)</option><option value="2">Broker 2</option><option value="3">Broker 3</option></select></label>
+        <label>Its disk <select id="el-disk"><option value="intact">survived</option><option value="wiped" selected>was wiped or replaced</option></select></label>
+      </div>
+      <div class="grid2">
+        <div class="panel" id="el-up"></div>
+        <div class="panel" id="el-v2"></div>
+      </div>
+    </div>
+  </div>

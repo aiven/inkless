@@ -1,0 +1,17 @@
+<div class="demo" id="demo-seq">
+    <div class="demo-head"><h5>Try it: be the sequencer</h5><span class="tag">Interactive</span></div>
+    <div class="demo-body">
+      <p class="hint">Three brokers uploaded objects that each hold a batch for partition <i>orders-0</i>. Commit them in any order you like. The coordinator gives out offsets in the order it receives the commits. Then look up an offset as a consumer would.</p>
+      <div class="controls" id="seq-buttons"></div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Offsets</th><th>Object key</th><th>Byte range</th><th>Committed by</th></tr></thead>
+        <tbody id="seq-table"><tr><td colspan="4" class="muted">No batches committed yet. The partition is empty.</td></tr></tbody>
+      </table></div>
+      <div class="controls">
+        <label>Consumer asks for offset <input type="number" id="seq-offset" value="12" min="0" style="width: 6rem;"></label>
+        <button id="seq-find">findBatches</button>
+        <button id="seq-reset">Reset</button>
+      </div>
+      <div class="readout" id="seq-readout">Commit a batch, then look up an offset.</div>
+    </div>
+  </div>

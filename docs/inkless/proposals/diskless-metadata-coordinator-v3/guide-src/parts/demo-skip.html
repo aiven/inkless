@@ -1,0 +1,13 @@
+<div class="demo" id="demo-skip">
+    <div class="demo-head"><h5>Try it: one replica runs an older binary</h5><span class="tag">Interactive</span></div>
+    <div class="demo-body">
+      <p class="hint">The leader writes a record type that broker 3's older binary doesn't know, followed by two more records. Compare skipping with stopping.</p>
+      <div class="controls">
+        <button class="toggle" id="sk2-skip">Skip unknown records</button>
+        <button class="toggle on" id="sk2-stop">Stop at unknown records</button>
+        <button id="sk2-upgrade">Upgrade broker 3</button>
+      </div>
+      <div class="grid3" id="sk2-replicas"></div>
+      <div class="readout" id="sk2-readout"></div>
+    </div>
+  </div>

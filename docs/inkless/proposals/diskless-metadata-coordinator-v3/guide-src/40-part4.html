@@ -1,0 +1,210 @@
+
+<!-- ============================================================ PART 4 -->
+<div class="part-title" data-part="Part 4 · Gateway routing">
+  <span class="num">Part 4</span>
+  <h2>Gateway routing: fewer parts per file</h2>
+  <p>Splitting the coordinator into <code>N</code> partitions spread the work, but it also made every file talk to almost every partition. This part shows the cost of that, and how routing clients to the right brokers cuts it to about one part per file in a large cluster, without changing any public protocol.</p>
+</div>
+
+<section class="chapter" id="ch-fanout-cost" data-title="The cost of fan-out">
+  <h3><span class="n">29</span>The cost of talking to every partition</h3>
+  <div class="why">
+    <span class="label">Why this exists</span>
+    <p>Chapter 10 showed that each commit part costs a replicated, fsynced append on the leader and on every follower. Without routing, a broker's file holds batches for almost every coordinator partition, so each file costs up to <code>N</code> parts and up to <code>N × R</code> flushes. That's the main cost the coordinator adds over PostgreSQL. KIP-1164 sketches an answer: gateways, a few brokers per rack that collect the traffic for one coordinator.</p>
+    <div class="prompted"><span>KIP-1164: Gateways</span><span>Performance bar</span></div>
+  </div>
+  <p>Today, Inkless's metadata transformer tells each client to produce to a broker chosen by a hash of the user partition. Every broker gets a slice of every topic. With 64 partitions per broker and <code>N = 8</code>, a 250 ms file holds about 256 batches and hits all 8 coordinator partitions. So each file sends 8 parts, and each coordinator leader receives one part from every broker on every round.</p>
+  <p>The fix doesn't touch the coordinator at all. It changes <i>which broker a client talks to</i>. If every client that writes to cp3's user partitions in rack a talks to the same broker, that broker's files hold mostly cp3 batches, and each file sends about one part. That broker is a <b>gateway</b> for cp3 in rack a.</p>
+  <ul>
+    <li><b>A gateway</b> accepts produce, uploads the WAL file, and sends the commit part. It holds no coordinator state.</li>
+    <li><b>A coordinator leader</b> assigns offsets and replicates the commit. Being a gateway and being a leader are independent.</li>
+    <li><b>Routing is only a hint.</b> A produce that reaches any broker still commits, at the cost of extra parts. Routing never decides correctness, and it doesn't change the number of files or PUTs: each broker still uploads one file per commit tick. It only decides what each file holds.</li>
+    <li><b>No public protocol changes.</b> The transformer rewrites <code>LeaderId</code> in metadata responses, as it already does.</li>
+  </ul>
+
+  <div class="demo" id="demo-parts">
+    <div class="demo-head"><h5>Try it: the parts calculator</h5><span class="tag">Interactive</span></div>
+    <div class="demo-body">
+      <p class="hint">Pick a cluster shape. The calculator assumes the base benchmark workload, where a file without routing touches every coordinator partition, and routed files with no misroutes. The replication factor is 3.</p>
+      <div class="controls">
+        <label>Brokers per rack <input type="range" id="pt-br" min="1" max="20" value="8"> <b id="pt-br-v">8</b></label>
+        <label>Racks <select id="pt-racks"><option>1</option><option>2</option><option selected>3</option></select></label>
+        <label>Coordinator partitions <select id="pt-n"><option>4</option><option selected>8</option><option>16</option></select></label>
+        <button class="toggle on" id="pt-gw">Gateway routing on</button>
+      </div>
+      <div class="grid2">
+        <div class="panel" id="pt-off"></div>
+        <div class="panel" id="pt-on"></div>
+      </div>
+      <div class="readout" id="pt-readout"></div>
+    </div>
+  </div>
+
+  <div class="takeaway"><span class="label">Takeaway</span><p>Routing each rack's clients for a coordinator partition to one broker turns about <code>N</code> parts per file into about one, once a rack has at least <code>N</code> brokers. With 3 racks of 8, that's 8 times fewer parts and flushes.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>Every broker must agree on who the gateways are, without talking to each other. How?</p></div>
+</section>
+
+<section class="chapter" id="ch-gw-assign" data-title="Choosing gateways">
+  <h3><span class="n">30</span>Choosing gateways without asking anyone</h3>
+  <div class="why">
+    <span class="label">Why this exists</span>
+    <p>Any broker can answer a metadata request, so every broker must give the same answer. A controller-written assignment would need a new metadata record and controller code for every fence and registration. Instead, every broker computes the gateways from its metadata image alone, with a rule that gives the same answer everywhere and moves as few gateways as possible when a broker joins or leaves.</p>
+    <div class="prompted"><span>KIP-1164: <code>max(1, n_brokers / n_dcs / n_racks)</code> gateways</span><span>Rendezvous hashing</span></div>
+  </div>
+  <p>The rule works per rack, and no rack reads another rack's brokers:</p>
+  <ul>
+    <li><b>Candidates</b> are the registered, unfenced brokers in the image, minus the ones an operator excluded with <code>diskless.gateway.candidate.enable=false</code>. Brokers without a rack form their own group.</li>
+    <li><b>How many gateways.</b> Each coordinator partition gets <code>g = max(1, ⌊b_r / N⌋)</code> gateways in a rack with <code>b_r</code> candidates. KIP-1164 proposed counting across the whole cluster. Counting per rack fits racks of different sizes.</li>
+    <li><b>Scores.</b> Each pair of a coordinator partition and a broker gets a score: <code>toPositive(murmur2(bytes(cp) ++ bytes(brokerId)))</code>, with both as 4-byte big-endian integers. This is <b>rendezvous hashing</b>: everyone computes the same scores, and a broker's scores don't depend on anyone else.</li>
+    <li><b>A cap.</b> Plain rendezvous leaves balance to chance: at 3 brokers and <code>N = 8</code>, about 1 cluster in 4 puts 5 or more coordinator partitions on one broker. So the rule walks the pairs from the highest score down and assigns a pair only if the coordinator partition still needs a gateway and the broker holds fewer than <code>⌈N × g / b_r⌉</code>. Equal scores go to the lower broker ID.</li>
+    <li><b>Spares.</b> From <code>N</code> brokers per rack up, each gateway serves exactly one coordinator partition. That's <b>saturation</b>. Leftover brokers are spares and get no gateway traffic.</li>
+    <li><b>Leadership isn't an input.</b> An election moves no client traffic.</li>
+  </ul>
+
+  <div class="demo" id="demo-gateways">
+    <div class="demo-head"><h5>Try it: compute the gateways of one rack</h5><span class="tag">Interactive</span></div>
+    <div class="demo-body">
+      <p class="hint">This is the real rule with Kafka's <code>murmur2</code>, at <code>N = 8</code>. Each cell shows a pair's score rank for that coordinator partition: darker means a higher score. Outlined cells are the assigned gateways. Add a broker, or click a broker's column header to remove it, and count how many gateway slots move. Switch to plain rendezvous to see what the cap prevents.</p>
+      <div class="controls">
+        <button class="primary" id="gw-add">Add a broker</button>
+        <button id="gw-reset">Reset to 3 brokers</button>
+        <span class="sep"></span>
+        <button class="toggle" id="gw-plain">Plain rendezvous, no cap</button>
+      </div>
+      <div id="gw-grid" style="overflow-x:auto"></div>
+      <div class="readout" id="gw-readout"></div>
+    </div>
+  </div>
+
+  <p>In simulations of random clusters at <code>N = 8</code>, the capped rule always met the cap. It moved 2.7 gateway slots on average when a fourth broker joined a rack, against an ideal of 2, and 1.1 when one of 10 left, against about 0.8. Round-robin over sorted IDs, by comparison, moves 6.6 slots on a join, because one new ID shifts every later position. The design's simulation used MD5, so the reference implementation measures the bound again with <code>murmur2</code>.</p>
+  <p>A gateway crash needs no extra mechanism. Until the controller fences the broker, its coordinator partitions stall in its rack, as a classic partition does when its leader crashes. Other racks keep committing. After the fence, the same rule on the remaining brokers picks stand-ins.</p>
+  <div class="takeaway"><span class="label">Takeaway</span><p>Every broker computes the same gateways from the image, with capped rendezvous hashing per rack. No RPC, no controller record, and few moves when membership changes.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>What does a broker tell a client whose rack has no gateway it can use, or whose rack is unknown? And what about clients with old metadata?</p></div>
+</section>
+
+<section class="chapter" id="ch-gw-route" data-title="Routing a client">
+  <h3><span class="n">31</span>Routing a client, and correcting stale ones</h3>
+  <div class="why">
+    <span class="label">Why this exists</span>
+    <p>Diskless topics exist to avoid cross-AZ traffic, so routing must never move a client's bytes to another AZ when a broker in its own AZ can take them. And clients cache metadata for up to 5 minutes, so after a gateway moves they keep producing to the old broker. Without a correction, a rolling restart of 24 brokers costs up to about 139,000 extra parts.</p>
+    <div class="prompted"><span>Cross-AZ cost</span><span>Stale metadata after a move</span></div>
+  </div>
+  <p>For a client in rack <code>r</code> and a user partition of coordinator partition <code>p</code>, the transformer answers with the first match:</p>
+  <ol>
+    <li>A gateway of <code>p</code> in <code>r</code>.</li>
+    <li>Another broker in <code>r</code>, in the order of <code>p</code>'s scores.</li>
+    <li>A gateway of <code>p</code> in another rack.</li>
+    <li>Any broker.</li>
+  </ol>
+  <p>The order keeps traffic in the client's AZ whenever a broker there can take it, at the cost of an extra part. When it can't, it crosses AZs only to a gateway that already sends a part for <code>p</code>. Each choice among several brokers takes the highest <code>hash(logKey, brokerId)</code>, so the producer and consumers of one user partition reach the same broker.</p>
+  <p>A client whose AZ is unknown, because its client ID has no <code>diskless_az</code>, counts as a client of the rack-less group. When every broker has a rack, step 3 picks a gateway in some rack. About 2 picks in 3 cross an AZ with 3 racks under any rule, so the rule only makes sure the pick already sends a part for <code>p</code>.</p>
+  <h4>The misroute rejection</h4>
+  <p>A batch is <b>misrouted</b> when the receiving broker isn't a gateway of its coordinator partition in its own rack. On the gateway path, the broker rejects a misrouted batch with <code>NOT_LEADER_OR_FOLLOWER</code>, before writing it. Producers treat that error as stale metadata: they refresh at once and retry, and idempotent sequences stay intact. The broker rejects at most <b>once per connection and partition per <code>metadata.max.age.ms</code></b>, and accepts and commits the batch otherwise. That guard matters. Two brokers whose images differ for a moment could otherwise bounce a client back and forth until its delivery timeout. With the guard, a false positive costs one retry, and then the batch commits.</p>
+
+  <div class="demo" id="demo-route">
+    <div class="demo-head"><h5>Try it: route a client</h5><span class="tag">Interactive</span></div>
+    <div class="demo-body">
+      <p class="hint">Three racks, <code>N = 8</code>. Pick the client's rack and the coordinator partition of the user partition it writes. Click a broker to cycle it through running, fenced, and excluded. The steps show which rule matched. When the gateway moves, the readout shows what a client with cached metadata does next.</p>
+      <div class="controls">
+        <label>Client rack <select id="rt-rack"><option value="0">a</option><option value="1">b</option><option value="2">c</option><option value="-1">unknown AZ</option></select></label>
+        <label>Coordinator partition <select id="rt-cp"></select></label>
+        <label>Brokers per rack <select id="rt-size"><option>2</option><option selected>3</option><option>8</option><option>16</option></select></label>
+        <button id="rt-reset">Reset brokers</button>
+      </div>
+      <div class="grid3" id="rt-racks"></div>
+      <div class="panel" id="rt-steps" style="margin-top:0.6rem"></div>
+      <div class="readout" id="rt-readout"></div>
+    </div>
+  </div>
+
+  <div class="takeaway"><span class="label">Takeaway</span><p>The fallback order stays in the client's AZ whenever it can. One guarded rejection per connection and partition moves stale clients within a retry, so a rolling restart costs a few extra parts per move, not about 139,000.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>A routed file now sends about one part. But every file also sends a tracking part. If the tracking partition isn't the gateway's own coordinator partition, every file pays a second part.</p></div>
+</section>
+
+<section class="chapter" id="ch-gw-track" data-title="Tracking partition under gateways">
+  <h3><span class="n">32</span>Picking the tracking partition</h3>
+  <div class="why">
+    <span class="label">Why this exists</span>
+    <p>A tracking partition fixed by a hash of the broker ID matches a gateway's own coordinator partition only 1 time in <code>N</code>. At saturation, files then send about 1.88 parts instead of 1, every leader receives 5.6 parts per round instead of 3, and every object needs a release report across partitions. If the tracking partition is one of the broker's own gateway partitions, a routed file sends no extra part for tracking, and its releases are local.</p>
+    <div class="prompted"><span>Review finding: the fixed hash doubles parts</span><span>Performance bar</span></div>
+  </div>
+  <p>A broker's <b>gateway set</b> is the coordinator partitions it's a gateway for in its own rack. A spare's set is empty. The broker picks its preferred tracking partition from that set with the <b>sticky rule</b>:</p>
+  <ul>
+    <li>While the current tracking partition stays in the set, keep it.</li>
+    <li>When it leaves the set, or at the start of an epoch, take the member with the highest score, the same score the gateway rule uses. At saturation the set has one member, so this only chooses below <code>N</code> brokers per rack.</li>
+    <li>With an empty set, keep the current one. At the start of an epoch with an empty set, take the highest score over all <code>N</code>.</li>
+  </ul>
+  <p>Why sticky, and not always the highest score? Because a broker that only <i>gains</i> coordinator partitions, such as a stand-in during a fence, never switches, so a rolling restart doesn't bounce tracking partitions back and forth. Always taking the highest score switches about twice as often below saturation.</p>
+  <p>The rule produces the <b>ordered list</b> that lease renewals walk, as chapter 20 described: the preferred tracking partition, then the rest of the gateway set by score, then every other coordinator partition by score.</p>
+  <h4>When to switch</h4>
+  <p>When the preferred partition changes, the broker switches once it closes the <b>first file with no batch for its current tracking partition</b>. Until then, clients with cached metadata still send it that partition's traffic, so its tracking part isn't empty and a switch would save nothing. Each switch costs one lease request at the new partition, one lease release at the old one, and <code>N</code> lease-end range fences merged into pending batches: about 18 records at <code>N = 8</code>.</p>
+
+  <div class="demo" id="demo-track">
+    <div class="demo-head"><h5>Try it: the sticky rule</h5><span class="tag">Interactive</span></div>
+    <div class="demo-body">
+      <p class="hint">Follow broker 1 in a rack at <code>N = 8</code>. Change the rack's membership, then close files. Clients keep stale metadata until you refresh them. Compare the sticky rule's switches with the "always highest" rule, and see how often a fixed hash of the broker ID would send a second part.</p>
+      <div class="controls">
+        <button id="tk-add">A broker joins the rack</button>
+        <button id="tk-remove">A broker leaves the rack</button>
+        <button id="tk-refresh">Clients refresh metadata</button>
+        <button class="primary" id="tk-file">Close a file</button>
+        <button id="tk-reset">Reset</button>
+      </div>
+      <div class="grid2">
+        <div class="panel" id="tk-state"></div>
+        <div class="panel" id="tk-compare"></div>
+      </div>
+      <div class="readout" id="tk-readout"></div>
+    </div>
+  </div>
+
+  <div class="table-wrap"><table>
+    <thead><tr><th>Brokers</th><th>Parts per file on a gateway</th><th>Flushes per file, at most</th><th>Parts per leader per round</th><th>Fixed hash: parts per file, per leader</th></tr></thead>
+    <tbody>
+      <tr><td>3</td><td>8</td><td>24</td><td>3</td><td>8 and 3</td></tr>
+      <tr><td>12</td><td>2.0</td><td>6</td><td>3</td><td>2.77 and 4.2</td></tr>
+      <tr><td>24</td><td>1.0</td><td>3</td><td>3</td><td>1.88 and 5.6</td></tr>
+      <tr><td>45</td><td>1.0, and spares upload nothing</td><td>3</td><td>3</td><td>1.88 and 5.6</td></tr>
+      <tr><td>48</td><td>1.0</td><td>3</td><td>6</td><td>1.88 and 11.3</td></tr>
+    </tbody>
+  </table></div>
+  <p class="small muted">Averages over random clusters at <code>N = 8</code>, <code>R = 3</code>, and 3 racks, for routed files with no misroutes. A round is one file per gateway. With gateways off, a file sends 8 parts at every size.</p>
+  <div class="takeaway"><span class="label">Takeaway</span><p>A broker tracks its objects at one of its own gateway partitions, so a routed file sends one part, not two. The sticky rule switches only when the broker loses that partition, and only once stale traffic has stopped.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>Where does routing not help, and what can an operator do when it hurts?</p></div>
+</section>
+
+<section class="chapter" id="ch-gw-limits" data-title="Where routing stops helping">
+  <h3><span class="n">33</span>Where routing stops helping, and the operator's levers</h3>
+  <div class="why">
+    <span class="label">Why this exists</span>
+    <p>Routing has costs. Some partitions can't use gateways, a gateway carries whole coordinator partitions and can get hot, and brokers must agree on when routing is on. The design names each limit with a signal and a lever, so nobody discovers them in production.</p>
+    <div class="prompted"><span>Accepted limits</span><span>Operability</span></div>
+  </div>
+  <h4>Partitions that need a broker-local log</h4>
+  <p>Some diskless partitions keep data in a broker-local log: consolidating partitions, tiered partitions, and switched partitions whose classic prefix is still on local disks. Their fetches need a replica, so they keep the transformer's replica routing. Their traffic spreads over all <code>N</code> coordinator partitions and adds parts even to a gateway's files. With consolidation on, every new diskless topic also gets remote storage, so every file sends about 8 parts, and gateways save nothing.</p>
+  <p>A narrower rule is future work: route every diskless partition to gateways, and send only the reads that need a replica to one. On two production services with consolidation on, such reads are 0.035% and 0.00014% of bytes out.</p>
+  <h4>A hot gateway</h4>
+  <p>The assignment counts brokers, not traffic, because every broker must compute the same answer and each one only sees its own traffic. A gateway carries whole coordinator partitions, so at some rack sizes the busiest broker carries more than it does today.</p>
+
+  <div class="demo" id="demo-load">
+    <div class="demo-head"><h5>Try it: where routing stops helping</h5><span class="tag">Interactive</span></div>
+    <div class="demo-body">
+      <div class="tabs" id="ld-tabs"></div>
+      <div class="controls" id="ld-controls"></div>
+      <div class="panel" id="ld-view"></div>
+      <div class="readout" id="ld-readout"></div>
+    </div>
+  </div>
+
+  <h4>When routing is on</h4>
+  <p>Routing is on only when three inputs in the image hold: the coordinator feature is finalized, <code>__diskless_metadata</code> exists, which gives <code>N</code>, and <code>diskless.gateway.routing.enable</code> is on. Every input comes from the image, so brokers flip at the same offset.</p>
+  <ul>
+    <li><b><code>diskless.gateway.routing.enable</code></b>: the cluster-wide switch, default <code>true</code>. It can only be set at the cluster default. The controller rejects a per-broker value, and a broker refuses a static one at startup, because brokers that disagree would split traffic. Turn it off for a hot gateway that hurts produce latency or for a suspected routing defect, not for rolling restarts or upgrades.</li>
+    <li><b><code>diskless.gateway.candidate.enable</code></b>: per broker only, default <code>true</code>. <code>false</code> excludes a degraded broker or one about to be decommissioned. A cluster default of <code>false</code> is rejected, because it would remove every candidate.</li>
+  </ul>
+  <p>A change to the rule itself needs no version gate. During a rolling upgrade, old and new brokers compute different gateways, which adds parts until the upgrade ends and never affects correctness.</p>
+  <h4>Fenced and cut-off brokers</h4>
+  <p>Diskless produce has no fencing check: each broker's own image decides. A broker that applies its own fence isn't in its own candidate set, so it rejects its first misrouted batch per connection and partition, and sends clients to the stand-in. A broker cut off from the controller never sees its fence. It keeps acting as the gateway while it reaches the coordinator leaders, and its clients drift to the stand-in as they refresh from other brokers. The cost is up to one extra part per file and uneven load. Nothing acknowledged is lost.</p>
+  <div class="takeaway"><span class="label">Takeaway</span><p>Routing saves the most in large, evenly sized racks, and nothing for partitions that need a local log. A hot gateway can carry up to 1.7 times today's busiest broker. One cluster-wide switch and one per-broker exclusion are the levers.</p></div>
+  <div class="next"><span class="label">What this leaves open</span><p>Commits, deletion, and routing are designed. Now the coordinator itself needs protection: from reading data that might vanish, from wrong configs, and from losing a replica.</p></div>
+</section>

@@ -1,0 +1,205 @@
+TLC2 Version 2026.11.06.222357 (rev: d8fb231)
+Running breadth-first search Model-Checking with fp 128 and seed -1441460598117101566 with 4 workers on 16 cores with 5461MB heap and 64MB offheap memory [pid: 31421] (Mac OS X 26.6.2 aarch64, Homebrew 17.0.18 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /Users/viktor.somogyi-vass/dev/github/aiven/workspace-inkless/diskless-metadata/.scratch/diskless-metadata-coordinator-v3/model/FFScenarios.tla
+Parsing file /Users/viktor.somogyi-vass/dev/github/aiven/workspace-inkless/diskless-metadata/.scratch/diskless-metadata-coordinator-v3/model/FencesFloors.tla
+Parsing file /private/var/folders/j4/ypdmld110ds5dz6hl6h91jqh0000gn/T/tlc-1506391189687983431/_TLCTrace.tla (jar:file:/Users/viktor.somogyi-vass/dev/github/aiven/workspace-inkless/diskless-metadata/.scratch/diskless-metadata-coordinator-v3/model/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /private/var/folders/j4/ypdmld110ds5dz6hl6h91jqh0000gn/T/tlc-1506391189687983431/Naturals.tla (jar:file:/Users/viktor.somogyi-vass/dev/github/aiven/workspace-inkless/diskless-metadata/.scratch/diskless-metadata-coordinator-v3/model/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /private/var/folders/j4/ypdmld110ds5dz6hl6h91jqh0000gn/T/tlc-1506391189687983431/FiniteSets.tla (jar:file:/Users/viktor.somogyi-vass/dev/github/aiven/workspace-inkless/diskless-metadata/.scratch/diskless-metadata-coordinator-v3/model/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /private/var/folders/j4/ypdmld110ds5dz6hl6h91jqh0000gn/T/tlc-1506391189687983431/Sequences.tla (jar:file:/Users/viktor.somogyi-vass/dev/github/aiven/workspace-inkless/diskless-metadata/.scratch/diskless-metadata-coordinator-v3/model/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /private/var/folders/j4/ypdmld110ds5dz6hl6h91jqh0000gn/T/tlc-1506391189687983431/TLC.tla (jar:file:/Users/viktor.somogyi-vass/dev/github/aiven/workspace-inkless/diskless-metadata/.scratch/diskless-metadata-coordinator-v3/model/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /private/var/folders/j4/ypdmld110ds5dz6hl6h91jqh0000gn/T/tlc-1506391189687983431/TLCExt.tla (jar:file:/Users/viktor.somogyi-vass/dev/github/aiven/workspace-inkless/diskless-metadata/.scratch/diskless-metadata-coordinator-v3/model/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /private/var/folders/j4/ypdmld110ds5dz6hl6h91jqh0000gn/T/tlc-1506391189687983431/Integers.tla (jar:file:/Users/viktor.somogyi-vass/dev/github/aiven/workspace-inkless/diskless-metadata/.scratch/diskless-metadata-coordinator-v3/model/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module FencesFloors
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module FFScenarios
+Linting of module FencesFloors
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module FFScenarios
+Starting... (2026-11-19 14:41:08)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-11-19 14:41:08.
+Error: Invariant MergeProbe is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ epoch = 1
+/\ ranges = {}
+/\ nextSeq = 1
+/\ renewal = [tp |-> "none"]
+/\ files = <<>>
+/\ toRelease = {}
+/\ paused = FALSE
+/\ net = {}
+/\ fenced = (p1 :> <<0, 0>> @@ p2 :> <<0, 0>> @@ p3 :> <<0, 0>>)
+/\ row = (p1 :> <<0, 0>> @@ p2 :> <<0, 0>> @@ p3 :> <<0, 0>>)
+/\ held = (p1 :> {} @@ p2 :> {} @@ p3 :> {})
+/\ leases = (p1 :> {} @@ p2 :> {} @@ p3 :> {})
+/\ ft = ( p1 :> <<[ft |-> 0, exc |-> {}]>> @@
+  p2 :> <<[ft |-> 0, exc |-> {}]>> @@
+  p3 :> <<[ft |-> 0, exc |-> {}]>> )
+/\ ent = (p1 :> <<>> @@ p2 :> <<>> @@ p3 :> <<>>)
+/\ jobs = (p1 :> {} @@ p2 :> {} @@ p3 :> {})
+/\ queue = (p1 :> {} @@ p2 :> {} @@ p3 :> {})
+/\ deleted = {}
+/\ faults = {}
+
+State 2: <RequestLease(p1) line 221, col 3 to line 227, col 48 of module FencesFloors>
+/\ epoch = 1
+/\ ranges = {}
+/\ nextSeq = 1
+/\ renewal = [tp |-> p1, a |-> 1, b |-> 2]
+/\ files = <<>>
+/\ toRelease = {}
+/\ paused = FALSE
+/\ net = {}
+/\ fenced = (p1 :> <<0, 0>> @@ p2 :> <<0, 0>> @@ p3 :> <<0, 0>>)
+/\ row = (p1 :> <<0, 0>> @@ p2 :> <<0, 0>> @@ p3 :> <<0, 0>>)
+/\ held = (p1 :> {} @@ p2 :> {} @@ p3 :> {})
+/\ leases = (p1 :> {} @@ p2 :> {} @@ p3 :> {})
+/\ ft = ( p1 :> <<[ft |-> 0, exc |-> {}]>> @@
+  p2 :> <<[ft |-> 0, exc |-> {}]>> @@
+  p3 :> <<[ft |-> 0, exc |-> {}]>> )
+/\ ent = (p1 :> <<>> @@ p2 :> <<>> @@ p3 :> <<>>)
+/\ jobs = (p1 :> {} @@ p2 :> {} @@ p3 :> {})
+/\ queue = (p1 :> {} @@ p2 :> {} @@ p3 :> {})
+/\ deleted = {}
+/\ faults = {}
+
+State 3: <GrantLease(FALSE) line 239, col 3 to line 256, col 25 of module FencesFloors>
+/\ epoch = 1
+/\ ranges = {[tp |-> p1, a |-> 1, b |-> 2]}
+/\ nextSeq = 1
+/\ renewal = [tp |-> "none"]
+/\ files = <<>>
+/\ toRelease = {}
+/\ paused = FALSE
+/\ net = {}
+/\ fenced = (p1 :> <<0, 0>> @@ p2 :> <<0, 0>> @@ p3 :> <<0, 0>>)
+/\ row = (p1 :> <<0, 0>> @@ p2 :> <<0, 0>> @@ p3 :> <<0, 0>>)
+/\ held = (p1 :> {} @@ p2 :> {} @@ p3 :> {})
+/\ leases = (p1 :> {[a |-> 1, b |-> 2, e |-> 1, live |-> TRUE]} @@ p2 :> {} @@ p3 :> {})
+/\ ft = ( p1 :> <<[ft |-> 0, exc |-> {}]>> @@
+  p2 :> <<[ft |-> 0, exc |-> {}]>> @@
+  p3 :> <<[ft |-> 0, exc |-> {}]>> )
+/\ ent = (p1 :> <<>> @@ p2 :> <<>> @@ p3 :> <<>>)
+/\ jobs = (p1 :> {} @@ p2 :> {} @@ p3 :> {})
+/\ queue = (p1 :> {} @@ p2 :> {} @@ p3 :> {})
+/\ deleted = {}
+/\ faults = {}
+
+State 4: <RequestLease(p2) line 221, col 3 to line 227, col 48 of module FencesFloors>
+/\ epoch = 1
+/\ ranges = {[tp |-> p1, a |-> 1, b |-> 2]}
+/\ nextSeq = 1
+/\ renewal = [tp |-> p2, a |-> 3, b |-> 4]
+/\ files = <<>>
+/\ toRelease = {}
+/\ paused = FALSE
+/\ net = {}
+/\ fenced = (p1 :> <<0, 0>> @@ p2 :> <<0, 0>> @@ p3 :> <<0, 0>>)
+/\ row = (p1 :> <<0, 0>> @@ p2 :> <<0, 0>> @@ p3 :> <<0, 0>>)
+/\ held = (p1 :> {} @@ p2 :> {} @@ p3 :> {})
+/\ leases = (p1 :> {[a |-> 1, b |-> 2, e |-> 1, live |-> TRUE]} @@ p2 :> {} @@ p3 :> {})
+/\ ft = ( p1 :> <<[ft |-> 0, exc |-> {}]>> @@
+  p2 :> <<[ft |-> 0, exc |-> {}]>> @@
+  p3 :> <<[ft |-> 0, exc |-> {}]>> )
+/\ ent = (p1 :> <<>> @@ p2 :> <<>> @@ p3 :> <<>>)
+/\ jobs = (p1 :> {} @@ p2 :> {} @@ p3 :> {})
+/\ queue = (p1 :> {} @@ p2 :> {} @@ p3 :> {})
+/\ deleted = {}
+/\ faults = {}
+
+State 5: <GrantLease(FALSE) line 239, col 3 to line 256, col 25 of module FencesFloors>
+/\ epoch = 1
+/\ ranges = {[tp |-> p2, a |-> 3, b |-> 4]}
+/\ nextSeq = 1
+/\ renewal = [tp |-> "none"]
+/\ files = <<>>
+/\ toRelease = {[tp |-> p1, b |-> 2, e |-> 1]}
+/\ paused = FALSE
+/\ net = {}
+/\ fenced = (p1 :> <<0, 0>> @@ p2 :> <<0, 0>> @@ p3 :> <<0, 0>>)
+/\ row = (p1 :> <<0, 0>> @@ p2 :> <<0, 0>> @@ p3 :> <<0, 0>>)
+/\ held = (p1 :> {} @@ p2 :> {} @@ p3 :> {})
+/\ leases = ( p1 :> {[a |-> 1, b |-> 2, e |-> 1, live |-> TRUE]} @@
+  p2 :> {[a |-> 3, b |-> 4, e |-> 1, live |-> TRUE]} @@
+  p3 :> {} )
+/\ ft = ( p1 :> <<[ft |-> 0, exc |-> {}]>> @@
+  p2 :> <<[ft |-> 0, exc |-> {}]>> @@
+  p3 :> <<[ft |-> 0, exc |-> {}]>> )
+/\ ent = (p1 :> <<>> @@ p2 :> <<>> @@ p3 :> <<>>)
+/\ jobs = (p1 :> {} @@ p2 :> {} @@ p3 :> {})
+/\ queue = (p1 :> {} @@ p2 :> {} @@ p3 :> {})
+/\ deleted = {}
+/\ faults = {}
+
+State 6: <CloseFile({p1}) line 273, col 3 to line 280, col 48 of module FencesFloors>
+/\ epoch = 1
+/\ ranges = {[tp |-> p2, a |-> 3, b |-> 4]}
+/\ nextSeq = 4
+/\ renewal = [tp |-> "none"]
+/\ files = (<<1, 3>> :> [tp |-> p2, parts |-> (p1 :> "open" @@ p2 :> "open")])
+/\ toRelease = {[tp |-> p1, b |-> 2, e |-> 1]}
+/\ paused = FALSE
+/\ net = {}
+/\ fenced = (p1 :> <<0, 0>> @@ p2 :> <<0, 0>> @@ p3 :> <<0, 0>>)
+/\ row = (p1 :> <<0, 0>> @@ p2 :> <<0, 0>> @@ p3 :> <<0, 0>>)
+/\ held = (p1 :> {} @@ p2 :> {} @@ p3 :> {})
+/\ leases = ( p1 :> {[a |-> 1, b |-> 2, e |-> 1, live |-> TRUE]} @@
+  p2 :> {[a |-> 3, b |-> 4, e |-> 1, live |-> TRUE]} @@
+  p3 :> {} )
+/\ ft = ( p1 :> <<[ft |-> 0, exc |-> {}]>> @@
+  p2 :> <<[ft |-> 0, exc |-> {}]>> @@
+  p3 :> <<[ft |-> 0, exc |-> {}]>> )
+/\ ent = (p1 :> <<>> @@ p2 :> <<>> @@ p3 :> <<>>)
+/\ jobs = (p1 :> {} @@ p2 :> {} @@ p3 :> {})
+/\ queue = (p1 :> {} @@ p2 :> {} @@ p3 :> {})
+/\ deleted = {}
+/\ faults = {}
+
+State 7: <Next line 516, col 6 to line 516, col 42 of module FencesFloors>
+/\ epoch = 1
+/\ ranges = {[tp |-> p2, a |-> 3, b |-> 4]}
+/\ nextSeq = 4
+/\ renewal = [tp |-> "none"]
+/\ files = (<<1, 3>> :> [tp |-> p2, parts |-> (p1 :> "open" @@ p2 :> "open")])
+/\ toRelease = {}
+/\ paused = FALSE
+/\ net = {}
+/\ fenced = (p1 :> <<1, 2>> @@ p2 :> <<0, 0>> @@ p3 :> <<0, 0>>)
+/\ row = (p1 :> <<0, 0>> @@ p2 :> <<0, 0>> @@ p3 :> <<0, 0>>)
+/\ held = (p1 :> {} @@ p2 :> {} @@ p3 :> {})
+/\ leases = ( p1 :> {[a |-> 1, b |-> 2, e |-> 1, live |-> FALSE]} @@
+  p2 :> {[a |-> 3, b |-> 4, e |-> 1, live |-> TRUE]} @@
+  p3 :> {} )
+/\ ft = ( p1 :> <<[ft |-> 2, exc |-> {}]>> @@
+  p2 :> <<[ft |-> 0, exc |-> {}]>> @@
+  p3 :> <<[ft |-> 0, exc |-> {}]>> )
+/\ ent = ( p1 :>
+      ( <<1, 1>> :> (p1 :> "fencing" @@ p2 :> "fencing" @@ p3 :> "fencing") @@
+        <<1, 2>> :> (p1 :> "fencing" @@ p2 :> "fencing" @@ p3 :> "fencing") ) @@
+  p2 :> <<>> @@
+  p3 :> <<>> )
+/\ jobs = ( p1 :>
+      { <<p1, 1, 1, 1>>,
+        <<p1, 1, 2, 2>>,
+        <<p2, 1, 1, 1>>,
+        <<p2, 1, 2, 2>>,
+        <<p3, 1, 1, 1>>,
+        <<p3, 1, 2, 2>> } @@
+  p2 :> {} @@
+  p3 :> {} )
+/\ queue = (p1 :> {} @@ p2 :> {} @@ p3 :> {})
+/\ deleted = {}
+/\ faults = {}
+
+416 states generated, 218 distinct states found, 140 states left on queue.
+The depth of the complete state graph search is 8.
+Finished in 00s at (2026-11-19 14:41:09)
+Trace exploration spec path: ./FFScenarios_TTrace_1795095668.tla

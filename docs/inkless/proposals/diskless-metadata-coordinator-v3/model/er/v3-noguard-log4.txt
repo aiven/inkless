@@ -1,0 +1,38 @@
+TLC2 Version 2026.11.06.222357 (rev: d8fb231)
+Running breadth-first search Model-Checking with fp 3 and seed -6028668779558597843 with 4 workers on 16 cores with 5461MB heap and 64MB offheap memory [pid: 20222] (Mac OS X 26.6.2 aarch64, Homebrew 17.0.18 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /Users/viktor.somogyi-vass/dev/github/aiven/workspace-inkless/diskless-metadata/.scratch/diskless-metadata-coordinator-v3/model/EpochRetirement.tla
+Parsing file /private/var/folders/j4/ypdmld110ds5dz6hl6h91jqh0000gn/T/tlc-3876769790640365580/Naturals.tla (jar:file:/Users/viktor.somogyi-vass/dev/github/aiven/workspace-inkless/diskless-metadata/.scratch/diskless-metadata-coordinator-v3/model/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /private/var/folders/j4/ypdmld110ds5dz6hl6h91jqh0000gn/T/tlc-3876769790640365580/FiniteSets.tla (jar:file:/Users/viktor.somogyi-vass/dev/github/aiven/workspace-inkless/diskless-metadata/.scratch/diskless-metadata-coordinator-v3/model/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /private/var/folders/j4/ypdmld110ds5dz6hl6h91jqh0000gn/T/tlc-3876769790640365580/Sequences.tla (jar:file:/Users/viktor.somogyi-vass/dev/github/aiven/workspace-inkless/diskless-metadata/.scratch/diskless-metadata-coordinator-v3/model/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /private/var/folders/j4/ypdmld110ds5dz6hl6h91jqh0000gn/T/tlc-3876769790640365580/TLC.tla (jar:file:/Users/viktor.somogyi-vass/dev/github/aiven/workspace-inkless/diskless-metadata/.scratch/diskless-metadata-coordinator-v3/model/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /private/var/folders/j4/ypdmld110ds5dz6hl6h91jqh0000gn/T/tlc-3876769790640365580/_TLCTrace.tla (jar:file:/Users/viktor.somogyi-vass/dev/github/aiven/workspace-inkless/diskless-metadata/.scratch/diskless-metadata-coordinator-v3/model/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /private/var/folders/j4/ypdmld110ds5dz6hl6h91jqh0000gn/T/tlc-3876769790640365580/TLCExt.tla (jar:file:/Users/viktor.somogyi-vass/dev/github/aiven/workspace-inkless/diskless-metadata/.scratch/diskless-metadata-coordinator-v3/model/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /private/var/folders/j4/ypdmld110ds5dz6hl6h91jqh0000gn/T/tlc-3876769790640365580/Integers.tla (jar:file:/Users/viktor.somogyi-vass/dev/github/aiven/workspace-inkless/diskless-metadata/.scratch/diskless-metadata-coordinator-v3/model/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module EpochRetirement
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module EpochRetirement
+Starting... (2026-11-18 11:49:42)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-11-18 11:49:42.
+Progress(17) at 2026-11-18 11:49:45: 3,300,097 states generated (3,300,097 s/min), 429,153 distinct states found (429,153 ds/min), 177,572 states left on queue.
+Progress(23) at 2026-11-18 11:50:45: 75,274,523 states generated (71,974,426 s/min), 6,701,137 distinct states found (6,271,984 ds/min), 1,537,442 states left on queue.
+Progress(25) at 2026-11-18 11:51:45: 142,357,842 states generated (67,083,319 s/min), 11,380,232 distinct states found (4,679,095 ds/min), 1,837,844 states left on queue.
+Progress(28) at 2026-11-18 11:52:45: 207,042,480 states generated (64,684,638 s/min), 15,098,248 distinct states found (3,718,016 ds/min), 1,460,008 states left on queue.
+Progress(32) at 2026-11-18 11:53:45: 270,004,366 states generated (62,961,886 s/min), 17,820,664 distinct states found (2,722,416 ds/min), 222,058 states left on queue.
+Model checking completed. No error has been found.
+  Estimates of the probability that TLC did not check all reachable states
+  because two distinct states had the same fingerprint:
+  calculated (optimistic):  val = 2.5E-4
+  based on the actual fingerprints:  val = 5.3E-5
+275248189 states generated, 17940669 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 35.
+The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 12 and the 95th percentile is 4).
+Finished in 04min 08s at (2026-11-18 11:53:50)

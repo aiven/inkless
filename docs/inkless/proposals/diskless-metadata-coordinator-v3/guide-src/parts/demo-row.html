@@ -1,0 +1,30 @@
+<div class="demo" id="demo-row">
+    <div class="demo-head"><h5>Try it: the broker row at one coordinator partition</h5><span class="tag">Interactive</span></div>
+    <div class="demo-body">
+      <p class="hint">This is cp1's row for broker 3. Send commits with different pairs and see how the leader decides. A new commit first waits in the overlay until replication confirms it. Use the shortcut buttons or type your own pair.</p>
+      <div class="controls">
+        <button id="rw-next">Next file</button>
+        <button id="rw-retry">Retry the last file</button>
+        <button id="rw-old">A late part from an older file</button>
+        <button id="rw-restart">Broker restarts (new epoch)</button>
+        <span class="sep"></span>
+        <label>epoch <input type="number" id="rw-e" value="7" style="width: 4.2rem;"></label>
+        <label>sequence <input type="number" id="rw-s" value="0" style="width: 4.6rem;"></label>
+        <button class="primary" id="rw-send">Send commit</button>
+        <button id="rw-repl">Replication confirms pending</button>
+        <button id="rw-reset">Reset</button>
+      </div>
+      <div class="grid2">
+        <div class="panel"><h6>Broker row for broker 3 at cp1</h6><dl class="kv" id="rw-row"></dl></div>
+        <div class="panel"><h6>Leader's overlay</h6><div id="rw-overlay" class="small"></div></div>
+      </div>
+      <div class="readout" id="rw-readout">Send a commit to start.</div>
+      <div class="table-wrap"><table><thead><tr><th>The pair <code>(e, s)</code> compared with the row</th><th>What the leader does</th></tr></thead><tbody>
+        <tr><td><code>e</code> is at or below the row's <code>retiredThrough</code>, or older than the epoch of the last commit</td><td>Reject as a stale epoch</td></tr>
+        <tr><td>Equal to the last commit, still in the overlay</td><td>Retry: append nothing, wait for the pending entry, reply with its result</td></tr>
+        <tr><td>Equal to the last commit, already applied</td><td>Retry: reply at once with the stored result</td></tr>
+        <tr><td>Above the floor, or no row yet</td><td>New commit</td></tr>
+        <tr><td>Anything else</td><td>Reject as a stale sequence, and tell the broker the floor</td></tr>
+      </tbody></table></div>
+    </div>
+  </div>

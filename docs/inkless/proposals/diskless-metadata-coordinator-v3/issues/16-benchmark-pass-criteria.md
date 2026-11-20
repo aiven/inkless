@@ -36,6 +36,8 @@ Constraints from [Fsync amplification and default N on small clusters](14-small-
 
 Resolved on 2026-11-13 in a grilling session.
 
+Amended by [Consequences for the cross-cutting sections](18-cross-cutting-consequences.md#fan-out-at-the-gateway-default): "each file holds batches for all 8 coordinator partitions, the worst-case fan-out" holds with gateways off. At the switch's default, a file sends about 8 parts at 3 brokers, 2 at 12, and 1 at 24. At 12 and 24 brokers, the off sides of [Gateway benchmark](23-gateway-benchmark.md)'s pairs are judged against the Postgres runs in the 1.1 band, and a failure only adds a deployment-docs note that turning gateways off at that size puts produce latency above the Postgres backend.
+
 The baseline is the Postgres backend in its production configuration. A latency comparison passes when the coordinator's P50 and P99 are each within 1.1 times Postgres's at the same throughput. The benchmarks run at 3, 12, and 24 brokers on one base workload. Every benchmark has a pass rule, and every possible result maps to a new default, a docs change, a release blocker, or a separate effort. Nothing is left to judge after a run.
 
 This resolution closes the council's [third fix](../reviews/council.md#what-would-close-the-gaps) for pass criteria and Fable's request to benchmark the smallest supported cluster first. The admission-cap half of the third fix belongs to [Admission cap or retry budget](15-admission-cap.md).
@@ -177,6 +179,10 @@ This list replaces v2's list of possible outcomes:
 - State size or `findBatches`: the stated row limit drops to the last passing step. If \(10^6\) rows fails, `findBatches` gets a cap on result size, and the benchmark runs again.
 - Base latency or commit throughput, after `N` is tuned: the coordinator backend ships as opt-in, and Postgres stays the default backend. The report states the gap and the share that comes from the follower flush. Closing the gap is its own effort, such as the gateway effort or a flush-policy change, and doesn't change v3.
 - Inter-AZ: doesn't block release. The deployment docs state the gap, and AZ-aware leader placement for `__diskless_metadata` becomes its own effort.
+
+### Update from ticket 23
+
+[Gateway benchmark](23-gateway-benchmark.md#resolution) adds its runs to this list: gateway pairs at 12, 21, 24, 45, and 48 brokers, a pair without `diskless_az`, local-log mixes, rolling restarts at 24 and 48, and a switch flip, about 40 hours in all. Each pair is judged against the coordinator with gateways off in this ticket's 1.1 band, not against Postgres. This ticket's runs use the gateway switch's default, `diskless.gateway.routing.enable=true`. If ticket 23's decision rule turns the default off, the base comparisons at 12 and 24 brokers run again at the new default. Ticket 23's defects, a parts-per-file breach, a record error in the restart, or an inter-AZ failure with `diskless_az` clients, block release like the defects in [What a failure changes](#what-a-failure-changes).
 
 ### Laptop scenarios
 

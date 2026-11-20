@@ -1,0 +1,21 @@
+<div class="demo" id="demo-v3-rack">
+    <div class="demo-head"><h5>Try it: start the controller and reassign a partition</h5><span class="tag">Interactive</span></div>
+    <div class="demo-body">
+      <p class="hint">Six brokers register. The coordinator partition's current replicas are b1, b2, and b3. Choose the rack layout, then tick a target replica set to see what the reassignment check answers. The first row checks the startup validation.</p>
+      <div class="controls">
+        <label>Replication factor config <select id="rk-rf"><option>1</option><option>2</option><option selected>3</option><option>4</option></select></label>
+        <button class="toggle" id="rk-override">Internal override</button>
+        <span class="chip" id="rk-startup"></span>
+      </div>
+      <div class="controls">
+        <label>Racks <select id="rk-racks"><option value="3" selected>3 racks: a, b, c</option><option value="late">3 racks, c registered after creation</option><option value="2">2 racks: a, b</option><option value="1">1 rack: a</option><option value="0">None declared</option></select></label>
+        <span class="sep"></span>
+        <span id="rk-boxes" class="controls" style="margin:0"></span>
+      </div>
+      <div class="grid2">
+        <div class="panel" id="rk-current"></div>
+        <div class="panel" id="rk-target"></div>
+      </div>
+      <div class="readout" id="rk-readout"></div>
+    </div>
+  </div>

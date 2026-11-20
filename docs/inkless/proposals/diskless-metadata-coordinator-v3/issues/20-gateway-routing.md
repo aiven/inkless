@@ -1,8 +1,8 @@
 # Routing produce by coordinator partition
 
 Type: research
-Status: open
-Assignee:
+Status: closed
+Assignee: viktor.somogyi-vass
 Blocked by: none
 
 ## Question
@@ -24,3 +24,16 @@ Find, in the Inkless checkout and the local Kafka checkout:
 Named test: two user partitions that map to the same coordinator partition get the same broker in each AZ, and two that map to different coordinator partitions follow the assignment.
 
 ## Resolution
+
+The findings, with citations, are in [Routing produce by coordinator partition](../research/gateway-routing.md).
+
+- Selection key: `selectByHash` and `selectLeaderLegacy` in `InklessTopicMetadataTransformer` hash `"<topicId>-<partitionIndex>"`. v2's coordinator mapping hashes the 20-byte log key, so routing needs that mapping, not today's string. The transformer sees only `MetadataView` and the listener-to-AZ map. `MetadataView` has no partition count, but `KRaftMetadataCache.numPartitions` has one. The mapping and the assignment fit in `SharedState`, which the transformer and the produce path both reach.
+- Fetches: one `LeaderId` serves produce and fetch, so per-AZ alignment holds. A tail read hits the uploader's file cache when producer and consumer share an AZ, as today. Load now spreads by whole coordinator partitions, 3/3/2 at `N=8` with 3 brokers per rack. With `B / N / n_racks` rounded down, 25 to 47 brokers leave some brokers with no routed traffic.
+- Managed replicas with remote storage: diskless produce has no leader or replica check, so a gateway needn't be a replica for produce. Fetch is the constraint: remote-storage topics and switched partitions with a local classic prefix route only to replicas. Replica placement ignores coordinator partitions, so these topics stay on today's routing unless placement is aligned.
+- `ShareFetch`: diskless topics don't support share groups, and `ShareFetch` reads only the leader's local log, so gateways change nothing. Clients without `diskless_az` don't get the true metadata. `KafkaApis` rewrites `LeaderId` for every client, and a null AZ hashes over all brokers, so the broker can route these clients too.
+- Stale gateways: `metadata.max.age.ms` defaults to 5 minutes. `KAFKA_STORAGE_ERROR` and a disconnect refresh at once, so the 5-minute window applies only while the old gateway stays alive, as when a broker joins or the assignment moves. A crashed gateway stalls produce until the broker is fenced, about 9 seconds, and isn't a misroute. Other misroutes come from a rack outage, the cross-AZ fallback, replica-only topics, brokers whose metadata briefly differs, and listener gaps.
+- Named test: implementable as a unit test with the mapping and assignment, or a stub. "The same broker in each AZ" holds only at one gateway per coordinator partition per rack, which ends at 48 brokers with `N=8` and 3 racks. "Follow the assignment" must check that each partition gets its assigned broker, not that two partitions get different brokers.
+
+The linked KIP-1164 note was deleted from `docs/inkless/proposals/` in `9187910153`, and the research read it from `8a86a2c404`. `split-vs-hint.md` counts 2 coordinator partitions per broker at 12 brokers instead of 8, which disagrees with the map's claim that fan-out is unchanged below `N × n_racks`. [Gateway benchmark](23-gateway-benchmark.md) owns that discrepancy.
+
+The policy questions this research raised go to [Routing policy for clients a gateway can't serve](24-gateway-routing-policy.md) and [Gateway assignment](21-gateway-assignment.md).

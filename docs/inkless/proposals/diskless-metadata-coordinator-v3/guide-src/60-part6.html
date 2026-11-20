@@ -1,0 +1,189 @@
+
+<!-- ============================================================ PART 6 -->
+<div class="part-title" data-part="Part 6 · Putting it together">
+  <span class="num">Part 6</span>
+  <h2>Putting it together</h2>
+  <p>This part follows one produce and one fetch through every piece, shows how the design is checked before and after it's built, lists what it accepts, and collects the alternatives it rejected, including the two earlier versions of this design.</p>
+</div>
+
+<section class="chapter" id="ch-endtoend" data-title="A produce and a fetch">
+  <h3><span class="n">41</span>A produce and a fetch, end to end</h3>
+  <p>The cluster has 3 racks of 8 brokers and <code>N = 8</code>, so racks are at saturation. Broker 3 is in rack a, in zone A. It's the rack-a gateway for cp0, so its gateway set is <code>{cp0}</code> and its tracking partition is cp0. Its epoch is 7, and it holds the lease <code>[0, 1023]</code> at cp0. A producer in zone A writes to <i>orders-0</i>, which maps to cp0.</p>
+  <ol class="flow">
+    <li><b>Route.</b> The producer asks any broker for metadata. Every broker computes the same gateways from its image, so each one names broker 3 as the leader of <i>orders-0</i> for a zone-A client (chapters 30 and 31).</li>
+    <li><b>Buffer.</b> Broker 3 adds the batch to its current file. Its other zone-A clients for cp0's user partitions write there too, so the file holds cp0 batches only (chapter 2).</li>
+    <li><b>Close.</b> After 250 ms, <code>FileCommitter</code> closes the file and gives it the pair <code>(7, 41)</code> from the lease. No request is sent (chapters 18 and 20).</li>
+    <li><b>Name and upload.</b> The object key is <code>&lt;clusterId&gt;.3.7.41</code>. Retries reuse the same key (chapter 19).</li>
+    <li><b>Split.</b> All of the file's batches map to cp0, which is also the tracking partition. So the file sends exactly <b>one part</b>: it carries the batches, the participant set <code>{cp0}</code>, and the finish report for earlier files (chapters 22, 23, and 32).</li>
+    <li><b>Check.</b> cp0's leader checks the mapping, the broker epoch, the lease, the broker row, and the producer's own idempotence rules. It reserves offsets against SQLite plus its overlay (chapters 9, 18, and 20).</li>
+    <li><b>Append.</b> The leader adds a file-committed record to the current batch and appends with <code>acks=-1</code>. The leader and each follower fsync it (chapter 10).</li>
+    <li><b>Apply and reply.</b> When the high watermark passes the record, the leader applies it to SQLite in a group with other records, moves broker 3's row to <code>(7, 41)</code>, and replies with the offsets and the <code>Recorded</code> flag (chapters 11 and 23).</li>
+    <li><b>Answer the producer.</b> The producer's request waits only for the parts that hold its batches, here one. Broker 3 responds and fills its batch coordinate cache (chapter 15).</li>
+    <li><b>Fetch.</b> A consumer in zone A reads <i>orders-0</i>. Routing sends it to broker 3 too, so the read is usually a cache hit. On a miss, broker 3 asks cp0's leader, whose read pool answers from SQLite without touching the commit thread (chapter 34).</li>
+    <li><b>Release.</b> Days later, retention removes the batches on cp0. In the same transaction, the emptiness check finds nothing pointing into <code>3.7.41</code>. cp0 is the tracking partition, so the release is local, and the key goes straight into cp0's deletion queue (chapter 22).</li>
+    <li><b>Delete.</b> After one minute, <code>FileCleaner</code> on cp0's leader deletes the key and appends a files-deleted record.</li>
+  </ol>
+  <p>Compare this with the same produce on a cluster without routing: the file would hold batches for all 8 coordinator partitions and send 8 parts, plus 7 release reports later, one from each participant other than the tracking partition. If the producer's metadata had been stale, broker 3 would have rejected its first misrouted batch once, and the retry would have reached the right gateway.</p>
+</section>
+
+<section class="chapter" id="ch-checked" data-title="How the design is checked">
+  <h3><span class="n">42</span>How the design is checked</h3>
+  <div class="why">
+    <span class="label">Why this exists</span>
+    <p>Both reviews of the earlier version asked for proof, not prose: a model check of the fence, floor, and release protocol, and benchmarks with pass rules decided before anyone runs them. A benchmark without a pass rule invites arguing about the result after the fact.</p>
+    <div class="prompted"><span>Council review: model-check the protocol</span><span>Council review: benchmark pass criteria</span></div>
+  </div>
+  <h4>The model check</h4>
+  <p>A TLA+ model covers leases, the switch and fallback, commits, late attempts, finish reports, fences, floors, releases, lease ends, retention, and the deletion queue. It has four modules: <code>FencesFloors</code>, <code>FFScenarios</code>, <code>TrackingEntries</code>, and <code>EpochRetirement</code>. It checks four invariants:</p>
+  <ul>
+    <li><code>NoDeleteReferenced</code>: no object is deleted or queued while a batch references it.</li>
+    <li><code>NoCutLive</code>: no fence raises a floor past a part the broker still sends, or past a sequence it still plans to use.</li>
+    <li><code>NoLeak</code>: once an epoch ended and the coordinator is quiet, every uploaded key that no partition holds is queued.</li>
+    <li><code>EndedKnown</code>: once the lease covering a finished file ends, its tracking partition knows the key.</li>
+  </ul>
+  <p>Within its bounds of 3 partitions, ranges of 2 sequences, up to 4 files, 1 late attempt, 1 pause, and 1 or 2 epochs, no invariant fails. Each rule the model guards has a flag, and turning it off reproduces the race that rule closes within seconds. The model leaves out the overlay, a tracking leader change, and more than one broker. Shared tests, cluster tests, and seam tests cover those.</p>
+  <h4>Benchmarks with pass rules</h4>
+  <p>The baseline is the PostgreSQL backend as Inkless runs it in production. A latency comparison passes when the coordinator's P50 and P99 produce latency are each at most 1.1 times PostgreSQL's at the same throughput. Each side runs 3 times for 30 minutes after a 10-minute warmup, and the comparison uses the median. Sizes are 3, 12, and 24 brokers in 3 racks, at 16 MiB/s per broker, with 64 diskless partitions per broker. Every possible result maps to a decision in advance.</p>
+
+  <div class="demo" id="demo-bench">
+    <div class="demo-head"><h5>Try it: the benchmark plan</h5><span class="tag">Interactive</span></div>
+    <div class="demo-body">
+      <p class="hint">Pick a benchmark to see what it runs, how it passes, and what a failure changes.</p>
+      <div class="tabs" id="bn-tabs"></div>
+      <div class="grid3" id="bn-view"></div>
+    </div>
+  </div>
+
+  <p>On every steady-phase run, the rate of fences for missed sequences and exceptions must be zero. A nonzero rate fails the run as a protocol defect, because those fences only exist for failures.</p>
+  <div class="takeaway"><span class="label">Takeaway</span><p>The protocol's safety rules are model-checked, and the performance bar is a set of runs whose outcomes are decided before they happen.</p></div>
+</section>
+
+<section class="chapter" id="ch-risks" data-title="Accepted risks">
+  <h3><span class="n">43</span>Risks and limits the design accepts</h3>
+  <div class="why">
+    <span class="label">Why this exists</span>
+    <p>Every design accepts some risks. Naming them, with why each one passes the data-loss bar and what signal or procedure covers it, lets an operator see exactly what they're signing up for.</p>
+    <div class="prompted"><span>Data-loss bar</span><span>Operability</span></div>
+  </div>
+  <p>Each risk passes the data-loss bar: clause 2's exception covers losing every replica, and clause 3's exceptions cover a lost tail, an apply bug, and a delete from outside. The other rows lose no data.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Risk</th><th>Why it's accepted</th><th>Signal or procedure</th></tr></thead>
+    <tbody>
+      <tr><td>Every replica of a coordinator partition is lost</td><td>Clause 2's exception, with replication factor 3 and maximal spread enforced. The partition stays leaderless, and about 1/N of every diskless topic can't be written or read. Its objects leak rather than get deleted.</td><td><code>OfflinePartitionsCount</code>. There's no recovery procedure: an empty restart and object footers are future work.</td></tr>
+      <tr><td>An apply bug corrupts every replica alike</td><td>Kafka's coordinators share this limit. A wrong release or fence answer can delete an object another partition references.</td><td>A sustained <code>PartitionStorageErrorRate</code>. Prevention: shared tests, golden-record tests, and stop-never-skip.</td></tr>
+      <tr><td>Log recovery truncates fsynced records after bit rot</td><td>A classic topic loses data to the same cause. The damage stays at that coordinator partition.</td><td>Alert on log recovery's truncation warning, and stop the broker for inspection.</td></tr>
+      <tr><td>A disk acknowledges an fsync without persisting it</td><td>Same as the preceding row.</td><td>Use storage that honors fsync.</td></tr>
+      <tr><td>A log directory is restored from an older copy</td><td>Same as the preceding row.</td><td>Never restore a log directory. Reformat and re-replicate.</td></tr>
+      <tr><td>A stale leader-epoch entry over-truncates an eligible replica</td><td>Same as the preceding row.</td><td>Election metrics. No signal catches the over-truncation itself.</td></tr>
+      <tr><td>Something outside deletes a WAL key</td><td>A classic topic loses data the same way when its segment files are deleted.</td><td>Forbid expiration rules and manual deletes on the WAL prefix.</td></tr>
+      <tr><td>A leader's clock runs far ahead</td><td>Retention and <code>LogAppendTime</code> have the same exposure on classic topics.</td><td>Monitor NTP offset on every broker.</td></tr>
+      <tr><td>Grace-period skew beyond half the grace period</td><td>Costs reader availability, not data. PostgreSQL shares it.</td><td>The same NTP monitoring.</td></tr>
+      <tr><td>Storage completes an upload after its key was deleted</td><td>Leaks storage, not data. At most one object per attempt, and <code>K</code> files for a cut-off broker.</td><td><code>FileUploadErrorRate</code> bounds possible leaks.</td></tr>
+      <tr><td>A held entry never gets its release report</td><td>Leaks storage and needs a bug. A wrong claim leaks, it never deletes.</td><td>Release-report rejection metrics and storage growth.</td></tr>
+      <tr><td>A non-idempotent producer sees a late duplicate</td><td>A classic <code>acks=all</code> timeout and PostgreSQL have the same window.</td><td>Purgatory metrics bound the window.</td></tr>
+    </tbody>
+  </table></div>
+
+  <p>Losing every replica is the one risk whose damage is wider than on a classic topic: a classic loss costs one partition, and a coordinator partition's loss costs 1/N of every diskless topic. The guard keeps the chance small, and <code>N</code> keeps the share small:</p>
+
+  {{demo:v3-blast}}
+
+  <h4>Accepted limits</h4>
+  <p>Performance limits aren't risks to data. Each one has a signal and a lever:</p>
+  <ul>
+    <li><b>Outgrowing <code>N</code>.</b> Each coordinator partition has one writer, so <code>N</code> caps commit throughput, and <code>N</code> can't change after creation. Choose <code>N</code> for the cluster's expected peak size, and reassign coordinator leaders to less loaded brokers. Splitting partitions is future work.</li>
+    <li><b>A hot gateway.</b> The busiest gateway can carry up to 1.7 times today's busiest broker at some rack sizes. Watch <code>BytesInPerSec</code> against the rack mean. The levers are racks of up to 4 brokers or a multiple of <code>N</code>, or the routing switch off.</li>
+  </ul>
+</section>
+
+<section class="chapter" id="ch-rejected" data-title="Rejected alternatives">
+  <h3><span class="n">44</span>Rejected alternatives and earlier versions</h3>
+  <div class="why">
+    <span class="label">Why this exists</span>
+    <p>Knowing what a design rejected, and why, is often the fastest way to understand it. This design went through two earlier versions, each reviewed against the same bars. This chapter collects what they did and what replaced it, plus the larger alternatives the design turned down.</p>
+    <div class="prompted"><span>Design history</span><span>Reviews</span></div>
+  </div>
+
+  <h4>Version 1: an owner and an intent for every object</h4>
+  <p>The first version kept KIP-1164's idea of an owner, but one owner collected everything instead of handing the object along. Before every upload, the broker sent an <b>intent</b> to an owner chosen among the participants: the random object key, the participants, and the owner. The owner appended and fsynced it before the upload could start. Each commit part carried the broker's clock reading. After a <b>maximum commit age</b> of 5 minutes, the owner fenced participants it hadn't heard from. Participants kept a <b>tombstone</b> per released key so a late retry couldn't add the batches back, and tombstones expired after twice the maximum commit age.</p>
+  <p>It failed both bars:</p>
+  <ul>
+    <li><b>Performance.</b> The intent is a replicated, fsynced append on the produce path, which PostgreSQL doesn't have.</li>
+    <li><b>Data loss.</b> Safety depended on broker clocks. If two clocks differed by more than the maximum commit age, a late part could pass the age check after its tombstone expired, and commit batches into a deleted object.</li>
+    <li><b>Machinery.</b> Intent records, owner hashing and fallback, predecessor fences, per-key tombstones, and expiry records, each a source of bugs.</li>
+  </ul>
+
+  {{demo:skew}}
+
+  <div class="table-wrap"><table>
+    <thead><tr><th>Question</th><th>Owner and intent (version 1)</th><th>Broker sequences (this design)</th></tr></thead>
+    <tbody>
+      <tr><td>How does the coordinator learn about an object before upload?</td><td>An intent: one replicated, fsynced append before every upload</td><td>A lease reserved in the background, plus predictable keys</td></tr>
+      <tr><td>How is a retry recognized?</td><td>By object key, stored per key</td><td>By <code>(epoch, sequence)</code> in one broker row per partition</td></tr>
+      <tr><td>How are late parts stopped?</td><td>Maximum commit age, tombstones, per-key fences</td><td>The floor: the next commit or a range fence raises it</td></tr>
+      <tr><td>Does safety depend on clocks?</td><td>Yes</td><td>No</td></tr>
+      <tr><td>Extra step on the produce path?</td><td>Yes, the intent</td><td>No</td></tr>
+    </tbody>
+  </table></div>
+
+  <h4>Version 2: broker sequences, and what two reviews found</h4>
+  <p>The second version introduced the core of this design: broker sequences, leases, predictable keys, floors and fences, and a tracking partition. A council review checked its risk posture, and a second review, by Fable, traced the protocol for concrete defects. Neither found a path that deletes a referenced object when the protocol works as written. Both found problems that turned delays into failed produces, leaks, or weak spots. Each row here shows what version 2 did, what was wrong, and what replaced it:</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Version 2</th><th>Problem found</th><th>This design</th></tr></thead>
+    <tbody>
+      <tr><td>Fence the participants the tracking partition hasn't heard from, once the others are released</td><td>An empty tracking part fences parts still in flight, so a routine failover fails produces</td><td>Finish reports (<a href="#ch-finish">chapter 23</a>)</td></tr>
+      <tr><td>Fall back to the next partition, <code>t + 1</code>, and finish the old range first</td><td>The fallback range's idle timer can fire first, and its fence cuts the range in use</td><td>Switch at once and send a lease release (<a href="#ch-lease">chapter 20</a>)</td></tr>
+      <tr><td>The idle lease end on the normal path</td><td>The first file after 15 quiet minutes always fails</td><td>Keepalives (<a href="#ch-lease">chapter 20</a>)</td></tr>
+      <tr><td>A retired marker with no epoch</td><td>A broker ID that registers again is rejected forever</td><td><code>retiredThrough</code> (<a href="#ch-image">chapter 39</a>)</td></tr>
+      <tr><td>Delete a topic when the image doesn't have it</td><td>A lagging image purges a live topic, irreversibly</td><td><code>metadataOffset</code> and unreconciled partitions (<a href="#ch-image">chapter 39</a>)</td></tr>
+      <tr><td>An unspecified release state machine</td><td>An early report or a late "referenced" answer leaks the object</td><td>Entries that only move forward (<a href="#ch-entries">chapter 25</a>)</td></tr>
+      <tr><td>One release report per object</td><td>A retention pass costs thousands of RPCs</td><td>Batched release reports (<a href="#ch-entries">chapter 25</a>)</td></tr>
+      <tr><td>A file completes when every part answers</td><td>One stuck coordinator partition delays most produces</td><td>Per-request completion (<a href="#ch-slowest">chapter 15</a>)</td></tr>
+      <tr><td>One SQLite transaction per record, and checkpoints on the commit thread</td><td>Extra fsyncs and periodic stalls on the commit path</td><td>Group apply and a checkpoint thread (<a href="#ch-group">chapter 11</a>)</td></tr>
+      <tr><td>Every file sends a part to every coordinator partition</td><td>Up to <code>N × R</code> flushes per file</td><td>Gateway routing (<a href="#ch-fanout-cost">chapter 29</a>)</td></tr>
+      <tr><td>Tracking partition fixed at <code>murmur2(brokerId) % N</code></td><td>About 1.88 parts per routed file instead of 1</td><td>The sticky rule over the gateway set (<a href="#ch-gw-track">chapter 32</a>)</td></tr>
+      <tr><td>Losing a replica set as an accepted risk, with replica placement left to docs</td><td>Weakly justified: the blast radius is 1/N of all diskless partitions</td><td>Enforced replication factor 3 and maximal spread (<a href="#ch-rack">chapter 36</a>)</td></tr>
+      <tr><td>One fence per missed sequence</td><td>A correlated failure can cause a fence storm</td><td>Batched, merged fences (<a href="#ch-fence-rules">chapter 24</a>)</td></tr>
+      <tr><td>Benchmarks that "need more design," and no model</td><td>Nothing tests the claims</td><td>Pass rules and a TLA+ model (<a href="#ch-checked">chapter 42</a>)</td></tr>
+    </tbody>
+  </table></div>
+  <p>Some council proposals weren't adopted into this design. An admission cap or retry budget was rejected in favor of in-flight limits (<a href="#ch-bounds">chapter 40</a>). Object footers, soft delete with a deletion-rate cap, and an empty restart are recorded in full as future work.</p>
+
+  <h4>Other rejected alternatives</h4>
+  <ul>
+    <li><b>An external database, a cluster KRaft quorum, or a separate KRaft quorum.</b> KIP-1164 itself rejected these (<a href="#ch-where">chapter 4</a>).</li>
+    <li><b>Coordinator-less designs</b>, where partition leaders act as coordinators. KIP-1163 rejected them for separating stateful coordinators from stateless replicas.</li>
+    <li><b>A deleting scanner.</b> It fails toward data loss (<a href="#ch-scanner">chapter 17</a>).</li>
+    <li><b>Committing at the tracking partition first.</b> It adds a second serial round trip to every commit (<a href="#ch-slowest">chapter 15</a>).</li>
+    <li><b>A live-batch count per object.</b> A count can drift toward zero while batches remain (<a href="#ch-tracking">chapter 22</a>).</li>
+    <li><b>Follower reads and a leader lease.</b> Followers widen the stale-read problem, and a lease adds a wait to every failover (<a href="#ch-barrier">chapter 34</a>).</li>
+    <li><b>A controller-written gateway assignment, plain rendezvous, and round-robin.</b> The first costs a new record type and controller code, the second leaves balance to chance, and the third moves too many slots (<a href="#ch-gw-assign">chapter 30</a>).</li>
+    <li><b>Co-location mirroring</b>, where gateways follow coordinator leadership. The coordinator still sends one part per coordinator partition, so it saves nothing and ties gateways to elections.</li>
+    <li><b>A monotonic grace period.</b> It delays every delete by one grace period after each failover (<a href="#ch-clocks">chapter 27</a>).</li>
+  </ul>
+</section>
+
+<section class="chapter" id="ch-future" data-title="Where this is heading">
+  <h3><span class="n">45</span>Where this is heading</h3>
+  <p>The north-star RFC's goal is one metadata component that indexes every form diskless data takes, instead of splitting the truth between the coordinator, tiered storage metadata, and KRaft. None of the following is part of this design, but each depends on a decision this design keeps intact:</p>
+  <ul>
+    <li><b>Grow the coordinator by splitting partitions.</b> With <code>slot % N</code> and a power-of-two <code>N</code>, doubling <code>N</code> moves exactly half of each partition's slots. It still needs a handoff of a slot's state.</li>
+    <li><b>Merge WAL objects into extents.</b> A merged object replaces many batch rows with one extent row, and old objects release through the normal path. Merged objects in the WAL format also remove local-log partitions, so every partition can use gateways.</li>
+    <li><b>Tiered metadata in the coordinator.</b> Remote segment metadata for a diskless partition would live in the same coordinator partition as its batches, which answers concerns Jun Rao raised in the KIP-1163 discussion.</li>
+    <li><b>Partitionless key ranges.</b> Every record names its log with a <code>Log</code> structure, so a later encoding can describe a key range.</li>
+    <li><b>A report-only orphan scanner.</b> It lists keys nobody holds without deleting them, the only detector for the two accepted leaks.</li>
+    <li><b>Object footers and recovery.</b> A footer naming each object's partition runs would let an operator rebuild a coordinator partition after losing every replica, removing clause 2's exception.</li>
+    <li><b>Deletion bounds.</b> Soft delete or bucket versioning for 7 days, checked by a probe, plus a deletion-rate cap. A wrongly deleted object could then be restored by name.</li>
+    <li><b>An empty restart.</b> A coordinator partition that lost every replica could come back empty instead of staying offline.</li>
+    <li><b>Extra gateways for a hot coordinator partition</b>, and <b>the per-read rule</b>, which routes every diskless partition to gateways and sends only reads that need a replica to one.</li>
+  </ul>
+</section>
+
+<section class="chapter" id="ch-glossary" data-title="Glossary">
+  <h3><span class="n">46</span>Glossary</h3>
+  <p>Terms this guide uses, in alphabetical order.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Term</th><th>Meaning</th></tr></thead>
+    <tbody id="glossary"></tbody>
+  </table></div>
+</section>

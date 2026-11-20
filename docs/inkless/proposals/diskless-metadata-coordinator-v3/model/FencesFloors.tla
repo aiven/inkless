@@ -13,7 +13,8 @@
 (*  - Time is untimed. A file's deadline passes only after every earlier   *)
 (*    file finished. With FixLease, the idle timer fires only for a paused *)
 (*    or cut-off broker, and the pause first finishes every open part.     *)
-(*  - Fences are per range, with no hull merge across requests.            *)
+(*  - With HullMerge, any set of pending fences to one participant and     *)
+(*    epoch can merge, which covers every batch the in-flight bound forms. *)
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets, Sequences, TLC
 
@@ -28,6 +29,7 @@ CONSTANTS
   FixBrokerWide,  \* 06: finishedThrough covers every file of the epoch
   FixPlannedWait, \* 17: a release waits until no planned sequence is at or below b
   FixMissedFirst, \* 17: a release's report marks missed sequences before the lease end
+  HullMerge,      \* 06: pending fences to one participant and epoch merge into their hull
   MaxFaults,      \* lost-tail faults in one behavior; faults is the set of partitions that lost one
   MaxLate         \* late attempts in flight at once
 
@@ -440,18 +442,24 @@ IdleEnd(q) ==
   /\ Upd([S EXCEPT ![q] = EndLease(q, S[q], epoch, 0, TRUE)], {q})
   /\ UNCHANGED <<Broker, net, faults>>
 
-(* One step: participant p applies fence j from q, and q records the *)
-(* answer. The late-answer races belong to the tracking-entries spec. *)
-Fence(q, j) ==
-  LET p == j[1]  e == j[2]  a == j[3]  b == j[4]
+(* One step: participant p applies the hull of fences J from q, which    *)
+(* share p and the epoch, and q records the answer. Between the merged   *)
+(* ranges, held and released entries stay unchanged. The late-answer     *)
+(* races belong to the tracking-entries spec.                            *)
+Fence(q, J) ==
+  LET j0 == CHOOSE j \in J : TRUE
+      p == j0[1]  e == j0[2]
+      a == Min({j[3] : j \in J})  b == Max({j[4] : j \in J})
+      inJob(s) == \E j \in J : j[3] <= s /\ s <= j[4]
       raise == GT(<<e, b>>, Floor(S[p]))
       refs == {s \in a..b : <<e, s>> \in S[p].held}
       S1 == IF raise THEN [S EXCEPT ![p].fenced = <<e, b>>] ELSE S
       st == S1[q]
       NS(k) == IF st.ent[k][p] = "released" THEN "released"
+               ELSE IF ~inJob(k[2]) /\ st.ent[k][p] = "held" THEN "held"
                ELSE IF k[2] \in refs THEN "held" ELSE "released"
       st2 == [st EXCEPT
-               !.jobs = @ \ {j},
+               !.jobs = @ \ J,
                !.ent = [k \in DOMAIN @ |->
                           IF k[1] = e /\ a <= k[2] /\ k[2] <= b
                              /\ p \in DOMAIN st.ent[k]
@@ -511,7 +519,11 @@ Next ==
   \/ \E kq \in net : Late(kq[1], kq[2])
   \/ \E q \in P : Retire(q)
   \/ \E q \in P : IdleEnd(q)
-  \/ \E q \in P : \E j \in S[q].jobs : Fence(q, j)
+  \/ \E q \in P : \E J \in SUBSET S[q].jobs :
+       /\ J # {}
+       /\ IF HullMerge THEN \A j1, j2 \in J : j1[1] = j2[1] /\ j1[2] = j2[2]
+          ELSE Cardinality(J) = 1
+       /\ Fence(q, J)
   \/ \E p \in P : \E k \in S[p].held : RemoveBatches(p, k)
   \/ \E p \in P : \E k \in S[p].relPend : DeliverRelease(p, k)
   \/ \E q \in P : LostTail(q)
@@ -528,6 +540,14 @@ Queued == UNION {S[q].queue : q \in P}
 (* ticket 10, which claims no other partition can be hit.                  *)
 NoDeleteReferenced ==
   \A k \in deleted \cup Queued : \A p \in P \ faults : k \notin S[p].held
+
+(* Reachability probes for HullMerge, expected to fail. *)
+MergeProbe == ~\E q \in P : \E j1, j2 \in S[q].jobs :
+  j1 # j2 /\ j1[1] = j2[1] /\ j1[2] = j2[2]
+GapProbe == ~\E q \in P : \E j1, j2 \in S[q].jobs :
+  /\ j1[1] = j2[1] /\ j1[2] = j2[2] /\ j1[4] < j2[3]
+  /\ \E s \in (j1[4] + 1)..(j2[3] - 1) :
+       <<j1[2], s>> \in DOMAIN S[q].ent /\ j1[1] \in DOMAIN S[q].ent[<<j1[2], s>>]
 
 (* No fence raises a floor past a part the broker still sends, or past a *)
 (* sequence it still plans to use.                                       *)

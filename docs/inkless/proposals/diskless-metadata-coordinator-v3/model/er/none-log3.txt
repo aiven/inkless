@@ -1,0 +1,114 @@
+TLC2 Version 2026.11.06.222357 (rev: d8fb231)
+Running breadth-first search Model-Checking with fp 119 and seed -6726290951679805468 with 4 workers on 16 cores with 3641MB heap and 64MB offheap memory [pid: 19374] (Mac OS X 26.6.2 aarch64, Homebrew 17.0.18 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /Users/viktor.somogyi-vass/dev/github/aiven/workspace-inkless/diskless-metadata/.scratch/diskless-metadata-coordinator-v3/model/EpochRetirement.tla
+Parsing file /private/var/folders/j4/ypdmld110ds5dz6hl6h91jqh0000gn/T/tlc-7868603375679123754/Naturals.tla (jar:file:/Users/viktor.somogyi-vass/dev/github/aiven/workspace-inkless/diskless-metadata/.scratch/diskless-metadata-coordinator-v3/model/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /private/var/folders/j4/ypdmld110ds5dz6hl6h91jqh0000gn/T/tlc-7868603375679123754/FiniteSets.tla (jar:file:/Users/viktor.somogyi-vass/dev/github/aiven/workspace-inkless/diskless-metadata/.scratch/diskless-metadata-coordinator-v3/model/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /private/var/folders/j4/ypdmld110ds5dz6hl6h91jqh0000gn/T/tlc-7868603375679123754/Sequences.tla (jar:file:/Users/viktor.somogyi-vass/dev/github/aiven/workspace-inkless/diskless-metadata/.scratch/diskless-metadata-coordinator-v3/model/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /private/var/folders/j4/ypdmld110ds5dz6hl6h91jqh0000gn/T/tlc-7868603375679123754/TLC.tla (jar:file:/Users/viktor.somogyi-vass/dev/github/aiven/workspace-inkless/diskless-metadata/.scratch/diskless-metadata-coordinator-v3/model/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /private/var/folders/j4/ypdmld110ds5dz6hl6h91jqh0000gn/T/tlc-7868603375679123754/_TLCTrace.tla (jar:file:/Users/viktor.somogyi-vass/dev/github/aiven/workspace-inkless/diskless-metadata/.scratch/diskless-metadata-coordinator-v3/model/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /private/var/folders/j4/ypdmld110ds5dz6hl6h91jqh0000gn/T/tlc-7868603375679123754/TLCExt.tla (jar:file:/Users/viktor.somogyi-vass/dev/github/aiven/workspace-inkless/diskless-metadata/.scratch/diskless-metadata-coordinator-v3/model/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /private/var/folders/j4/ypdmld110ds5dz6hl6h91jqh0000gn/T/tlc-7868603375679123754/Integers.tla (jar:file:/Users/viktor.somogyi-vass/dev/github/aiven/workspace-inkless/diskless-metadata/.scratch/diskless-metadata-coordinator-v3/model/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module EpochRetirement
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module EpochRetirement
+Starting... (2026-11-18 11:45:00)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-11-18 11:45:00.
+Error: Invariant RetireComplete is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ fenced = (t :> 0 @@ p :> 0)
+/\ deleted = {}
+/\ row = ( t :> [e |-> 0, rt |-> 0, retired |-> FALSE] @@
+  p :> [e |-> 0, rt |-> 0, retired |-> FALSE] )
+/\ net = {}
+/\ img = (t :> 0 @@ p :> 0)
+/\ mlog = <<>>
+/\ leases = {}
+/\ committed = (t :> {} @@ p :> {})
+/\ live = 0
+/\ granted = {}
+/\ ended = {}
+
+State 2: <Register line 91, col 3 to line 96, col 89 of module EpochRetirement>
+/\ fenced = (t :> 0 @@ p :> 0)
+/\ deleted = {}
+/\ row = ( t :> [e |-> 0, rt |-> 0, retired |-> FALSE] @@
+  p :> [e |-> 0, rt |-> 0, retired |-> FALSE] )
+/\ net = {}
+/\ img = (t :> 0 @@ p :> 0)
+/\ mlog = <<[e |-> 1, k |-> "reg"]>>
+/\ leases = {}
+/\ committed = (t :> {} @@ p :> {})
+/\ live = 1
+/\ granted = {}
+/\ ended = {}
+
+State 3: <SendLease line 106, col 3 to line 108, col 91 of module EpochRetirement>
+/\ fenced = (t :> 0 @@ p :> 0)
+/\ deleted = {}
+/\ row = ( t :> [e |-> 0, rt |-> 0, retired |-> FALSE] @@
+  p :> [e |-> 0, rt |-> 0, retired |-> FALSE] )
+/\ net = {[e |-> 1, k |-> "lease"]}
+/\ img = (t :> 0 @@ p :> 0)
+/\ mlog = <<[e |-> 1, k |-> "reg"]>>
+/\ leases = {}
+/\ committed = (t :> {} @@ p :> {})
+/\ live = 1
+/\ granted = {}
+/\ ended = {}
+
+State 4: <Register line 91, col 3 to line 96, col 89 of module EpochRetirement>
+/\ fenced = (t :> 0 @@ p :> 0)
+/\ deleted = {}
+/\ row = ( t :> [e |-> 0, rt |-> 0, retired |-> FALSE] @@
+  p :> [e |-> 0, rt |-> 0, retired |-> FALSE] )
+/\ net = {[e |-> 1, k |-> "lease"]}
+/\ img = (t :> 0 @@ p :> 0)
+/\ mlog = <<[e |-> 1, k |-> "reg"], [e |-> 2, k |-> "reg"]>>
+/\ leases = {}
+/\ committed = (t :> {} @@ p :> {})
+/\ live = 2
+/\ granted = {}
+/\ ended = {}
+
+State 5: <Next line 188, col 6 to line 188, col 72 of module EpochRetirement>
+/\ fenced = (t :> 0 @@ p :> 0)
+/\ deleted = {}
+/\ row = ( t :> [e |-> 0, rt |-> 0, retired |-> FALSE] @@
+  p :> [e |-> 0, rt |-> 0, retired |-> FALSE] )
+/\ net = {[e |-> 1, k |-> "lease"]}
+/\ img = (t :> 0 @@ p :> 0)
+/\ mlog = <<[e |-> 1, k |-> "reg"], [e |-> 2, k |-> "reg"]>>
+/\ leases = {1}
+/\ committed = (t :> {} @@ p :> {})
+/\ live = 2
+/\ granted = {1}
+/\ ended = {}
+
+State 6: <Elect(t) line 122, col 3 to line 123, col 91 of module EpochRetirement>
+/\ fenced = (t :> 0 @@ p :> 0)
+/\ deleted = {}
+/\ row = ( t :> [e |-> 0, rt |-> 0, retired |-> FALSE] @@
+  p :> [e |-> 0, rt |-> 0, retired |-> FALSE] )
+/\ net = {[e |-> 1, k |-> "lease"]}
+/\ img = (t :> 2 @@ p :> 0)
+/\ mlog = <<[e |-> 1, k |-> "reg"], [e |-> 2, k |-> "reg"]>>
+/\ leases = {1}
+/\ committed = (t :> {} @@ p :> {})
+/\ live = 2
+/\ granted = {1}
+/\ ended = {}
+
+1418 states generated, 350 distinct states found, 182 states left on queue.
+The depth of the complete state graph search is 7.
+Finished in 00s at (2026-11-18 11:45:00)
+Trace exploration spec path: ./EpochRetirement_TTrace_1794998700.tla

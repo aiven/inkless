@@ -26,6 +26,12 @@ Named test: a release report that arrives before the tracking part.
 
 Resolved on 2026-11-12 in a grilling session.
 
+Amended by [Consequences for the cross-cutting sections](18-cross-cutting-consequences.md#merged-tests): test 5 leaves, and ticket 17's test 4, a batched report with one bad group, replaces it.
+
+Amended by [Protocol model](17-protocol-model.md#tracking-entries): the tracking partition classifies a report for a sequence with no entry against the higher of the range's highest recorded sequence and its own fenced-through pair. This replaces "the highest sequence it has recorded in that range" in [Reports for unrecorded sequences](#reports-for-unrecorded-sequences), and the table rows that use it.
+
+Amended by [Protocol model](17-protocol-model.md#batched-release-reports): a report's ranges cover only released sequences, and the tracking partition answers each `(brokerId, brokerEpoch)` group separately, so one group outside the leased ranges doesn't reject the rest. Both rules join [Batching](#batching).
+
 "Released" is terminal for each participant and sequence, and the tracking partition stores a release report even when it hasn't recorded the sequence yet. Each entry moves forward through four states and never back. Participants batch their reports, one request in flight per tracking partition. Gauges on the states that must clear quickly show a stuck release.
 
 ### Released is terminal

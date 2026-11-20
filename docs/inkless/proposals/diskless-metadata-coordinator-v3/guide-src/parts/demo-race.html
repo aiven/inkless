@@ -1,0 +1,16 @@
+<div class="demo" id="demo-race">
+    <div class="demo-head"><h5>Try it: a fence races a late part</h5><span class="tag">Interactive</span></div>
+    <div class="demo-body">
+      <p class="hint">cp1 already holds batches from broker 3's sequences 2 and 3 in epoch 7. A part for sequence 5 is in flight. At the same moment, the tracking partition fences the range 0 to 6. Pick which request reaches cp1's leader first.</p>
+      <div class="controls">
+        <button class="primary" id="rc-fence-first">Fence arrives first</button>
+        <button class="primary" id="rc-part-first">Part 5 arrives first</button>
+        <button id="rc-reset">Reset</button>
+      </div>
+      <div class="grid2">
+        <div class="panel"><h6>cp1: broker 3's state</h6><div id="rc-state"></div></div>
+        <div class="panel"><h6>What happened</h6><div id="rc-log" class="small"></div></div>
+      </div>
+      <div class="readout" id="rc-readout">Pick an order.</div>
+    </div>
+  </div>

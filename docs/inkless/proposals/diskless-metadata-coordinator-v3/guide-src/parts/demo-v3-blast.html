@@ -1,0 +1,17 @@
+<div class="demo" id="demo-v3-blast">
+    <div class="demo-head"><h5>Try it: compare the blast radius</h5><span class="tag">Interactive</span></div>
+    <div class="demo-body">
+      <p class="hint">Choose the coordinator partition count and whether the guard holds. The comparison keeps 10,000 diskless partitions and shows the share that one replica-set loss affects.</p>
+      <div class="controls">
+        <label>Coordinator partitions (N) <select id="brt-n"><option>1</option><option>2</option><option>4</option><option selected>8</option><option>16</option><option>32</option></select></label>
+        <button class="toggle on" id="brt-guard">Guard: RF 3 and maximal spread</button>
+        <button class="toggle" id="brt-override">Internal override: RF 1</button>
+      </div>
+      <div class="grid3">
+        <div class="panel" id="brt-classic"></div>
+        <div class="panel" id="brt-v3"></div>
+        <div class="panel" id="brt-footer"></div>
+      </div>
+      <div class="readout" id="brt-readout"></div>
+    </div>
+  </div>

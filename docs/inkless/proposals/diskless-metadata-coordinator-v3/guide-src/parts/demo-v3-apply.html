@@ -1,0 +1,19 @@
+<div class="demo" id="demo-v3-apply">
+    <div class="demo-head"><h5>Try it: apply a high-watermark advance</h5><span class="tag">Interactive</span></div>
+    <div class="demo-body">
+      <p class="hint">Twelve records arrive in one high-watermark advance, with sizes in KiB of log bytes. Pick a record that stops the apply, then compare one transaction per record with the design's groups. The toy counts one KiB of log as a quarter of a 4 KiB WAL page, an illustration rather than SQLite's real frame size.</p>
+      <div class="controls">
+        <button class="toggle on" id="ga-v2">One transaction per record</button>
+        <button class="toggle" id="ga-v3">Groups with savepoints (the design)</button>
+        <span class="sep"></span>
+        <label>Record that stops the apply <select id="ga-stop"><option value="-1">none</option><option value="5">r6</option><option value="9">r10</option></select></label>
+      </div>
+      <div class="log" id="ga-log"></div>
+      <div class="legend" id="ga-legend"></div>
+      <div class="grid2">
+        <div class="panel" id="ga-tx"></div>
+        <div class="panel" id="ga-ckpt"></div>
+      </div>
+      <div class="readout" id="ga-readout"></div>
+    </div>
+  </div>
