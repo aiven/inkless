@@ -45,6 +45,7 @@
     <suppress checks="ClassDataAbstractionCoupling|ClassFanOutComplexity" files="SharePartitionManagerTest"/>
     <suppress checks="CyclomaticComplexity" files="SharePartition.java"/>
     <suppress checks="NPathComplexity|ClassFanOutComplexity" files="InklessConsolidatedDisklessTopicsTest"/>
+    <suppress checks="ClassFanOutComplexity" files="InklessTopicTypeSwitcherClusterTest"/>
 
     <!-- server tests -->
     <suppress checks="MethodLength|JavaNCSS|NPath" files="DescribeTopicPartitionsRequestHandlerTest.java"/>
@@ -380,7 +381,7 @@
     <suppress checks="(ClassDataAbstractionCoupling|ClassFanOutComplexity)"
               files="(UnifiedLog|RemoteLogManager|RemoteLogManagerTest).java"/>
     <suppress checks="MethodLength" files="(RemoteLogManager|RemoteLogManagerConfig|UnifiedLog).java"/>
-    <suppress checks="JavaNCSS" files="RemoteLogManagerTest.java"/>
+    <suppress checks="JavaNCSS" files="(RemoteLogManager|RemoteLogManagerTest).java"/>
 
     <!-- benchmarks -->
     <suppress checks="(ClassDataAbstractionCoupling|ClassFanOutComplexity)"

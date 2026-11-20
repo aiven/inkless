@@ -10050,7 +10050,8 @@ class KafkaApisTest extends Logging {
       callback(Seq(tidp0 -> new FetchPartitionData(Errors.NONE, 3, 0, records,
         Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false)))
     })
-    val fetchContext = new FullFetchContext(time, new FetchSessionCacheShard(1000, 100, Int.MaxValue, 0), fetchData, true, replicaId >= 0)
+    val fetchContext = new FullFetchContext(time, new FetchSessionCacheShard(1000, 100),
+      new JFetchMetadata(0, 0), fetchData, true, replicaId >= 0)
     when(fetchManager.newContext(
       any[Short],
       any[JFetchMetadata],

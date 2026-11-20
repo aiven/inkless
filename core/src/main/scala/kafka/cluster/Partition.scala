@@ -351,7 +351,7 @@ class Partition(val topicPartition: TopicPartition,
    * sealed as a follower can become the leader with an open transaction in its log.
    * @throws KafkaStorageException If transaction abortion or segment rolling fails due to an I/O error.
    */
-  def abortOngoingTransactionsAsSealedLeader(): Unit = inWriteLock[Exception](leaderIsrUpdateLock, () => {
+  def abortOngoingTransactionsAsSealedLeader(): Unit = inWriteLock(leaderIsrUpdateLock) {
     if (!_sealed) {
       throw new IllegalStateException(s"Partition $topicPartition must be sealed before the leader aborts its open transactions")
     }
@@ -364,7 +364,7 @@ class Partition(val topicPartition: TopicPartition,
         maybeIncrementLeaderHW(leaderLog)
       }
     }
-  })
+  }
 
   private def rollActiveSegmentOfSealedLog(log: UnifiedLog): Unit = {
     if (log.activeSegment().size() > 0) {
