@@ -1950,6 +1950,43 @@ class InklessClassicToDisklessSwitchTest(Test):
                    err_msg=lambda: "Broker %d didn't keep a partition in %s for %d ms within %ds (last sample: %s)" %
                            (idx, state, min_oldest_age_ms, timeout_sec, last))
 
+    def _wait_for_network_partition_active(self, task, nodes, timeout_sec=60):
+        """Wait until the Trogdor agent on each of ``nodes`` reports the iptables rules of ``task`` in place.
+
+        ``create_task`` returns before the agents install the rules.
+        """
+        expected = "created network partition %s" % task.id
+        last = {}
+
+        def check():
+            status = self.trogdor.tasks()["tasks"][task.id].get("status")
+            last.clear()
+            last.update(status if isinstance(status, dict) else {"status": status})
+            return all(last.get(node.name) == expected for node in nodes)
+
+        wait_until(check, timeout_sec=timeout_sec, backoff_sec=1,
+                   err_msg=lambda: "Trogdor didn't report %s active on every node within %ds (status: %s)" %
+                           (task.id, timeout_sec, last))
+
+    def _wait_for_acks_to_stop(self, producer, partition=0, window_sec=3, timeout_sec=60):
+        """Wait until ``producer`` doesn't get an ack for ``partition`` over ``window_sec``.
+
+        With ``acks=all``, the acks stop once a follower in the ISR stops
+        fetching. The leader's log end offset then runs ahead of its high
+        watermark.
+        """
+        def acked():
+            return sum(len(values) for tp, values in producer.acked_by_partition.items()
+                       if tp.partition == partition)
+
+        def check():
+            before = acked()
+            time.sleep(window_sec)
+            return acked() == before
+
+        wait_until(check, timeout_sec=timeout_sec, backoff_sec=0,
+                   err_msg="The producer kept getting acks for partition %d after %ds" % (partition, timeout_sec))
+
     def _assert_switch_state_held(self, state, timeout_sec=60):
         """Assert that a live broker still tracks a partition in ``state``."""
         count_obj = self.SWITCH_STATE_GAUGES[state][0]
@@ -2019,6 +2056,9 @@ class InklessClassicToDisklessSwitchTest(Test):
             "follower_partition",
             NetworkPartitionFaultSpec(0, 10 * 60 * 1000, [[follower], others]),
         )
+        self._wait_for_network_partition_active(network_partition, self.kafka.nodes)
+        # The follower stays in the ISR, so partition 0 stops acking once the leader runs ahead.
+        self._wait_for_acks_to_stop(producer)
         self._switch_topic_to_diskless(node=others[0])
         self._wait_for_mid_switch_state("WaitingForReplication", min_oldest_age_ms=self.HOLD_MIN_AGE_MS)
 
@@ -2568,13 +2608,22 @@ class InklessClassicToDisklessSwitchTest(Test):
                "--formatter org.apache.kafka.tools.consumer.OffsetsMessageFormatter "
                "--command-property exclude.internal.topics=false --timeout-ms %d") % (
             self.kafka.path.script("kafka-console-consumer.sh", node), self.kafka.bootstrap_servers(), timeout_ms)
-        commits = {}
-        for line in node.account.ssh_capture(cmd, allow_fail=True, combine_stderr=False):
-            line = line.decode("utf-8") if isinstance(line, bytes) else line
+        # The formatter writes the records without a separator, so the output is a run of JSON objects.
+        output = "".join(line.decode("utf-8") if isinstance(line, bytes) else line
+                         for line in node.account.ssh_capture(cmd, allow_fail=True, combine_stderr=False))
+        records = []
+        decoder = json.JSONDecoder()
+        position = output.find("{")
+        while position >= 0:
             try:
-                record = json.loads(line)
+                record, end = decoder.raw_decode(output, position)
             except ValueError:
+                position = output.find("{", position + 1)
                 continue
+            records.append(record)
+            position = output.find("{", end)
+        commits = {}
+        for record in records:
             key = (record.get("key") or {}).get("data") or {}
             if key.get("group") != group or key.get("topic") != self.topic:
                 continue
