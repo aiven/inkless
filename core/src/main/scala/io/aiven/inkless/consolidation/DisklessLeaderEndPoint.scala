@@ -143,6 +143,7 @@ class DisklessLeaderEndPoint(
           fetchResponseData.setLogStartOffset(UnifiedLog.UNKNOWN_OFFSET)
         case Right(partition) =>
           val localLogOpt = Try(partition.localLogOrException).toOption
+          val crossTier = replicaManager.crossTierEarliestOffset(tp.topicPartition)
           val logStartOffset = localLogOpt match {
             case Some(localLog) =>
               // Prefer the control-plane cross-tier earliest as the whole-log start for a consolidating
@@ -154,7 +155,6 @@ class DisklessLeaderEndPoint(
               // OFFSET_MOVED_TO_TIERED_STORAGE gate below requires requestedOffset >= logStartOffset. The
               // cross-tier earliest is broker-agnostic and authoritative, and min() never advances past data
               // the local log still holds, so it is the safe whole-log start.
-              val crossTier = replicaManager.crossTierEarliestOffset(tp.topicPartition)
               if (crossTier.isPresent) Math.min(crossTier.getAsLong, localLog.logStartOffset)
               else localLog.logStartOffset
             case None =>
@@ -180,16 +180,28 @@ class DisklessLeaderEndPoint(
               // or a covering segment still transitional) returns NOT_LEADER_OR_FOLLOWER so the
               // fetcher retries at debug. Fetchers start in applyLocalLeadersDelta before
               // rlm.onLeadershipChange, and isReady can stay false until __remote_log_metadata
-              // catch-up.
-              val disklessStartOffset = data.logStartOffset
+              // catch-up. A switched partition's WAL starts at its classic log start until the
+              // first prune moves it to the seal. The seal is the lowest diskless start.
+              val walStartOffset = data.logStartOffset
+              val disklessStartOffset = math.max(walStartOffset, replicaManager.classicToDisklessStartOffset(tp.topicPartition))
               val requestedOffset = Option(fetchInfos.get(tp)).map(_.fetchOffset).getOrElse(-1L)
               if (logStartOffset != UnifiedLog.UNKNOWN_OFFSET &&
                   requestedOffset >= logStartOffset &&
                   requestedOffset < disklessStartOffset) {
                 localLogOpt.filter(_.remoteLogEnabled()).foreach { _ =>
                   val generation = remotePrefixGenerations.getOrElse(tp.topicPartition, 0L)
-                  val evidence = remoteConsolidatedPrefixEvidence(tp.topicPartition, disklessStartOffset)
-                  if (!evidence.isPresent) {
+                  lazy val evidence = remoteConsolidatedPrefixEvidence(tp.topicPartition, disklessStartOffset)
+                  if (crossTier.isPresent && crossTier.getAsLong >= disklessStartOffset) {
+                    // Retention or DeleteRecords removed everything below the diskless start. The
+                    // out-of-range reset starts the log at the cross-tier earliest. The fetcher doesn't
+                    // rebuild a deleted prefix or wait for remote coverage that never comes.
+                    replicaManager.markConsolidationRemotePrefixUnknown(tp.topicPartition, unknown = false, generation)
+                    logger.debug("Offset {} for {} is below the cross-tier earliest {}, which is at or past the diskless start {}; " +
+                      "returning OFFSET_OUT_OF_RANGE so the fetcher resets to the cross-tier earliest.",
+                      requestedOffset, tp.topicPartition, crossTier.getAsLong, disklessStartOffset)
+                    fetchResponseData.setErrorCode(Errors.OFFSET_OUT_OF_RANGE.code)
+                    fetchResponseData.setRecords(MemoryRecords.EMPTY)
+                  } else if (!evidence.isPresent) {
                     // leader.fetch() runs outside partitionMapLock. Alert semantics: the
                     // ConsolidationRemotePrefixUnknown row in docs/inkless/DISKLESS_CONSOLIDATION.md.
                     replicaManager.markConsolidationRemotePrefixUnknown(tp.topicPartition, unknown = true, generation)
@@ -205,6 +217,16 @@ class DisklessLeaderEndPoint(
                       requestedOffset, tp.topicPartition, disklessStartOffset, logStartOffset)
                     replicaManager.recordConsolidationTierRebuildRequest(tp.topicPartition)
                     fetchResponseData.setErrorCode(Errors.OFFSET_MOVED_TO_TIERED_STORAGE.code)
+                    fetchResponseData.setRecords(MemoryRecords.EMPTY)
+                  } else if (requestedOffset >= walStartOffset) {
+                    // Only the seal puts the offset below the diskless start. The WAL returns the first
+                    // diskless batch for it, which would hide the classic prefix. An out-of-range reset
+                    // fetches the same offset again without a backoff.
+                    replicaManager.markConsolidationRemotePrefixUnknown(tp.topicPartition, unknown = true, generation)
+                    logger.debug("RLMM has no readable coverage of {} for {}, below the classic-to-diskless seal; " +
+                      "returning NOT_LEADER_OR_FOLLOWER so the fetcher retries instead of consolidating below the seal at offset {}.",
+                      disklessStartOffset - 1, tp.topicPartition, requestedOffset)
+                    fetchResponseData.setErrorCode(Errors.NOT_LEADER_OR_FOLLOWER.code)
                     fetchResponseData.setRecords(MemoryRecords.EMPTY)
                   } else {
                     replicaManager.markConsolidationRemotePrefixUnknown(tp.topicPartition, unknown = false, generation)
@@ -355,6 +377,10 @@ class DisklessLeaderEndPoint(
     val offset =
       if (timestamp == ListOffsetsRequest.LATEST_TIMESTAMP)
         atLeastCommittedSeal(topicPartition, tao.offset)
+      else if (timestamp == ListOffsetsRequest.EARLIEST_LOCAL_TIMESTAMP)
+        // The tier-state rebuild starts the local log here. Before the first prune of a switched
+        // partition, the WAL start is still the classic log start, which remote storage holds.
+        math.max(tao.offset, replicaManager.classicToDisklessStartOffset(topicPartition))
       else
         tao.offset
     val taoForEpoch =

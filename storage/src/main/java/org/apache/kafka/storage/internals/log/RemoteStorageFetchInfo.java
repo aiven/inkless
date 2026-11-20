@@ -20,6 +20,18 @@ import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.requests.FetchRequest;
 import org.apache.kafka.server.storage.log.FetchIsolation;
 
+import java.util.OptionalLong;
+
+/**
+ * @param upperBoundOffset The exclusive offset where the read ends. It holds the classic-to-diskless seal
+ *                         of a switched partition, and it is empty for every other partition.
+ */
 public record RemoteStorageFetchInfo(int fetchMaxBytes, boolean minOneMessage, TopicIdPartition topicIdPartition,
-                                     FetchRequest.PartitionData fetchInfo, FetchIsolation fetchIsolation) {
+                                     FetchRequest.PartitionData fetchInfo, FetchIsolation fetchIsolation,
+                                     OptionalLong upperBoundOffset) {
+
+    public RemoteStorageFetchInfo(int fetchMaxBytes, boolean minOneMessage, TopicIdPartition topicIdPartition,
+                                  FetchRequest.PartitionData fetchInfo, FetchIsolation fetchIsolation) {
+        this(fetchMaxBytes, minOneMessage, topicIdPartition, fetchInfo, fetchIsolation, OptionalLong.empty());
+    }
 }

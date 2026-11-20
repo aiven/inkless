@@ -36,7 +36,10 @@
         { "name": "ClassicToDisklessStartOffset", "type": "int64", "versions": "0+",
           "about": "The committed seal: the first offset in diskless format." },
         { "name": "LeaderEpoch", "type": "int32", "versions": "0+",
-          "about": "The leader epoch seen by the broker." }
+          "about": "The leader epoch seen by the broker." },
+        { "name": "LastClassicLeaderEpoch", "type": "int32", "versions": "0+", "taggedVersions": "0+", "tag": 0,
+          "default": "-1",
+          "about": "The leader epoch of the record at the seal minus one, or -1 if the leader holds no classic record below the seal." }
       ]}
     ]}
   ]

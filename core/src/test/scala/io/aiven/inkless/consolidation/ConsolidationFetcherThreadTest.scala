@@ -19,6 +19,7 @@
 package io.aiven.inkless.consolidation
 
 import io.aiven.inkless.consume.{ConcatenatedRecords, FetchHandler, FetchOffsetHandler}
+import kafka.log.LogTestUtils
 import kafka.cluster.Partition
 import kafka.server._
 import kafka.server.metadata.InklessMetadataView
@@ -36,17 +37,21 @@ import org.apache.kafka.server.LeaderEndPoint
 import org.apache.kafka.server.common.{MetadataVersion, OffsetAndEpoch}
 import org.apache.kafka.server.network.BrokerEndPoint
 import org.apache.kafka.server.metrics.KafkaYammerMetrics
+import org.apache.kafka.server.util.MockTime
 import org.apache.kafka.common.InvalidRecordException
+import org.apache.kafka.common.utils.Utils
 import org.apache.kafka.server.purgatory.DelayedOperationPurgatory
 import org.apache.kafka.server.storage.log.FetchPartitionData
-import org.apache.kafka.storage.internals.log.{LogAppendInfo, UnifiedLog}
+import org.apache.kafka.storage.internals.checkpoint.LeaderEpochCheckpointFile
+import org.apache.kafka.storage.internals.epoch.LeaderEpochFileCache
+import org.apache.kafka.storage.internals.log.{EpochEntry, LogAppendInfo, LogDirFailureChannel, UnifiedLog}
 import io.aiven.inkless.control_plane.{BatchInfo, BatchMetadata, FindBatchResponse}
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.{AfterEach, BeforeEach, Test}
 import org.mockito.ArgumentCaptor
-import org.mockito.ArgumentMatchers.{any, anyLong}
-import org.mockito.Mockito.{RETURNS_DEEP_STUBS, doNothing, mock, never, verify, when}
+import org.mockito.ArgumentMatchers.{any, anyInt, anyLong}
+import org.mockito.Mockito.{RETURNS_DEEP_STUBS, doAnswer, doNothing, mock, never, verify, when}
 
 import java.nio.charset.StandardCharsets
 import java.util
@@ -189,6 +194,8 @@ class ConsolidationFetcherThreadTest {
       v
     }
     when(replicaManager.inklessMetadataView()).thenReturn(view)
+    when(replicaManager.classicToDisklessStartOffset(any[TopicPartition]))
+      .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
     when(replicaManager.replicaFetcherManager).thenReturn(mock(classOf[ReplicaFetcherManager]))
     replicaManager
   }
@@ -212,6 +219,43 @@ class ConsolidationFetcherThreadTest {
     when(partition.appendRecordsToFollowerOrFutureReplica(any[MemoryRecords], any[Boolean], any[Int]))
       .thenReturn(Some(appendInfo))
     partition
+  }
+
+  private def partitionWithEpochCache(
+    logEndOffset: Long,
+    logStartOffset: Long,
+    cache: LeaderEpochFileCache
+  ): Partition = {
+    val partition = mockPartitionWithLog(logEndOffset, highestOffsetInRemoteStorage = -1L)
+    val log = partition.localLogOrException
+    when(log.logStartOffset).thenReturn(logStartOffset)
+    when(log.leaderEpochCache).thenReturn(cache)
+    doAnswer(invocation => {
+      cache.assign(invocation.getArgument[Int](0), invocation.getArgument[Long](1))
+      null
+    }).when(log).assignEpochStartOffset(anyInt(), anyLong())
+    partition
+  }
+
+  private def partitionWithRealLog(log: UnifiedLog): Partition = {
+    val partition = mock(classOf[Partition])
+    when(partition.localLogOrException).thenReturn(log)
+    doAnswer(invocation => {
+      val records = invocation.getArgument[MemoryRecords](0)
+      val leaderEpoch = invocation.getArgument[Int](2)
+      Some(log.appendAsFollower(records, leaderEpoch))
+    }).when(partition).appendRecordsToFollowerOrFutureReplica(any[MemoryRecords], any[Boolean], any[Int])
+    partition
+  }
+
+  private def epochCache(entries: EpochEntry*): LeaderEpochFileCache = {
+    val cache = new LeaderEpochFileCache(
+      topicPartition,
+      new LeaderEpochCheckpointFile(TestUtils.tempFile(), new LogDirFailureChannel(1)),
+      new MockTime().scheduler
+    )
+    entries.foreach(entry => cache.assign(entry.epoch, entry.startOffset))
+    cache
   }
 
   // Partition whose follower append rejects the block as larger than segment.bytes, as UnifiedLog does
@@ -245,12 +289,16 @@ class ConsolidationFetcherThreadTest {
     MemoryRecords.withRecords(baseOffset, Compression.NONE, epoch,
       new SimpleRecord(1000, value.getBytes(StandardCharsets.UTF_8)))
 
-  private def partitionDataWith(records: BaseRecords): FetchResponseData.PartitionData =
+  private def partitionDataWith(
+    records: BaseRecords,
+    highWatermark: Long = 10L,
+    logStartOffset: Long = 0L
+  ): FetchResponseData.PartitionData =
     new FetchResponseData.PartitionData()
       .setPartitionIndex(topicPartition.partition)
       .setRecords(records)
-      .setHighWatermark(10L)
-      .setLogStartOffset(0)
+      .setHighWatermark(highWatermark)
+      .setLogStartOffset(logStartOffset)
 
   // Capture the records actually appended to the local log and return each batch's leader epoch.
   private def appendedBatchEpochs(partition: Partition): List[Int] = {
@@ -302,6 +350,158 @@ class ConsolidationFetcherThreadTest {
 
     // The guard short-circuits: had stamping run with E_d == -1 it would have written -1, not left 0.
     assertEquals(List(0), appendedBatchEpochs(partition))
+  }
+
+  @Test
+  def testRepairsDamagedBornDisklessEpochCache(): Unit = {
+    val logStartOffset = 5L
+    val cache = epochCache(new EpochEntry(0, 10L))
+    val partition = partitionWithEpochCache(logEndOffset = 10L, logStartOffset = logStartOffset, cache = cache)
+    val replicaManager = mockReplicaManager(partition)
+    val thread = createConsolidationFetcherThread(replicaManager, None)
+
+    thread.processPartitionData(topicPartition, 10L, Int.MaxValue,
+      partitionDataWith(recordsWithEpoch(10L, 0, "a")))
+
+    assertEquals(util.List.of(new EpochEntry(0, logStartOffset)), cache.epochEntries)
+    assertEquals(OptionalInt.of(0), cache.epochForOffset(6L))
+  }
+
+  @Test
+  def testRepairsStaleBornDisklessEpochCache(): Unit = {
+    val logStartOffset = 5L
+    val cache = epochCache(new EpochEntry(0, logStartOffset), new EpochEntry(4, 10L))
+    val partition = partitionWithEpochCache(logEndOffset = 10L, logStartOffset = logStartOffset, cache = cache)
+    val replicaManager = mockReplicaManager(partition)
+    val thread = createConsolidationFetcherThread(replicaManager, None)
+
+    thread.processPartitionData(topicPartition, 10L, Int.MaxValue,
+      partitionDataWith(recordsWithEpoch(10L, 0, "a")))
+
+    assertEquals(util.List.of(new EpochEntry(0, logStartOffset)), cache.epochEntries)
+  }
+
+  @Test
+  def testDoesNotRepairSwitchedPartitionWithDisklessLeaderEpoch(): Unit = {
+    val seal = 10L
+    val cache = epochCache(new EpochEntry(2, 0L), new EpochEntry(4, 10L))
+    val partition = partitionWithEpochCache(logEndOffset = 10L, logStartOffset = 5L, cache = cache)
+    val replicaManager = mockReplicaManager(partition)
+    when(replicaManager.classicToDisklessStartOffset(topicPartition)).thenReturn(seal)
+    when(replicaManager.disklessLeaderEpoch(topicPartition)).thenReturn(7)
+    val thread = createConsolidationFetcherThread(replicaManager, None)
+
+    thread.processPartitionData(topicPartition, 10L, Int.MaxValue,
+      partitionDataWith(recordsWithEpoch(10L, 0, "a")))
+
+    assertEquals(util.List.of(new EpochEntry(2, 0L), new EpochEntry(4, 10L)), cache.epochEntries)
+    assertEquals(List(7), appendedBatchEpochs(partition))
+  }
+
+  @Test
+  def testDoesNotRepairSwitchedPartitionWithoutDisklessLeaderEpoch(): Unit = {
+    val seal = 10L
+    val cache = epochCache(new EpochEntry(2, 0L), new EpochEntry(4, 10L))
+    val partition = partitionWithEpochCache(logEndOffset = 10L, logStartOffset = 5L, cache = cache)
+    val replicaManager = mockReplicaManager(partition)
+    when(replicaManager.classicToDisklessStartOffset(topicPartition)).thenReturn(seal)
+    when(replicaManager.disklessLeaderEpoch(topicPartition))
+      .thenReturn(PartitionRegistration.NO_DISKLESS_LEADER_EPOCH)
+    val thread = createConsolidationFetcherThread(replicaManager, None)
+
+    thread.processPartitionData(topicPartition, 10L, Int.MaxValue,
+      partitionDataWith(recordsWithEpoch(10L, 0, "a")))
+
+    assertEquals(util.List.of(new EpochEntry(2, 0L), new EpochEntry(4, 10L)), cache.epochEntries)
+    assertEquals(List(0), appendedBatchEpochs(partition))
+  }
+
+  @Test
+  def testDoesNotRepairPendingSwitchPartition(): Unit = {
+    val cache = epochCache(new EpochEntry(2, 0L), new EpochEntry(4, 10L))
+    val partition = partitionWithEpochCache(logEndOffset = 10L, logStartOffset = 5L, cache = cache)
+    val replicaManager = mockReplicaManager(partition)
+    when(replicaManager.classicToDisklessStartOffset(topicPartition))
+      .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
+    val thread = createConsolidationFetcherThread(replicaManager, None)
+
+    thread.processPartitionData(topicPartition, 10L, Int.MaxValue,
+      partitionDataWith(recordsWithEpoch(10L, 0, "a")))
+
+    assertEquals(util.List.of(new EpochEntry(2, 0L), new EpochEntry(4, 10L)), cache.epochEntries)
+  }
+
+  @Test
+  def testLeavesHealthyBornDisklessEpochCacheUntouched(): Unit = {
+    val logStartOffset = 5L
+    Seq(logStartOffset, 0L).foreach { cacheStartOffset =>
+      val cache = epochCache(new EpochEntry(0, cacheStartOffset))
+      val partition = partitionWithEpochCache(logEndOffset = 10L, logStartOffset = logStartOffset, cache = cache)
+      val replicaManager = mockReplicaManager(partition)
+      val thread = createConsolidationFetcherThread(replicaManager, None)
+
+      thread.processPartitionData(topicPartition, 10L, Int.MaxValue,
+        partitionDataWith(recordsWithEpoch(10L, 0, "a")))
+
+      assertEquals(util.List.of(new EpochEntry(0, cacheStartOffset)), cache.epochEntries)
+    }
+  }
+
+  @Test
+  def testRepairsEmptyBornDisklessEpochCache(): Unit = {
+    val logStartOffset = 5L
+    val cache = epochCache()
+    val partition = partitionWithEpochCache(logEndOffset = 10L, logStartOffset = logStartOffset, cache = cache)
+    val replicaManager = mockReplicaManager(partition)
+    val thread = createConsolidationFetcherThread(replicaManager, None)
+
+    thread.processPartitionData(topicPartition, 10L, Int.MaxValue,
+      partitionDataWith(recordsWithEpoch(10L, 0, "a")))
+
+    assertEquals(util.List.of(new EpochEntry(0, logStartOffset)), cache.epochEntries)
+  }
+
+  @Test
+  def testRepairsTierStateRebuiltBornDisklessEpochCacheWithRealLog(): Unit = {
+    val logStartOffset = 5L
+    val tempDir = TestUtils.tempDir()
+    val logDir = TestUtils.randomPartitionLogDir(tempDir)
+    val brokerTopicStats = new BrokerTopicStats
+    val mockTime = new MockTime()
+    val log = LogTestUtils.createLog(
+      logDir,
+      LogTestUtils.createLogConfig(segmentBytes = 1024, indexIntervalBytes = 1),
+      brokerTopicStats,
+      mockTime.scheduler,
+      mockTime
+    )
+
+    try {
+      log.truncateFullyAndStartAt(20L, Optional.of(java.lang.Long.valueOf(logStartOffset)))
+      log.leaderEpochCache.assign(util.List.of(new EpochEntry(0, 10L)))
+
+      val partition = partitionWithRealLog(log)
+      val replicaManager = mockReplicaManager(partition)
+      val thread = createConsolidationFetcherThread(replicaManager, None)
+      val fetchOffset = log.logEndOffset
+
+      thread.processPartitionData(
+        topicPartition,
+        fetchOffset,
+        Int.MaxValue,
+        partitionDataWith(
+          recordsWithEpoch(baseOffset = fetchOffset, epoch = 0, value = "a"),
+          highWatermark = fetchOffset + 1,
+          logStartOffset = logStartOffset
+        )
+      )
+
+      assertEquals(util.List.of(new EpochEntry(0, logStartOffset)), log.leaderEpochCache.epochEntries)
+    } finally {
+      Utils.closeQuietly(log, "UnifiedLog")
+      brokerTopicStats.close()
+      Utils.delete(tempDir)
+    }
   }
 
   /**

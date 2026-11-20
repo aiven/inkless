@@ -59,12 +59,14 @@ import org.apache.kafka.common.metadata.PartitionChangeRecord;
 import org.apache.kafka.common.metadata.TopicRecord;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
+import org.apache.kafka.common.protocol.MessageUtil;
 import org.apache.kafka.common.requests.ApiError;
 import org.apache.kafka.controller.ReplicationControlManagerTest.ReplicationControlTestContext;
 import org.apache.kafka.metadata.InitDisklessLogFields;
 import org.apache.kafka.metadata.LeaderRecoveryState;
 import org.apache.kafka.metadata.PartitionRegistration;
 import org.apache.kafka.metadata.Replicas;
+import org.apache.kafka.raft.KafkaRaftClient;
 import org.apache.kafka.server.common.ApiMessageAndVersion;
 import org.apache.kafka.server.common.MetadataVersion;
 import org.apache.kafka.server.common.TopicIdPartition;
@@ -98,6 +100,7 @@ import static org.apache.kafka.common.protocol.Errors.INVALID_REPLICA_ASSIGNMENT
 import static org.apache.kafka.common.protocol.Errors.INVALID_REQUEST;
 import static org.apache.kafka.common.protocol.Errors.NONE;
 import static org.apache.kafka.common.protocol.Errors.NOT_CONTROLLER;
+import static org.apache.kafka.common.protocol.Errors.RECORD_LIST_TOO_LARGE;
 import static org.apache.kafka.common.protocol.Errors.UNKNOWN_TOPIC_ID;
 import static org.apache.kafka.common.protocol.Errors.UNKNOWN_TOPIC_OR_PARTITION;
 import static org.apache.kafka.controller.ControllerRequestContextUtil.anonymousContextFor;
@@ -4688,6 +4691,134 @@ public class ReplicationControlManagerInklessTest {
             assertEquals(3L, updatedPartition.disklessProducerStates.get(2).producerId());
         }
 
+        private InitDisklessLogRequestData.PartitionData partitionDataWithProducerStates(
+            int partitionId,
+            int leaderEpoch,
+            int entries
+        ) {
+            InitDisklessLogRequestData.PartitionData partitionData = new InitDisklessLogRequestData.PartitionData()
+                .setPartitionId(partitionId)
+                .setDisklessStartOffset(50L)
+                .setLeaderEpoch(leaderEpoch);
+            for (int i = 0; i < entries; i++) {
+                partitionData.producerStates().add(new InitDisklessLogRequestData.ProducerState()
+                    .setProducerId(i)
+                    .setProducerEpoch((short) 0)
+                    .setBaseSequence(0)
+                    .setLastSequence(0)
+                    .setAssignedOffset(i)
+                    .setBatchMaxTimestamp(1000L));
+            }
+            return partitionData;
+        }
+
+        private static long serializedSize(List<ApiMessageAndVersion> records) {
+            return records.stream()
+                .mapToLong(record ->
+                    MessageUtil.toVersionPrefixedByteBuffer(record.version(), record.message()).remaining())
+                .sum();
+        }
+
+        @Test
+        public void testInitDisklessLogDefersPartitionsOverTheMetadataBatchLimit() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder().build();
+            ReplicationControlManager replicationControl = ctx.replicationControl;
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            int numPartitions = 6;
+            int[][] assignments = new int[numPartitions][];
+            Arrays.fill(assignments, new int[] {0, 1, 2});
+            Uuid topicId = ctx.createTestTopic("foo", assignments).topicId();
+
+            // Two partitions fit in the limit and a third doesn't. All six exceed the Raft batch size.
+            int entriesPerPartition = InitDisklessLogFields.MAX_PRODUCER_STATE_ENTRIES * 2 / 5;
+            InitDisklessLogRequestData.TopicData topicData = new InitDisklessLogRequestData.TopicData()
+                .setTopicId(topicId);
+            for (int partitionId = 0; partitionId < numPartitions; partitionId++) {
+                markSwitchPending(ctx, topicId, partitionId);
+                topicData.partitions().add(partitionDataWithProducerStates(
+                    partitionId, replicationControl.getPartition(topicId, partitionId).leaderEpoch, entriesPerPartition));
+            }
+            InitDisklessLogRequestData request = new InitDisklessLogRequestData()
+                .setBrokerId(0)
+                .setBrokerEpoch(defaultBrokerEpoch(0));
+            request.topics().add(topicData);
+            ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.ALTER_PARTITION);
+
+            List<ApiMessageAndVersion> allRecords = new ArrayList<>();
+            for (int round = 0; round < numPartitions / 2; round++) {
+                ControllerResult<InitDisklessLogResponseData> result =
+                    replicationControl.initDisklessLog(requestContext, request);
+
+                // Each request commits the next two partitions and defers the ones after them.
+                assertEquals(2, result.records().size());
+                assertTrue(serializedSize(result.records()) < KafkaRaftClient.MAX_BATCH_SIZE_BYTES / 2 + 1024);
+                for (InitDisklessLogResponseData.PartitionResponse response :
+                        result.response().topics().get(0).partitions()) {
+                    int partitionId = response.partitionId();
+                    short expected;
+                    if (partitionId < 2 * round) {
+                        // An earlier request already committed the seal.
+                        expected = INVALID_REQUEST.code();
+                    } else if (partitionId < 2 * round + 2) {
+                        expected = NONE.code();
+                    } else {
+                        expected = RECORD_LIST_TOO_LARGE.code();
+                    }
+                    assertEquals(expected, response.errorCode(), "partition " + partitionId + " in round " + round);
+                }
+                ctx.replay(result.records());
+                allRecords.addAll(result.records());
+            }
+
+            assertTrue(serializedSize(allRecords) > KafkaRaftClient.MAX_BATCH_SIZE_BYTES);
+            for (int partitionId = 0; partitionId < numPartitions; partitionId++) {
+                PartitionRegistration partition = replicationControl.getPartition(topicId, partitionId);
+                assertEquals(50L, partition.classicToDisklessStartOffset);
+                assertEquals(entriesPerPartition, partition.disklessProducerStates.size());
+            }
+        }
+
+        @Test
+        public void testInitDisklessLogRejectsPartitionOverTheProducerStateLimit() {
+            ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder().build();
+            ReplicationControlManager replicationControl = ctx.replicationControl;
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            Uuid topicId = ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}}).topicId();
+            markSwitchPending(ctx, topicId, 0);
+            int leaderEpoch = replicationControl.getPartition(topicId, 0).leaderEpoch;
+            ControllerRequestContext requestContext = anonymousContextFor(ApiKeys.ALTER_PARTITION);
+
+            // One entry over the limit: the controller writes no record and keeps the switch pending.
+            InitDisklessLogRequestData tooLarge = new InitDisklessLogRequestData()
+                .setBrokerId(0)
+                .setBrokerEpoch(defaultBrokerEpoch(0));
+            tooLarge.topics().add(new InitDisklessLogRequestData.TopicData().setTopicId(topicId));
+            tooLarge.topics().get(0).partitions().add(partitionDataWithProducerStates(
+                0, leaderEpoch, InitDisklessLogFields.MAX_PRODUCER_STATE_ENTRIES + 1));
+            ControllerResult<InitDisklessLogResponseData> rejected =
+                replicationControl.initDisklessLog(requestContext, tooLarge);
+            assertEquals(List.of(), rejected.records());
+            assertEquals(RECORD_LIST_TOO_LARGE.code(),
+                rejected.response().topics().get(0).partitions().get(0).errorCode());
+            assertEquals(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING,
+                replicationControl.getPartition(topicId, 0).classicToDisklessStartOffset);
+
+            // At the limit: the controller accepts the partition, and its record fits in a Raft batch.
+            InitDisklessLogRequestData atLimit = new InitDisklessLogRequestData()
+                .setBrokerId(0)
+                .setBrokerEpoch(defaultBrokerEpoch(0));
+            atLimit.topics().add(new InitDisklessLogRequestData.TopicData().setTopicId(topicId));
+            atLimit.topics().get(0).partitions().add(partitionDataWithProducerStates(
+                0, leaderEpoch, InitDisklessLogFields.MAX_PRODUCER_STATE_ENTRIES));
+            ControllerResult<InitDisklessLogResponseData> accepted =
+                replicationControl.initDisklessLog(requestContext, atLimit);
+            assertEquals(1, accepted.records().size());
+            assertEquals(NONE.code(), accepted.response().topics().get(0).partitions().get(0).errorCode());
+            assertTrue(serializedSize(accepted.records()) < KafkaRaftClient.MAX_BATCH_SIZE_BYTES / 2 + 1024);
+        }
+
         @Test
         public void testInitDisklessLogAcceptsSwitchPendingPartition() {
             ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder().build();
@@ -6011,6 +6142,7 @@ public class ReplicationControlManagerInklessTest {
     @Nested
     class SetClassicPrefixInRemoteStorageTests {
         private static final long SEAL = 100L;
+        private static final int LAST_CLASSIC_LEADER_EPOCH = 0;
 
         private void commitSeal(ReplicationControlTestContext ctx, Uuid topicId, int partitionId, long seal) {
             PartitionRegistration partition = ctx.replicationControl.getPartition(topicId, partitionId);
@@ -6039,7 +6171,8 @@ public class ReplicationControlManagerInklessTest {
             topicData.partitions().add(new SetClassicPrefixInRemoteStorageRequestData.PartitionData()
                 .setPartitionId(partitionId)
                 .setClassicToDisklessStartOffset(seal)
-                .setLeaderEpoch(leaderEpoch));
+                .setLeaderEpoch(leaderEpoch)
+                .setLastClassicLeaderEpoch(LAST_CLASSIC_LEADER_EPOCH));
             return topicData;
         }
 
@@ -6101,6 +6234,7 @@ public class ReplicationControlManagerInklessTest {
             assertEquals(before.leader, after.leader);
             assertEquals(before.leaderEpoch + 1, after.leaderEpoch);
             assertEquals(after.leaderEpoch, after.disklessLeaderEpoch);
+            assertEquals(LAST_CLASSIC_LEADER_EPOCH, after.lastClassicLeaderEpoch);
             assertIsrAndElrDisjoint(after);
         }
 
@@ -6141,6 +6275,42 @@ public class ReplicationControlManagerInklessTest {
 
             assertRejected(send(ctx, request(partition.leader, topicId, 0, SEAL - 1, partition.leaderEpoch)),
                 INVALID_REQUEST);
+        }
+
+        @ParameterizedTest
+        @ValueSource(booleans = {false, true})
+        public void testSetClassicPrefixInRemoteStorageLastClassicLeaderEpochOutOfRangeRejected(boolean aboveLeaderEpoch) {
+            ReplicationControlTestContext ctx = disklessSwitchTestContext();
+            Uuid topicId = createSealedTopic(ctx);
+            PartitionRegistration partition = ctx.replicationControl.getPartition(topicId, 0);
+            int lastClassicLeaderEpoch = aboveLeaderEpoch
+                ? partition.leaderEpoch + 1
+                : PartitionRegistration.NO_LAST_CLASSIC_LEADER_EPOCH - 1;
+            SetClassicPrefixInRemoteStorageRequestData request =
+                request(partition.leader, topicId, 0, SEAL, partition.leaderEpoch);
+            request.topics().get(0).partitions().get(0).setLastClassicLeaderEpoch(lastClassicLeaderEpoch);
+
+            assertRejected(send(ctx, request), INVALID_REQUEST);
+            assertEquals(partition, ctx.replicationControl.getPartition(topicId, 0));
+        }
+
+        @Test
+        public void testSetClassicPrefixInRemoteStorageWithoutLastClassicLeaderEpoch() {
+            ReplicationControlTestContext ctx = disklessSwitchTestContext();
+            Uuid topicId = createSealedTopic(ctx);
+            PartitionRegistration partition = ctx.replicationControl.getPartition(topicId, 0);
+            SetClassicPrefixInRemoteStorageRequestData request =
+                request(partition.leader, topicId, 0, SEAL, partition.leaderEpoch);
+            request.topics().get(0).partitions().get(0)
+                .setLastClassicLeaderEpoch(PartitionRegistration.NO_LAST_CLASSIC_LEADER_EPOCH);
+
+            ControllerResult<SetClassicPrefixInRemoteStorageResponseData> result = send(ctx, request);
+            assertEquals(NONE.code(), errorCode(result));
+            ctx.replay(result.records());
+
+            PartitionRegistration after = ctx.replicationControl.getPartition(topicId, 0);
+            assertTrue(after.classicPrefixInRemoteStorage);
+            assertEquals(PartitionRegistration.NO_LAST_CLASSIC_LEADER_EPOCH, after.lastClassicLeaderEpoch);
         }
 
         @Test
@@ -6444,68 +6614,16 @@ public class ReplicationControlManagerInklessTest {
     }
 
     @Test
-    public void testAlterDisklessSwitchForcesSeal() {
-        ReplicationControlTestContext ctx = disklessSwitchTestContext();
-        ReplicationControlManager replicationControl = ctx.replicationControl;
-        Uuid topicId = createSwitchingTestTopic(ctx);
-
-        ControllerResult<AlterDisklessSwitchResponseData> result =
-            replicationControl.alterDisklessSwitch(new AlterDisklessSwitchRequestData()
-                .setTopicName("foo").setPartitionIndex(0).setSealOffset(100L));
-        assertEquals((short) 0, result.response().errorCode());
-        ctx.replay(result.records());
-
-        PartitionRegistration partition = replicationControl.getPartition(topicId, 0);
-        assertEquals(100L, partition.classicToDisklessStartOffset);
-        // The current leader epoch is captured as the diskless leader epoch.
-        assertEquals(partition.leaderEpoch, partition.disklessLeaderEpoch);
-        // By default a forced seal leaves producer states untouched: no producer-states tag is written.
-        PartitionChangeRecord record = (PartitionChangeRecord) result.records().get(0).message();
-        assertTrue(InitDisklessLogFields.decodeProducerStatesIfPresent(record.unknownTaggedFields()).isEmpty());
-    }
-
-    @Test
-    public void testAlterDisklessSwitchForcesSealClearingProducerStates() {
-        ReplicationControlTestContext ctx = disklessSwitchTestContext();
-        ReplicationControlManager replicationControl = ctx.replicationControl;
-        createSwitchingTestTopic(ctx);
-
-        ControllerResult<AlterDisklessSwitchResponseData> result =
-            replicationControl.alterDisklessSwitch(new AlterDisklessSwitchRequestData()
-                .setTopicName("foo").setPartitionIndex(0).setSealOffset(100L).setClearProducerStates(true));
-        assertEquals((short) 0, result.response().errorCode());
-
-        // With clearProducerStates the record carries an explicit empty producer-states tag so merge() clears them.
-        PartitionChangeRecord record = (PartitionChangeRecord) result.records().get(0).message();
-        assertEquals(List.of(), InitDisklessLogFields.decodeProducerStatesIfPresent(record.unknownTaggedFields())
-            .orElseThrow(() -> new AssertionError("expected an explicit producer-states tag")));
-    }
-
-    @Test
-    public void testAlterDisklessSwitchAbortsSwitch() {
-        ReplicationControlTestContext ctx = disklessSwitchTestContext();
-        ReplicationControlManager replicationControl = ctx.replicationControl;
-        Uuid topicId = createSwitchingTestTopic(ctx);
-
-        // Abort the pending switch back to classic.
-        ctx.replay(replicationControl.alterDisklessSwitch(new AlterDisklessSwitchRequestData()
-            .setTopicName("foo").setPartitionIndex(0).setSealOffset(-1L)).records());
-        PartitionRegistration aborted = replicationControl.getPartition(topicId, 0);
-        assertEquals(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET, aborted.classicToDisklessStartOffset);
-        assertEquals(List.of(), aborted.disklessProducerStates);
-        assertEquals(PartitionRegistration.NO_DISKLESS_LEADER_EPOCH, aborted.disklessLeaderEpoch);
-    }
-
-    @Test
-    public void testAlterDisklessSwitchReArms() {
+    public void testAlterDisklessSwitchBumpsLeaderEpoch() {
         ReplicationControlTestContext ctx = disklessSwitchTestContext();
         ReplicationControlManager replicationControl = ctx.replicationControl;
         Uuid topicId = createSwitchingTestTopic(ctx);
         int leaderEpochBefore = replicationControl.getPartition(topicId, 0).leaderEpoch;
 
-        // Re-arm the pending switch.
-        ctx.replay(replicationControl.alterDisklessSwitch(new AlterDisklessSwitchRequestData()
-            .setTopicName("foo").setPartitionIndex(0).setSealOffset(-2L)).records());
+        ControllerResult<AlterDisklessSwitchResponseData> result = replicationControl.alterDisklessSwitch(
+            rearmRequest("foo", 0));
+        assertEquals((short) 0, result.response().errorCode());
+        ctx.replay(result.records());
 
         PartitionRegistration partition = replicationControl.getPartition(topicId, 0);
         assertEquals(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING, partition.classicToDisklessStartOffset);
@@ -6514,76 +6632,31 @@ public class ReplicationControlManagerInklessTest {
     }
 
     @Test
-    public void testAlterDisklessSwitchCannotAbortCommittedSeal() {
+    public void testAlterDisklessSwitchRecordSurvivesSerialization() {
         ReplicationControlTestContext ctx = disklessSwitchTestContext();
-        ReplicationControlManager replicationControl = ctx.replicationControl;
         createSwitchingTestTopic(ctx);
 
-        // Commit a seal; diskless data may now exist past it, so abort/re-arm must be rejected.
-        ctx.replay(replicationControl.alterDisklessSwitch(new AlterDisklessSwitchRequestData()
-            .setTopicName("foo").setPartitionIndex(0).setSealOffset(100L)).records());
+        PartitionChangeRecord record = (PartitionChangeRecord) ctx.replicationControl
+            .alterDisklessSwitch(rearmRequest("foo", 0)).records().get(0).message();
+        PartitionChangeRecord roundTripped = new PartitionChangeRecord(
+            MessageUtil.toByteBufferAccessor(record, (short) 0), (short) 0);
 
-        assertThrows(InvalidRequestException.class, () ->
-            replicationControl.alterDisklessSwitch(new AlterDisklessSwitchRequestData()
-                .setTopicName("foo").setPartitionIndex(0).setSealOffset(-1L)));
-        assertThrows(InvalidRequestException.class, () ->
-            replicationControl.alterDisklessSwitch(new AlterDisklessSwitchRequestData()
-                .setTopicName("foo").setPartitionIndex(0).setSealOffset(-2L)));
+        assertEquals(record, roundTripped);
+        assertEquals(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING,
+            InitDisklessLogFields.decodeClassicToDisklessStartOffset(roundTripped.unknownTaggedFields()));
     }
 
     @Test
-    public void testAlterDisklessSwitchCannotReSealBeyondCommittedSeal() {
+    public void testAlterDisklessSwitchRejectsCommittedSeal() {
         ReplicationControlTestContext ctx = disklessSwitchTestContext();
-        ReplicationControlManager replicationControl = ctx.replicationControl;
         Uuid topicId = createSwitchingTestTopic(ctx);
-
-        // Commit a seal at 100. The classic log is truncated to the seal, so 100 is its end offset.
-        ctx.replay(replicationControl.alterDisklessSwitch(new AlterDisklessSwitchRequestData()
-            .setTopicName("foo").setPartitionIndex(0).setSealOffset(100L)).records());
-
-        // Re-sealing beyond the committed seal would route non-existent classic offsets and is rejected.
-        assertThrows(InvalidRequestException.class, () ->
-            replicationControl.alterDisklessSwitch(new AlterDisklessSwitchRequestData()
-                .setTopicName("foo").setPartitionIndex(0).setSealOffset(150L)));
-
-        // Re-sealing at or below the committed seal is allowed (correcting a bad seal downward).
-        ctx.replay(replicationControl.alterDisklessSwitch(new AlterDisklessSwitchRequestData()
-            .setTopicName("foo").setPartitionIndex(0).setSealOffset(50L)).records());
-        assertEquals(50L, replicationControl.getPartition(topicId, 0).classicToDisklessStartOffset);
-    }
-
-    @Test
-    public void testAlterDisklessSwitchRejectedAfterClassicPrefixInRemoteStorage() {
-        ReplicationControlTestContext ctx = disklessSwitchTestContext();
-        ReplicationControlManager replicationControl = ctx.replicationControl;
-        Uuid topicId = createSwitchingTestTopic(ctx);
-
-        ctx.replay(replicationControl.alterDisklessSwitch(new AlterDisklessSwitchRequestData()
-            .setTopicName("foo").setPartitionIndex(0).setSealOffset(100L)).records());
-        PartitionChangeRecord flagRecord = new PartitionChangeRecord()
-            .setTopicId(topicId)
-            .setPartitionId(0);
-        flagRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicPrefixInRemoteStorage());
-        ctx.replay(List.of(new ApiMessageAndVersion(flagRecord, (short) 0)));
-
-        for (long candidateSeal : List.of(0L, 50L, 100L, 150L, -1L, -2L)) {
-            InvalidRequestException exception = assertThrows(InvalidRequestException.class, () ->
-                replicationControl.alterDisklessSwitch(new AlterDisklessSwitchRequestData()
-                    .setTopicName("foo").setPartitionIndex(0).setSealOffset(candidateSeal)));
-            assertTrue(exception.getMessage().contains("classic prefix is already in remote storage"),
-                "Unexpected error for seal " + candidateSeal + ": " + exception.getMessage());
-        }
-    }
-
-    @Test
-    public void testAlterDisklessSwitchRejectsInvalidOffset() {
-        ReplicationControlTestContext ctx = disklessSwitchTestContext();
-        ReplicationControlManager replicationControl = ctx.replicationControl;
-        createSwitchingTestTopic(ctx);
+        PartitionChangeRecord sealRecord = new PartitionChangeRecord().setTopicId(topicId).setPartitionId(0);
+        sealRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicToDisklessStartOffset(100L));
+        ctx.replay(List.of(new ApiMessageAndVersion(sealRecord, (short) 0)));
 
         assertThrows(InvalidRequestException.class, () ->
-            replicationControl.alterDisklessSwitch(new AlterDisklessSwitchRequestData()
-                .setTopicName("foo").setPartitionIndex(0).setSealOffset(-3L)));
+            ctx.replicationControl.alterDisklessSwitch(rearmRequest("foo", 0)));
+        assertEquals(100L, ctx.replicationControl.getPartition(topicId, 0).classicToDisklessStartOffset);
     }
 
     @Test
@@ -6595,8 +6668,7 @@ public class ReplicationControlManagerInklessTest {
         ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}});
 
         assertThrows(InvalidRequestException.class, () ->
-            replicationControl.alterDisklessSwitch(new AlterDisklessSwitchRequestData()
-                .setTopicName("foo").setPartitionIndex(0).setSealOffset(100L)));
+            replicationControl.alterDisklessSwitch(rearmRequest("foo", 0)));
     }
 
     @Test
@@ -6617,8 +6689,7 @@ public class ReplicationControlManagerInklessTest {
             anonymousContextFor(ApiKeys.CREATE_TOPICS), request, Set.of("foo"), false).records());
 
         assertThrows(InvalidRequestException.class, () ->
-            replicationControl.alterDisklessSwitch(new AlterDisklessSwitchRequestData()
-                .setTopicName("foo").setPartitionIndex(0).setSealOffset(100L)));
+            replicationControl.alterDisklessSwitch(rearmRequest("foo", 0)));
     }
 
     @Test
@@ -6627,8 +6698,7 @@ public class ReplicationControlManagerInklessTest {
         ReplicationControlManager replicationControl = ctx.replicationControl;
 
         assertThrows(UnknownTopicOrPartitionException.class, () ->
-            replicationControl.alterDisklessSwitch(new AlterDisklessSwitchRequestData()
-                .setTopicName("nonexistent").setPartitionIndex(0).setSealOffset(100L)));
+            replicationControl.alterDisklessSwitch(rearmRequest("nonexistent", 0)));
     }
 
     @Test
@@ -6638,8 +6708,137 @@ public class ReplicationControlManagerInklessTest {
         createSwitchingTestTopic(ctx);
 
         assertThrows(UnknownTopicOrPartitionException.class, () ->
-            replicationControl.alterDisklessSwitch(new AlterDisklessSwitchRequestData()
-                .setTopicName("foo").setPartitionIndex(5).setSealOffset(100L)));
+            replicationControl.alterDisklessSwitch(rearmRequest("foo", 5)));
+    }
+
+    @Test
+    public void testAlterDisklessSwitchLowersACommittedSealInPhaseOne() {
+        ReplicationControlTestContext ctx = disklessSwitchTestContext();
+        Uuid topicId = createSwitchingTestTopic(ctx);
+        List<InitDisklessLogFields.ProducerStateEntry> producerStates =
+            List.of(new InitDisklessLogFields.ProducerStateEntry(7L, (short) 0, 0, 4, 95L, 1000L));
+        commitSeal(ctx, topicId, 100L, producerStates);
+        PartitionRegistration before = ctx.replicationControl.getPartition(topicId, 0);
+
+        ControllerResult<AlterDisklessSwitchResponseData> result =
+            ctx.replicationControl.alterDisklessSwitch(alterRequest("foo", 0, 40L));
+        assertEquals((short) 0, result.response().errorCode());
+        ctx.replay(result.records());
+
+        PartitionRegistration after = ctx.replicationControl.getPartition(topicId, 0);
+        assertEquals(40L, after.classicToDisklessStartOffset);
+        assertEquals(before.leader, after.leader);
+        assertEquals(before.leaderEpoch, after.leaderEpoch);
+        assertEquals(before.leaderEpoch, after.disklessLeaderEpoch);
+        assertEquals(producerStates, after.disklessProducerStates);
+        assertFalse(after.classicPrefixInRemoteStorage);
+    }
+
+    @Test
+    public void testAlterDisklessSwitchLowerSealRecordSurvivesSerialization() {
+        ReplicationControlTestContext ctx = disklessSwitchTestContext();
+        Uuid topicId = createSwitchingTestTopic(ctx);
+        commitSeal(ctx, topicId, 100L, List.of());
+
+        PartitionChangeRecord record = (PartitionChangeRecord) ctx.replicationControl
+            .alterDisklessSwitch(alterRequest("foo", 0, 40L)).records().get(0).message();
+        PartitionChangeRecord roundTripped = new PartitionChangeRecord(
+            MessageUtil.toByteBufferAccessor(record, (short) 0), (short) 0);
+
+        assertEquals(record, roundTripped);
+        assertEquals(40L, InitDisklessLogFields.decodeClassicToDisklessStartOffset(roundTripped.unknownTaggedFields()));
+    }
+
+    @ParameterizedTest
+    @ValueSource(longs = {-3L, -2L, -1L, 100L, 101L})
+    public void testAlterDisklessSwitchRejectsSealsThatArentLowerOnACommittedSeal(long sealOffset) {
+        ReplicationControlTestContext ctx = disklessSwitchTestContext();
+        Uuid topicId = createSwitchingTestTopic(ctx);
+        commitSeal(ctx, topicId, 100L, List.of());
+
+        assertThrows(InvalidRequestException.class, () ->
+            ctx.replicationControl.alterDisklessSwitch(alterRequest("foo", 0, sealOffset)));
+        assertEquals(100L, ctx.replicationControl.getPartition(topicId, 0).classicToDisklessStartOffset);
+    }
+
+    @ParameterizedTest
+    @ValueSource(longs = {-3L, -1L})
+    public void testAlterDisklessSwitchRejectsNegativeSealsOtherThanReArm(long sealOffset) {
+        ReplicationControlTestContext ctx = disklessSwitchTestContext();
+        Uuid topicId = createSwitchingTestTopic(ctx);
+
+        assertThrows(InvalidRequestException.class, () ->
+            ctx.replicationControl.alterDisklessSwitch(alterRequest("foo", 0, sealOffset)));
+        assertEquals(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING,
+            ctx.replicationControl.getPartition(topicId, 0).classicToDisklessStartOffset);
+    }
+
+    @Test
+    public void testAlterDisklessSwitchRejectsASealOnAPendingSwitch() {
+        ReplicationControlTestContext ctx = disklessSwitchTestContext();
+        Uuid topicId = createSwitchingTestTopic(ctx);
+
+        InvalidRequestException e = assertThrows(InvalidRequestException.class, () ->
+            ctx.replicationControl.alterDisklessSwitch(alterRequest("foo", 0, 0L)));
+        assertTrue(e.getMessage().contains("no committed seal"), e.getMessage());
+        assertEquals(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING,
+            ctx.replicationControl.getPartition(topicId, 0).classicToDisklessStartOffset);
+    }
+
+    @Test
+    public void testAlterDisklessSwitchRejectsALowerSealInPhaseTwo() {
+        ReplicationControlTestContext ctx = disklessSwitchTestContext();
+        Uuid topicId = createSwitchingTestTopic(ctx);
+        commitSeal(ctx, topicId, 100L, List.of());
+        PartitionChangeRecord flagRecord = new PartitionChangeRecord().setTopicId(topicId).setPartitionId(0);
+        flagRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicPrefixInRemoteStorage());
+        ctx.replay(List.of(new ApiMessageAndVersion(flagRecord, (short) 0)));
+
+        assertThrows(InvalidRequestException.class, () ->
+            ctx.replicationControl.alterDisklessSwitch(alterRequest("foo", 0, 40L)));
+        assertEquals(100L, ctx.replicationControl.getPartition(topicId, 0).classicToDisklessStartOffset);
+    }
+
+    @Test
+    public void testAlterDisklessSwitchRejectsALowerSealOnClassicTopics() {
+        ReplicationControlTestContext ctx = disklessSwitchTestContext();
+        ctx.registerBrokers(0, 1, 2);
+        ctx.unfenceBrokers(0, 1, 2);
+        ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}});
+
+        assertThrows(InvalidRequestException.class, () ->
+            ctx.replicationControl.alterDisklessSwitch(alterRequest("foo", 0, 0L)));
+    }
+
+    @Test
+    public void testAlterDisklessSwitchRejectsALowerSealOnAnUnknownPartition() {
+        ReplicationControlTestContext ctx = disklessSwitchTestContext();
+        createSwitchingTestTopic(ctx);
+
+        assertThrows(UnknownTopicOrPartitionException.class, () ->
+            ctx.replicationControl.alterDisklessSwitch(alterRequest("foo", 5, 0L)));
+    }
+
+    private static void commitSeal(ReplicationControlTestContext ctx, Uuid topicId, long seal,
+                                   List<InitDisklessLogFields.ProducerStateEntry> producerStates) {
+        PartitionChangeRecord sealRecord = new PartitionChangeRecord().setTopicId(topicId).setPartitionId(0);
+        sealRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicToDisklessStartOffset(seal));
+        sealRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeProducerStates(producerStates));
+        ctx.replay(List.of(new ApiMessageAndVersion(sealRecord, (short) 0)));
+    }
+
+    private static AlterDisklessSwitchRequestData alterRequest(String topic, int partition, long sealOffset) {
+        return new AlterDisklessSwitchRequestData()
+            .setTopicName(topic)
+            .setPartitionIndex(partition)
+            .setSealOffset(sealOffset);
+    }
+
+    private static AlterDisklessSwitchRequestData rearmRequest(String topic, int partition) {
+        return new AlterDisklessSwitchRequestData()
+            .setTopicName(topic)
+            .setPartitionIndex(partition)
+            .setSealOffset(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING);
     }
 
     private static ReplicationControlTestContext disklessSwitchTestContext() {

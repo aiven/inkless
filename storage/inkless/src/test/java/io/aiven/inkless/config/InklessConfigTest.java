@@ -309,6 +309,98 @@ class InklessConfigTest {
     }
 
     @Test
+    void objectStorageRoleOverridesSharedConfiguration() {
+        final var config = new InklessConfig(
+            Map.of(
+                "control.plane.class", InMemoryControlPlane.class.getCanonicalName(),
+                "storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName(),
+                "storage.a", "1",
+                "storage.background.a", "2"
+            )
+        );
+        final var background = (ConfigTestStorageBackend) config.storage(storageMetrics, InklessConfig.STORAGE_ROLE_BACKGROUND);
+        final var produce = (ConfigTestStorageBackend) config.storage(storageMetrics, InklessConfig.STORAGE_ROLE_PRODUCE);
+        assertThat(background.passedConfig.get("a")).isEqualTo("2");
+        assertThat(produce.passedConfig.get("a")).isEqualTo("1");
+    }
+
+    @Test
+    void backgroundStorageDefaultsToLongerS3Timeouts() {
+        final var config = new InklessConfig(
+            Map.of(
+                "control.plane.class", InMemoryControlPlane.class.getCanonicalName(),
+                "storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName()
+            )
+        );
+        final var background = (ConfigTestStorageBackend) config.storage(storageMetrics, InklessConfig.STORAGE_ROLE_BACKGROUND);
+        final var produce = (ConfigTestStorageBackend) config.storage(storageMetrics, InklessConfig.STORAGE_ROLE_PRODUCE);
+        assertThat(background.passedConfig.get("s3.api.call.timeout")).isEqualTo("30000");
+        assertThat(background.passedConfig.get("s3.api.call.attempt.timeout")).isEqualTo("10000");
+        assertThat(background.passedConfig.get("gcs.read.timeout")).isEqualTo("10000");
+        assertThat(produce.passedConfig).doesNotContainKey("s3.api.call.timeout");
+        assertThat(produce.passedConfig).doesNotContainKey("gcs.read.timeout");
+    }
+
+    @Test
+    void backgroundStorageTimeoutExplicitSettingsReplaceDefaults() {
+        final var config = new InklessConfig(
+            Map.of(
+                "control.plane.class", InMemoryControlPlane.class.getCanonicalName(),
+                "storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName(),
+                "storage.s3.api.call.timeout", "3000",
+                "storage.s3.api.call.attempt.timeout", "1500",
+                "storage.background.s3.api.call.attempt.timeout", "7000"
+            )
+        );
+        final var background = (ConfigTestStorageBackend) config.storage(storageMetrics, InklessConfig.STORAGE_ROLE_BACKGROUND);
+        assertThat(background.passedConfig.get("s3.api.call.timeout")).isEqualTo("3000");
+        assertThat(background.passedConfig.get("s3.api.call.attempt.timeout")).isEqualTo("7000");
+    }
+
+    @Test
+    void backgroundStorageSharedCallTimeoutDropsS3AttemptDefault() {
+        final var config = new InklessConfig(
+            Map.of(
+                "control.plane.class", InMemoryControlPlane.class.getCanonicalName(),
+                "storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName(),
+                "storage.s3.api.call.timeout", "5000"
+            )
+        );
+        final var background = (ConfigTestStorageBackend) config.storage(storageMetrics, InklessConfig.STORAGE_ROLE_BACKGROUND);
+        assertThat(background.passedConfig.get("s3.api.call.timeout")).isEqualTo("5000");
+        assertThat(background.passedConfig).doesNotContainKey("s3.api.call.attempt.timeout");
+    }
+
+    @Test
+    void backgroundStorageSharedAttemptTimeoutDropsS3CallDefault() {
+        final var config = new InklessConfig(
+            Map.of(
+                "control.plane.class", InMemoryControlPlane.class.getCanonicalName(),
+                "storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName(),
+                "storage.s3.api.call.attempt.timeout", "500"
+            )
+        );
+        final var background = (ConfigTestStorageBackend) config.storage(storageMetrics, InklessConfig.STORAGE_ROLE_BACKGROUND);
+        assertThat(background.passedConfig.get("s3.api.call.attempt.timeout")).isEqualTo("500");
+        assertThat(background.passedConfig).doesNotContainKey("s3.api.call.timeout");
+    }
+
+    @Test
+    void backgroundStorageSharedGcsTimeoutKeepsS3Defaults() {
+        final var config = new InklessConfig(
+            Map.of(
+                "control.plane.class", InMemoryControlPlane.class.getCanonicalName(),
+                "storage.backend.class", ConfigTestStorageBackend.class.getCanonicalName(),
+                "storage.gcs.read.timeout", "4000"
+            )
+        );
+        final var background = (ConfigTestStorageBackend) config.storage(storageMetrics, InklessConfig.STORAGE_ROLE_BACKGROUND);
+        assertThat(background.passedConfig.get("gcs.read.timeout")).isEqualTo("4000");
+        assertThat(background.passedConfig.get("s3.api.call.timeout")).isEqualTo("30000");
+        assertThat(background.passedConfig.get("s3.api.call.attempt.timeout")).isEqualTo("10000");
+    }
+
+    @Test
     void consumeCacheSizeLessThanOne() {
         final Map<String, String> config = Map.of(
             "control.plane.class", InMemoryControlPlane.class.getCanonicalName(),

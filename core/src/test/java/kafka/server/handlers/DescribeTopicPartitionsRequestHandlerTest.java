@@ -61,6 +61,7 @@ import org.apache.kafka.metadata.InitDisklessLogFields;
 import org.apache.kafka.metadata.InitDisklessLogFields.ProducerStateEntry;
 import org.apache.kafka.metadata.KRaftMetadataCache;
 import org.apache.kafka.metadata.LeaderRecoveryState;
+import org.apache.kafka.metadata.PartitionRegistration;
 import org.apache.kafka.network.SocketServerConfigs;
 import org.apache.kafka.network.metrics.RequestChannelMetrics;
 import org.apache.kafka.raft.KRaftConfigs;
@@ -516,6 +517,8 @@ class DescribeTopicPartitionsRequestHandlerTest {
         switchedPartition.unknownTaggedFields().add(
             InitDisklessLogFields.encodeClassicPrefixInRemoteStorage());
         switchedPartition.unknownTaggedFields().add(
+            InitDisklessLogFields.encodeLastClassicLeaderEpoch(3));
+        switchedPartition.unknownTaggedFields().add(
             InitDisklessLogFields.encodeProducerStates(List.of(
                 new ProducerStateEntry(1001L, (short) 2, 0, 5, 40L, 1700000000000L)
             )));
@@ -575,6 +578,7 @@ class DescribeTopicPartitionsRequestHandlerTest {
         assertEquals(42L, InitDisklessLogFields.decodeClassicToDisklessStartOffset(p0.unknownTaggedFields()));
         assertEquals(7, InitDisklessLogFields.decodeDisklessLeaderEpoch(p0.unknownTaggedFields()));
         assertTrue(InitDisklessLogFields.decodeClassicPrefixInRemoteStorage(p0.unknownTaggedFields()));
+        assertEquals(3, InitDisklessLogFields.decodeLastClassicLeaderEpoch(p0.unknownTaggedFields()));
         List<ProducerStateEntry> producerStates = InitDisklessLogFields.decodeProducerStates(p0.unknownTaggedFields());
         assertEquals(1, producerStates.size());
         assertEquals(1001L, producerStates.get(0).producerId());
@@ -591,6 +595,8 @@ class DescribeTopicPartitionsRequestHandlerTest {
         assertEquals(-1, InitDisklessLogFields.decodeDisklessLeaderEpoch(p1.unknownTaggedFields()));
         assertEquals(List.of(), InitDisklessLogFields.decodeProducerStates(p1.unknownTaggedFields()));
         assertTrue(InitDisklessLogFields.decodeClassicPrefixInRemoteStorageIfPresent(p1.unknownTaggedFields()).isEmpty());
+        assertEquals(PartitionRegistration.NO_LAST_CLASSIC_LEADER_EPOCH,
+            InitDisklessLogFields.decodeLastClassicLeaderEpoch(p1.unknownTaggedFields()));
     }
 
     void updateKraftMetadataCache(KRaftMetadataCache kRaftMetadataCache, List<ApiMessage> records) {

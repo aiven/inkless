@@ -951,6 +951,7 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
         // The copied and log-start offset is empty initially for a new RLMCopyTask, and needs to be fetched inside
         // the task's run() method.
         private volatile Optional<OffsetAndEpoch> copiedOffsetOption = Optional.empty();
+        private volatile long copiedOffsetTruncationCount = 0L;
         private volatile boolean isLogStartOffsetUpdated = false;
         private volatile Optional<String> logDirectory = Optional.empty();
 
@@ -997,7 +998,12 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
             }
         }
 
-        private void maybeUpdateCopiedOffset(UnifiedLog log) throws RemoteStorageException {
+        private void maybeUpdateCopiedOffset(UnifiedLog log, long truncationCount) throws RemoteStorageException {
+            // A truncation can remove the records that the copied offset comes from, so the task finds it again.
+            if (copiedOffsetTruncationCount != truncationCount) {
+                copiedOffsetOption = Optional.empty();
+                copiedOffsetTruncationCount = truncationCount;
+            }
             if (copiedOffsetOption.isEmpty()) {
                 // This is found by traversing from the latest leader epoch from leader epoch history and find the highest offset
                 // of a segment with that epoch copied into remote storage. If it can not find an entry then it checks for the
@@ -1005,7 +1011,7 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
                 // epoch cache then it starts copying the segments from the earliest epoch entry's offset.
                 copiedOffsetOption = Optional.of(findHighestRemoteOffset(topicIdPartition, log));
                 logger.info("Found the highest copiedRemoteOffset: {} for partition: {} after becoming leader", copiedOffsetOption, topicIdPartition);
-                copiedOffsetOption.ifPresent(offsetAndEpoch ->  log.updateHighestOffsetInRemoteStorage(offsetAndEpoch.offset()));
+                copiedOffsetOption.ifPresent(offsetAndEpoch ->  log.updateHighestOffsetInRemoteStorage(offsetAndEpoch.offset(), truncationCount));
             }
         }
 
@@ -1040,8 +1046,9 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
                 return;
 
             try {
+                long truncationCount = log.truncationCount();
                 maybeUpdateLogStartOffsetOnBecomingLeader(log);
-                maybeUpdateCopiedOffset(log);
+                maybeUpdateCopiedOffset(log, truncationCount);
                 long copiedOffset = copiedOffsetOption.get().offset();
 
                 // LSO indicates the offset below are ready to be consumed (high-watermark or committed)
@@ -1091,7 +1098,8 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
                             RemoteLogSegmentId segmentId = RemoteLogSegmentId.generateNew(topicIdPartition);
                             segmentIdsBeingCopied.add(segmentId);
                             try {
-                                copyLogSegment(log, candidateLogSegment.logSegment, segmentId, candidateLogSegment.nextSegmentOffset);
+                                copyLogSegment(log, candidateLogSegment.logSegment, segmentId, candidateLogSegment.nextSegmentOffset,
+                                        truncationCount);
                             } finally {
                                 segmentIdsBeingCopied.remove(segmentId);
                             }
@@ -1118,7 +1126,8 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
             }
         }
 
-        private void copyLogSegment(UnifiedLog log, LogSegment segment, RemoteLogSegmentId segmentId, long nextSegmentBaseOffset)
+        private void copyLogSegment(UnifiedLog log, LogSegment segment, RemoteLogSegmentId segmentId, long nextSegmentBaseOffset,
+                                    long truncationCount)
                 throws InterruptedException, ExecutionException, RemoteStorageException, IOException,
                 CustomMetadataSizeLimitExceededException {
             File logFile = segment.log().file();
@@ -1199,7 +1208,7 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
             copiedOffsetOption = Optional.of(new OffsetAndEpoch(endOffset, lastEpochInSegment));
             // Update the highest offset in remote storage for this partition's log so that the local log segments
             // are not deleted before they are copied to remote storage.
-            log.updateHighestOffsetInRemoteStorage(endOffset);
+            log.updateHighestOffsetInRemoteStorage(endOffset, truncationCount);
             logger.info("Copied {} to remote storage with segment-id: {}",
                     logFileName, copySegmentFinishedRlsm.remoteLogSegmentId());
         }
@@ -1631,6 +1640,9 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
                 Iterator<Integer> epochsToClean = remoteLeaderEpochs.stream()
                         .filter(remoteEpoch -> remoteEpoch < earliestEpochEntry.epoch())
                         .iterator();
+                // Inkless: a consolidating leader's cache can lack older epochs while it rebuilds from remote storage,
+                // so only its segments that end below the cross-tier log start are unreferenced.
+                boolean keepSegmentsFromLogStart = isConsolidatingDisklessPartition.test(topicIdPartition.topicPartition());
 
                 List<RemoteLogSegmentMetadata> listOfSegmentsToBeCleaned = new ArrayList<>();
 
@@ -1640,6 +1652,9 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
                     while (segmentsToBeCleaned.hasNext()) {
                         if (!isCancelled()) {
                             RemoteLogSegmentMetadata nextSegmentMetadata = segmentsToBeCleaned.next();
+                            if (keepSegmentsFromLogStart && nextSegmentMetadata.endOffset() >= logStartOffset) {
+                                continue;
+                            }
                             sizeOfDeletableSegmentsBytes += nextSegmentMetadata.segmentSizeInBytes();
                             listOfSegmentsToBeCleaned.add(nextSegmentMetadata);
                         }
@@ -1756,10 +1771,11 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
 
         @Override
         protected void execute(UnifiedLog log) throws InterruptedException, RemoteStorageException, ExecutionException {
+            long truncationCount = log.truncationCount();
             OffsetAndEpoch offsetAndEpoch = findHighestRemoteOffset(topicIdPartition, log);
             // Update the highest offset in remote storage for this partition's log so that the local log segments
             // are not deleted before they are copied to remote storage.
-            log.updateHighestOffsetInRemoteStorage(offsetAndEpoch.offset());
+            log.updateHighestOffsetInRemoteStorage(offsetAndEpoch.offset(), truncationCount);
         }
     }
     
@@ -1999,12 +2015,32 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
             }
             buffer.flip();
 
+            long upperBoundOffset = remoteStorageFetchInfo.upperBoundOffset().orElse(Long.MAX_VALUE);
+            if (remoteStorageFetchInfo.upperBoundOffset().isPresent()) {
+                // The segment can hold records at or past the bound, which belong to the diskless log of a
+                // switched partition. The response keeps only the whole batches that end below the bound.
+                int validBytes = 0;
+                for (RecordBatch batch : MemoryRecords.readableRecords(buffer.duplicate()).batches()) {
+                    if (batch.lastOffset() >= upperBoundOffset) {
+                        if (validBytes == 0) {
+                            // An empty response makes the consumer fetch the same offset again, so log the cause.
+                            LOGGER.warn("Returning no records for offset {} in partition {} because batch {}-{} crosses the upper bound offset {}",
+                                    offset, tp, batch.baseOffset(), batch.lastOffset(), upperBoundOffset);
+                        }
+                        buffer.limit(validBytes);
+                        break;
+                    }
+                    validBytes += batch.sizeInBytes();
+                }
+            }
+
             startPos = startPos + enrichedRecordBatch.skippedBytes;
             FetchDataInfo fetchDataInfo = new FetchDataInfo(
                     new LogOffsetMetadata(firstBatch.baseOffset(), remoteLogSegmentMetadata.startOffset(), startPos),
                     MemoryRecords.readableRecords(buffer));
             if (includeAbortedTxns) {
-                fetchDataInfo = addAbortedTransactions(firstBatch.baseOffset(), remoteLogSegmentMetadata, fetchDataInfo, logOptional.get());
+                fetchDataInfo = addAbortedTransactions(firstBatch.baseOffset(), remoteLogSegmentMetadata, fetchDataInfo,
+                        logOptional.get(), upperBoundOffset);
             }
 
             return fetchDataInfo;
@@ -2027,14 +2063,15 @@ public class RemoteLogManager implements Closeable, AsyncOffsetReader {
     private FetchDataInfo addAbortedTransactions(long startOffset,
                                                  RemoteLogSegmentMetadata segmentMetadata,
                                                  FetchDataInfo fetchInfo,
-                                                 UnifiedLog log) throws RemoteStorageException {
+                                                 UnifiedLog log,
+                                                 long maxUpperBoundOffset) throws RemoteStorageException {
         int fetchSize = fetchInfo.records.sizeInBytes();
         OffsetPosition startOffsetPosition = new OffsetPosition(fetchInfo.fetchOffsetMetadata.messageOffset,
                 fetchInfo.fetchOffsetMetadata.relativePositionInSegment);
 
         OffsetIndex offsetIndex = indexCache.getIndexEntry(segmentMetadata).offsetIndex();
-        long upperBoundOffset = offsetIndex.fetchUpperBoundOffset(startOffsetPosition, fetchSize)
-                .map(OffsetPosition::offset).orElse(segmentMetadata.endOffset() + 1);
+        long upperBoundOffset = Math.min(maxUpperBoundOffset, offsetIndex.fetchUpperBoundOffset(startOffsetPosition, fetchSize)
+                .map(OffsetPosition::offset).orElse(segmentMetadata.endOffset() + 1));
 
         final Set<FetchResponseData.AbortedTransaction> abortedTransactions = new HashSet<>();
 

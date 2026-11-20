@@ -103,7 +103,6 @@ class AvailabilityGatedControlPlaneTest {
         controlPlane.findBatches(List.of(), 1, 1);
         controlPlane.createTopicAndPartitions(Set.of());
         controlPlane.initDisklessLog(List.of());
-        controlPlane.repairDisklessLog(List.of());
         controlPlane.deleteRecords(List.of());
         controlPlane.deleteTopics(Set.of());
         controlPlane.purgeDeletedLogs(1);
@@ -122,7 +121,6 @@ class AvailabilityGatedControlPlaneTest {
         verify(delegate).findBatches(List.of(), 1, 1);
         verify(delegate).createTopicAndPartitions(Set.of());
         verify(delegate).initDisklessLog(List.of());
-        verify(delegate).repairDisklessLog(List.of());
         verify(delegate).deleteRecords(List.of());
         verify(delegate).deleteTopics(Set.of());
         verify(delegate).purgeDeletedLogs(1);
@@ -149,7 +147,6 @@ class AvailabilityGatedControlPlaneTest {
         assertThrows(ControlPlaneUnavailableException.class, () -> controlPlane.findBatches(List.of(), 1, 1));
         assertThrows(ControlPlaneUnavailableException.class, () -> controlPlane.createTopicAndPartitions(Set.of()));
         assertThrows(ControlPlaneUnavailableException.class, () -> controlPlane.initDisklessLog(List.of()));
-        assertThrows(ControlPlaneUnavailableException.class, () -> controlPlane.repairDisklessLog(List.of()));
         assertThrows(ControlPlaneUnavailableException.class, () -> controlPlane.deleteRecords(List.of()));
         assertThrows(ControlPlaneUnavailableException.class, () -> controlPlane.deleteTopics(Set.of()));
         assertThrows(ControlPlaneUnavailableException.class, () -> controlPlane.purgeDeletedLogs(1));
