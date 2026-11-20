@@ -15,7 +15,6 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 from typing import Dict, Any
 
-from antithesis.assertions import always_or_unreachable, unreachable, reachable
 from ducktape.mark import matrix
 from ducktape.mark.resource import cluster
 from ducktape.tests.test import Test, TestContext
@@ -25,6 +24,20 @@ from kafkatest.services.kafka import KafkaService, quorum
 from kafkatest.services.verifiable_consumer import VerifiableConsumer
 from kafkatest.services.verifiable_producer import VerifiableProducer
 from kafkatest.utils import is_int_with_prefix
+
+try:
+    from antithesis.assertions import always_or_unreachable, unreachable, reachable
+except ImportError:
+    # Only the Antithesis driver image installs the SDK. In the ducker image the
+    # assertions are no-ops, and the plain `assert` that follows each one fails the test.
+    def always_or_unreachable(condition, message, details):
+        pass
+
+    def unreachable(message, details):
+        pass
+
+    def reachable(message, details):
+        pass
 
 
 class InklessProduceConsumeTest(Test):
