@@ -4917,6 +4917,7 @@ public class KafkaAdminClient extends AdminClient {
                     .setTopicName(topic)
                     .setPartitionIndex(partition)
                     .setSealOffset(sealOffset);
+                options.leaderId().ifPresent(data::setLeaderId);
                 return new AlterDisklessSwitchRequest.Builder(data);
             }
 
