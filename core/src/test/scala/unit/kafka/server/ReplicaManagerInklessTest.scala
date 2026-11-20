@@ -7141,7 +7141,7 @@ class ReplicaManagerInklessTest {
       log.appendAsFollower(MemoryRecords.withTransactionalRecords(0L, Compression.NONE, producerId, producerEpoch, 0, 0,
         new SimpleRecord("k1".getBytes, "v1".getBytes), new SimpleRecord("k2".getBytes, "v2".getBytes)), 0)
       assertTrue(log.hasOngoingTransaction(producerId, producerEpoch))
-      assertEquals(new HostedPartition.None[Partition], replicaManager.getPartition(tp))
+      assertEquals(HostedPartition.None, replicaManager.getPartition(tp))
 
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp))
         .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
@@ -7161,8 +7161,8 @@ class ReplicaManagerInklessTest {
       delta.replay(partitionRecord)
       replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))
 
-      assertTrue(replicaManager.getPartition(tp).isInstanceOf[HostedPartition.Online[Partition]])
-      val partition = replicaManager.getPartition(tp).asInstanceOf[HostedPartition.Online[Partition]].partition
+      assertTrue(replicaManager.getPartition(tp).isInstanceOf[HostedPartition.Online])
+      val partition = replicaManager.getPartition(tp).asInstanceOf[HostedPartition.Online].partition
       assertTrue(partition.isLeader)
       assertTrue(partition.isSealed)
       verify(mockIdlm, times(1)).registerPartition(ArgumentMatchers.same(partition), ArgumentMatchers.eq(topicId))
@@ -7238,7 +7238,7 @@ class ReplicaManagerInklessTest {
       replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))
 
       assertTrue(replicaManager.logManager.getLog(tp).isEmpty, "The leader must not create an empty log")
-      assertEquals(new HostedPartition.None[Partition], replicaManager.getPartition(tp))
+      assertEquals(HostedPartition.None, replicaManager.getPartition(tp))
       verify(mockIdlm, never()).registerPartition(any(classOf[Partition]), any(classOf[Uuid]))
       verifyNoConsolidationFetcher()
     } finally {
@@ -7516,7 +7516,7 @@ class ReplicaManagerInklessTest {
       assertTrue(replicaManager.onlinePartition(tp).isEmpty, "The partition must not exist before the delta")
       replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))
 
-      val onlinePartition = replicaManager.getPartition(tp).asInstanceOf[HostedPartition.Online[Partition]].partition
+      val onlinePartition = replicaManager.getPartition(tp).asInstanceOf[HostedPartition.Online].partition
       assertTrue(onlinePartition.isLeader, "Partition should be leader")
       assertTrue(onlinePartition.isSealed, "Partition should be sealed")
       verify(mockIdlm).registerPartition(ArgumentMatchers.eq(onlinePartition), ArgumentMatchers.eq(topicId))
@@ -8192,7 +8192,7 @@ class ReplicaManagerInklessTest {
         val pendingImage = applyPendingSwitchDelta(replicaManager, topicName, topicId, tp, brokerId, otherReplica, localLeo)
         val log = replicaManager.localLogOrException(tp)
         // The pending leader seals when it creates the partition, and the seal rolls the active segment.
-        assertTrue(replicaManager.getPartition(tp).asInstanceOf[HostedPartition.Online[Partition]].partition.isSealed)
+        assertTrue(replicaManager.getPartition(tp).asInstanceOf[HostedPartition.Online].partition.isSealed)
         assertEquals(0, log.activeSegment().size())
         val segmentsBefore = log.numberOfSegments
 
@@ -13465,7 +13465,7 @@ class ReplicaManagerInklessTest {
         verify(mockIdlm, times(1)).registerPartition(any(classOf[Partition]), ArgumentMatchers.eq(topicId))
 
         def partition: Partition =
-          replicaManager.getPartition(tp).asInstanceOf[HostedPartition.Online[Partition]].partition
+          replicaManager.getPartition(tp).asInstanceOf[HostedPartition.Online].partition
         def rearmRecord(): PartitionChangeRecord = {
           // The record that AlterDisklessSwitch writes: same leader, pending seal.
           val record = new PartitionChangeRecord().setTopicId(topicId).setPartitionId(0).setLeader(brokerId)

@@ -16,7 +16,6 @@
  */
 package kafka.server;
 
-import kafka.cluster.Partition;
 
 import org.apache.kafka.clients.CommonClientConfigs;
 import org.apache.kafka.clients.admin.Admin;
@@ -46,7 +45,6 @@ import org.apache.kafka.image.TopicImage;
 import org.apache.kafka.metadata.InitDisklessLogFields;
 import org.apache.kafka.metadata.LeaderRecoveryState;
 import org.apache.kafka.metadata.PartitionRegistration;
-import org.apache.kafka.server.HostedPartition;
 import org.apache.kafka.server.config.ReplicationConfigs;
 import org.apache.kafka.server.config.ServerConfigs;
 import org.apache.kafka.server.log.remote.metadata.storage.TopicBasedRemoteLogMetadataManager;
@@ -432,8 +430,8 @@ public class ClassicToDisklessSwitchLastKnownLeaderClusterTest {
     }
 
     private boolean isOnlineLeader(final int brokerId, final TopicPartition tp) {
-        return cluster.brokers().get(brokerId).replicaManager().getPartition(tp) instanceof HostedPartition.Online<?> online
-            && ((Partition) online.partition()).isLeader();
+        return cluster.brokers().get(brokerId).replicaManager().getPartition(tp) instanceof HostedPartition.Online online
+            && online.partition().isLeader();
     }
 
     private boolean isOffline(final int brokerId, final TopicPartition tp) {
