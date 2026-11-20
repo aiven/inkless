@@ -166,16 +166,16 @@ public final class SharedState implements Closeable {
                 new MetricConfig(), List.of(reporter), Time.SYSTEM,
                 new KafkaMetricsContext(STORAGE_METRIC_CONTEXT)
             );
-            fetchStorage = config.storage(storageMetrics);
+            fetchStorage = config.storage(storageMetrics, InklessConfig.STORAGE_ROLE_FETCH);
             // Dedicated storage client for the lagging-consumer cold path (rationale on the maybeLaggingFetchStorage field).
             // Created only when the feature is enabled; pool size 0 disables it and skips the client.
-            laggingFetchStorage = config.fetchLaggingConsumerThreadPoolSize() > 0 ? config.storage(storageMetrics) : null;
-            produceStorage = config.storage(storageMetrics);
+            laggingFetchStorage = config.fetchLaggingConsumerThreadPoolSize() > 0 ? config.storage(storageMetrics, InklessConfig.STORAGE_ROLE_FETCH) : null;
+            produceStorage = config.storage(storageMetrics, InklessConfig.STORAGE_ROLE_PRODUCE);
             // backgroundStorage has two users: FileCleaner (delete after retention) and the
             // consolidation Reader cold path (bypass object cache for old-data fetches).
             // Consolidation reads through this client, not laggingFetchStorage — the two cold
             // paths use separate clients.
-            backgroundStorage = config.storage(storageMetrics);
+            backgroundStorage = config.storage(storageMetrics, InklessConfig.STORAGE_ROLE_BACKGROUND);
             final var objectKeyCreator = ObjectKey.creator(config.objectKeyPrefix(), config.objectKeyLogPrefixMasked());
             final var keyAlignmentStrategy = new FixedBlockAlignment(config.fetchCacheBlockBytes());
             final var crossTierLogStartReporter = new CrossTierLogStartReporter(metadata, controlPlane, crossTierLogStartCache);

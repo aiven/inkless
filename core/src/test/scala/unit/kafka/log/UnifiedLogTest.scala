@@ -62,7 +62,7 @@ import java.io._
 import java.nio.ByteBuffer
 import java.nio.file.Files
 import java.util
-import java.util.concurrent.{Callable, ConcurrentHashMap, Executors, TimeUnit}
+import java.util.concurrent.{Callable, CompletableFuture, ConcurrentHashMap, CountDownLatch, Executors, ScheduledFuture, TimeUnit, TimeoutException}
 import java.util.{Optional, OptionalLong, Properties}
 import scala.collection.immutable.SortedSet
 import scala.collection.mutable.ListBuffer
@@ -641,6 +641,74 @@ class UnifiedLogTest {
 
     val nextRecords = TestUtils.records(List(new SimpleRecord(mockTime.milliseconds, "key".getBytes, "value".getBytes)), producerId = pid, producerEpoch = epoch, sequence = 2)
     assertThrows(classOf[OutOfOrderSequenceException], () => log.appendAsLeader(nextRecords, 0))
+  }
+
+  @Test
+  def testUpdateHighestOffsetInRemoteStorageIgnoresOffsetComputedBeforeTruncation(): Unit = {
+    // A remote log task reads the truncation count while the log ends at 15, and the classic-to-diskless seal
+    // at 10 then truncates the log. The offset 14 that the task computed comes from records that the log no
+    // longer has.
+    val log = createLog(logDir, LogTestUtils.createLogConfig(remoteLogStorageEnable = true), remoteStorageSystemEnable = true)
+    for (_ <- 0 until 15)
+      log.appendAsLeader(TestUtils.singletonRecords("test".getBytes, key = "test".getBytes, timestamp = 10L), 0)
+    var truncationCount = log.truncationCount()
+    assertFalse(log.truncateTo(15L))
+    assertEquals(truncationCount, log.truncationCount())
+
+    assertTrue(log.truncateTo(10L))
+    log.updateHighestOffsetInRemoteStorage(14L, truncationCount)
+    assertEquals(-1L, log.highestOffsetInRemoteStorage())
+    log.updateHighestOffsetInRemoteStorage(9L, log.truncationCount())
+    assertEquals(9L, log.highestOffsetInRemoteStorage())
+
+    truncationCount = log.truncationCount()
+    log.truncateFullyAndStartAt(20L, Optional.empty())
+    log.updateHighestOffsetInRemoteStorage(19L, truncationCount)
+    assertEquals(9L, log.highestOffsetInRemoteStorage())
+  }
+
+  @Test
+  def testTruncationCountWaitsForRunningTruncation(): Unit = {
+    // The truncation to 10 pauses after it counts itself and deletes the segment [12, 15), before it truncates
+    // the leader epoch cache. A remote log task that read the new count then would pair it with epoch 1, which
+    // the truncation removes, and the log would accept the offset that the task computed from it.
+    val truncationPaused = new CountDownLatch(1)
+    val resumeTruncation = new CountDownLatch(1)
+    val scheduler = new Scheduler {
+      override def startup(): Unit = mockTime.scheduler.startup()
+
+      override def shutdown(): Unit = mockTime.scheduler.shutdown()
+
+      override def schedule(name: String, task: Runnable, delayMs: Long, periodMs: Long): ScheduledFuture[_] = {
+        if (name == "delete-file" && truncationPaused.getCount > 0) {
+          truncationPaused.countDown()
+          resumeTruncation.await()
+        }
+        mockTime.scheduler.schedule(name, task, delayMs, periodMs)
+      }
+
+      override def resizeThreadPool(newSize: Int): Unit = mockTime.scheduler.resizeThreadPool(newSize)
+    }
+    def records = TestUtils.singletonRecords("test".getBytes, key = "test".getBytes, timestamp = 10L)
+    val config = LogTestUtils.createLogConfig(segmentBytes = records.sizeInBytes * 3, remoteLogStorageEnable = true)
+    val log = createLog(logDir, config, scheduler = scheduler, remoteStorageSystemEnable = true)
+    for (i <- 0 until 15)
+      log.appendAsLeader(records, if (i < 10) 0 else 1)
+    val truncationCount = log.truncationCount()
+
+    val truncation = CompletableFuture.supplyAsync(() => log.truncateTo(10L))
+    var countRead: CompletableFuture[java.lang.Long] = null
+    try {
+      assertTrue(truncationPaused.await(30, TimeUnit.SECONDS))
+      countRead = CompletableFuture.supplyAsync(() => java.lang.Long.valueOf(log.truncationCount()))
+      assertThrows(classOf[TimeoutException], () => countRead.get(200, TimeUnit.MILLISECONDS))
+      assertEquals(Optional.of(new EpochEntry(1, 10L)), log.leaderEpochCache.latestEntry)
+    } finally {
+      resumeTruncation.countDown()
+    }
+    assertTrue(truncation.get(30, TimeUnit.SECONDS))
+    assertEquals(truncationCount + 1, countRead.get(30, TimeUnit.SECONDS).longValue())
+    assertEquals(Optional.of(new EpochEntry(0, 0L)), log.leaderEpochCache.latestEntry)
   }
 
   @Test

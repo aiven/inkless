@@ -60,4 +60,10 @@
     <allow class="org.apache.kafka.raft.QuorumConfig"/>
     <allow pkg="joptsimple"/>
 
+    <subpackage name="metadata">
+        <allow class="org.apache.kafka.raft.KRaftConfigs"/>
+    </subpackage>
+    <subpackage name="metrics">
+        <allow pkg="io.aiven.inkless.common.metrics"/>
+    </subpackage>
 </import-control>

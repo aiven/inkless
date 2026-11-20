@@ -358,8 +358,6 @@ public abstract class AbstractRequest implements AbstractRequestResponse {
                 return InitDisklessLogRequest.parse(readable, apiVersion);
             case ALTER_DISKLESS_SWITCH:
                 return AlterDisklessSwitchRequest.parse(readable, apiVersion);
-            case REPAIR_DISKLESS_LOG:
-                return RepairDisklessLogRequest.parse(readable, apiVersion);
             case SET_CLASSIC_PREFIX_IN_REMOTE_STORAGE:
                 return SetClassicPrefixInRemoteStorageRequest.parse(readable, apiVersion);
             default:

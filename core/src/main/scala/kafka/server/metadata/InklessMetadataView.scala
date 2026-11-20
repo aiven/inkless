@@ -19,20 +19,22 @@
 package kafka.server.metadata
 
 import io.aiven.inkless.control_plane.MetadataView
-import org.apache.kafka.common.config.TopicConfig
+import kafka.utils.Logging
+import org.apache.kafka.common.config.{ConfigResource, TopicConfig}
 import org.apache.kafka.common.network.ListenerName
 import org.apache.kafka.common.{Node, TopicIdPartition, TopicPartition, Uuid}
-import org.apache.kafka.metadata.PartitionRegistration
+import org.apache.kafka.image.MetadataImage
+import org.apache.kafka.metadata.{PartitionRegistration, Replicas}
 import org.apache.kafka.storage.internals.log.LogConfig
 
 import java.util
 import java.util.concurrent.ConcurrentHashMap
 import java.util.function.Supplier
-import java.util.stream.{Collectors, IntStream}
+import java.util.stream.Collectors
 import java.util.Properties
 import scala.jdk.CollectionConverters._
 
-class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConfig: Supplier[util.Map[String, Object]]) extends MetadataView {
+class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConfig: Supplier[util.Map[String, Object]]) extends MetadataView with Logging {
 
   /**
    * Cached LogConfig per topic, analogous to how classic Kafka stores a LogConfig in each
@@ -67,33 +69,57 @@ class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConf
     metadataCache.getTopicId(topicName)
   }
 
-  override def isDisklessTopic(topicName: String): Boolean = {
-    metadataCache.topicConfig(topicName).getProperty(TopicConfig.DISKLESS_ENABLE_CONFIG, "false").toBoolean
+  override def isDisklessTopic(topicName: String): Boolean =
+    isDiskless(topicOverrides(metadataCache.currentImage(), topicName))
+
+  override def isRemoteStorageEnabled(topicName: String): Boolean =
+    flag(topicOverrides(metadataCache.currentImage(), topicName), TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG)
+
+  override def isConsolidatingDisklessTopic(topicName: String): Boolean =
+    isConsolidating(topicOverrides(metadataCache.currentImage(), topicName))
+
+  override def getDisklessTopicPartitions: util.Set[TopicIdPartition] =
+    topicPartitions(isDiskless)
+
+  override def getConsolidatingDisklessTopicPartitions: util.Set[TopicIdPartition] =
+    topicPartitions(isConsolidating)
+
+  /**
+   * Returns the number of diskless partitions whose replicas include the given broker.
+   */
+  def getDisklessReplicaCount(brokerId: Int): Int = {
+    val image = metadataCache.currentImage()
+    image.topics().topicsByName().values().stream()
+      .filter(topic => isDiskless(topicOverrides(image, topic.name())))
+      .mapToInt(_.partitions().values().stream().filter(p => Replicas.contains(p.replicas, brokerId)).count().toInt)
+      .sum()
   }
 
-  override def isRemoteStorageEnabled(topicName: String): Boolean = {
-    metadataCache.topicConfig(topicName).getProperty(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG, "false").toBoolean
-  }
-
-  override def isConsolidatingDisklessTopic(topicName: String): Boolean = {
-    isDisklessTopic(topicName) && isRemoteStorageEnabled(topicName)
-  }
-
-  override def getDisklessTopicPartitions: util.Set[TopicIdPartition] = {
-    metadataCache.getAllTopics().stream()
-      .filter(isDisklessTopic)
-      .flatMap(t => IntStream.range(0, metadataCache.numPartitions(t).get())
-        .mapToObj(p => new TopicIdPartition(metadataCache.getTopicId(t), p, t)))
+  // Reads the topics, their configs, and their partitions from one image:
+  // a topic that a later image deletes can't fail the scan.
+  private def topicPartitions(filter: util.Map[String, String] => Boolean): util.Set[TopicIdPartition] = {
+    val image = metadataCache.currentImage()
+    image.topics().topicsByName().values().stream()
+      .filter(topic => filter(topicOverrides(image, topic.name())))
+      .flatMap(topic => topic.partitions().keySet().stream()
+        .map[TopicIdPartition](p => new TopicIdPartition(topic.id(), p.intValue(), topic.name())))
       .collect(Collectors.toSet[TopicIdPartition]())
   }
 
-  override def getConsolidatingDisklessTopicPartitions: util.Set[TopicIdPartition] = {
-    metadataCache.getAllTopics().stream()
-      .filter(isConsolidatingDisklessTopic)
-      .flatMap(t => IntStream.range(0, metadataCache.numPartitions(t).get())
-        .mapToObj(p => new TopicIdPartition(metadataCache.getTopicId(t), p, t)))
-      .collect(Collectors.toSet[TopicIdPartition]())
-  }
+  // A read-only view of the image, not a copy like KRaftMetadataCache.topicConfig.
+  private def topicOverrides(image: MetadataImage, topicName: String): util.Map[String, String] =
+    image.configs().configMapForResource(new ConfigResource(ConfigResource.Type.TOPIC, topicName))
+
+  // Throws on a value other than true or false, ignoring case, such as " true".
+  // Neither reading is safe: false misreads a diskless topic, and true misreads a classic one.
+  private def flag(overrides: util.Map[String, String], key: String): Boolean =
+    overrides.getOrDefault(key, "false").toBoolean
+
+  private def isDiskless(overrides: util.Map[String, String]): Boolean =
+    flag(overrides, TopicConfig.DISKLESS_ENABLE_CONFIG)
+
+  private def isConsolidating(overrides: util.Map[String, String]): Boolean =
+    isDiskless(overrides) && flag(overrides, TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG)
 
   def getClassicToDisklessStartOffset(topicPartition: TopicPartition): Long = {
     Option(metadataCache.currentImage().topics().getTopic(topicPartition.topic()))
@@ -155,6 +181,16 @@ class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConf
       .getOrElse(PartitionRegistration.NO_DISKLESS_LEADER_EPOCH)
   }
 
+  /**
+   * Returns the leader epoch of the record at `seal - 1` that the phase-1 leader recorded with
+   * `classicPrefixInRemoteStorage`, or [[PartitionRegistration.NO_LAST_CLASSIC_LEADER_EPOCH]] when the
+   * partition has none.
+   */
+  def getLastClassicLeaderEpoch(topicPartition: TopicPartition): Int =
+    partitionRegistration(topicPartition)
+      .map(_.lastClassicLeaderEpoch)
+      .getOrElse(PartitionRegistration.NO_LAST_CLASSIC_LEADER_EPOCH)
+
   override def getTopicConfig(topicName: String): LogConfig = topicConfigs.computeIfAbsent(topicName, t => {
     val props = metadataCache.topicConfig(t)
     if (props.isEmpty) new LogConfig(getDefaultConfig)
@@ -162,7 +198,18 @@ class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConf
   })
 
   def updateTopicConfig(topicName: String, topicOverrides: Properties): Unit = {
+    warnIfNotBoolean(topicName, topicOverrides, TopicConfig.DISKLESS_ENABLE_CONFIG)
+    warnIfNotBoolean(topicName, topicOverrides, TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG)
     topicConfigs.computeIfPresent(topicName, (_, _) => LogConfig.fromProps(getDefaultConfig, topicOverrides))
+  }
+
+  // ConfigDef trims before it validates, so an alter can store a value such as " true".
+  // The topic type flags throw on it, and LogConfig reads it as true.
+  private def warnIfNotBoolean(topicName: String, topicOverrides: Properties, key: String): Unit = {
+    val value = topicOverrides.getProperty(key)
+    if (value != null && !value.equalsIgnoreCase("true") && !value.equalsIgnoreCase("false"))
+      warn(s"Topic $topicName has $key='$value', which isn't true or false. " +
+        s"The broker fails the requests and scans that read $key for this topic.")
   }
 
   def removeTopicConfig(topicName: String): Unit = {
