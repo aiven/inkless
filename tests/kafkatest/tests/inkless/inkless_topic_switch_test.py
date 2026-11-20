@@ -14,6 +14,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+import json
 import os
 import re
 import shlex
@@ -1918,6 +1919,37 @@ class InklessClassicToDisklessSwitchTest(Test):
     # quorum. The other faults leave the hold in place.
     FAULTS_THAT_END_THE_HOLD = ("follower_sigkill", "controller_failover")
 
+    def _wait_for_broker_in_state(self, node, state, min_oldest_age_ms, timeout_sec=120):
+        """Wait until a fresh JMX sample of ``node`` shows a partition in ``state`` for ``min_oldest_age_ms``.
+
+        Only samples taken after the wait starts count. The cluster-wide waits
+        can pass on another broker's history while ``node`` is in an earlier
+        state.
+        """
+        idx = self.kafka.idx(node)
+        count_key, age_key = ("%s:Value" % obj for obj in self.SWITCH_STATE_GAUGES[state])
+        start_sec = int(time.time())
+        last = {}
+
+        def check():
+            try:
+                self.kafka.read_jmx_output(idx, node)
+            except Exception as e:
+                self.logger.debug("Failed to read JMX from broker %d: %s", idx, e)
+                return False
+            samples = self.kafka.jmx_stats[idx - 1]
+            fresh = [t for t in samples if t >= start_sec]
+            if not fresh:
+                return False
+            sample = samples[max(fresh)]
+            last["count"] = sample.get(count_key, 0)
+            last["oldest_age_ms"] = sample.get(age_key, 0)
+            return last["count"] > 0 and last["oldest_age_ms"] >= min_oldest_age_ms
+
+        wait_until(check, timeout_sec=timeout_sec, backoff_sec=2,
+                   err_msg=lambda: "Broker %d didn't keep a partition in %s for %d ms within %ds (last sample: %s)" %
+                           (idx, state, min_oldest_age_ms, timeout_sec, last))
+
     def _assert_switch_state_held(self, state, timeout_sec=60):
         """Assert that a live broker still tracks a partition in ``state``."""
         count_obj = self.SWITCH_STATE_GAUGES[state][0]
@@ -1998,6 +2030,8 @@ class InklessClassicToDisklessSwitchTest(Test):
             self._wait_for_mid_switch_state("AwaitingMetadata", min_oldest_age_ms=self.HOLD_MIN_AGE_MS)
 
         leader = self._get_leader_node(partition=0)
+        if fault in ("leader_sigkill", "leader_sigstop"):
+            self._wait_for_broker_in_state(leader, self.HOLD_STATES[hold], self.HOLD_MIN_AGE_MS)
         stopped_controller = None
         if fault == "follower_sigkill":
             self._stop_broker(follower, clean_shutdown=False)
@@ -2498,27 +2532,58 @@ class InklessClassicToDisklessSwitchTest(Test):
 
     GROUP_RECORDS_BEFORE_SWITCH = 3000
 
-    def _consume_with_group(self, group, num_records, timeout_sec=None):
-        """Consume exactly ``num_records`` with ``group`` from its committed offsets, and commit them.
+    def _consume_with_group(self, group, num_records, auto_commit=False, timeout_sec=None):
+        """Process exactly ``num_records`` with ``group`` from its committed offsets, and commit them.
 
         ``VerifiableConsumer`` fails if the offsets of one partition skip or go
-        back within a run. Across runs, the caller compares the committed
-        offsets with what the exact count allows: a consumer that resets its
-        position commits other offsets.
+        back within a run. It stops after it processes ``num_records``, but its
+        consumed count includes the whole last poll. The caller checks the
+        committed offsets instead. A consumer that resets its position commits
+        other offsets.
+
+        A manual commit doesn't include a leader epoch. With ``auto_commit``, the
+        consumer commits its position when it closes, with the epoch of the
+        last record it fetched. Use it only when the last poll can't fetch
+        past the last processed record.
         """
         if timeout_sec is None:
             timeout_sec = self.CONSUME_TIMEOUT_SEC
         consumer = VerifiableConsumer(self.test_context, 1, self.kafka, self.topic, group,
-                                      max_messages=num_records)
+                                      max_messages=num_records, enable_autocommit=auto_commit)
         consumer.start()
         wait_until(lambda: len(consumer.shutdown_complete_nodes()) == 1,
                    timeout_sec=timeout_sec, backoff_sec=2,
-                   err_msg=lambda: "Group %s consumed %d of %d records within %ds" %
+                   err_msg=lambda: "Group %s fetched %d records and didn't finish %d within %ds" %
                            (group, consumer.total_consumed(), num_records, timeout_sec))
-        consumed = consumer.total_consumed()
         consumer.stop()
         consumer.free()
-        assert consumed == num_records, "Group %s consumed %d records, expected %d" % (group, consumed, num_records)
+
+    def _committed_offsets_with_epochs(self, group, timeout_ms=15000):
+        """Returns ``{partition: (offset, leader epoch)}`` from the last commits of ``group`` in ``__consumer_offsets``.
+
+        ``kafka-consumer-groups.sh`` doesn't print the leader epoch of a commit.
+        """
+        node = self._live_broker()
+        cmd = ("%s --bootstrap-server %s --topic __consumer_offsets --from-beginning "
+               "--formatter org.apache.kafka.tools.consumer.OffsetsMessageFormatter "
+               "--command-property exclude.internal.topics=false --timeout-ms %d") % (
+            self.kafka.path.script("kafka-console-consumer.sh", node), self.kafka.bootstrap_servers(), timeout_ms)
+        commits = {}
+        for line in node.account.ssh_capture(cmd, allow_fail=True, combine_stderr=False):
+            line = line.decode("utf-8") if isinstance(line, bytes) else line
+            try:
+                record = json.loads(line)
+            except ValueError:
+                continue
+            key = (record.get("key") or {}).get("data") or {}
+            if key.get("group") != group or key.get("topic") != self.topic:
+                continue
+            value = (record.get("value") or {}).get("data")
+            if value is None:
+                commits.pop(int(key["partition"]), None)
+            else:
+                commits[int(key["partition"])] = (value.get("offset"), value.get("leaderEpoch", -1))
+        return commits
 
     def _group_offsets(self, group):
         """Returns ``{partition: (committed offset, log end offset)}`` from ``kafka-consumer-groups.sh --describe``."""
@@ -2610,9 +2675,9 @@ class InklessClassicToDisklessSwitchTest(Test):
         request and the phase 2 transition:
 
         - ``controller_failover_at_phase_2`` stops the active controller and
-          one more of three. The test waits until a flag request has been
-          pending for 10 s, then kills the leader of partition 0 and starts
-          the second controller. The flag requests retry until the two live
+          one more of three. The test waits until the leader of partition 0
+          has had a flag request pending for 10 s, then kills that leader and
+          starts the second controller. The flag requests retry until the two live
           controllers elect a new leader. The new leaders of the killed
           broker's partitions request the flag again.
         - ``postgres_outage_at_phase_2`` keeps the control plane unreachable
@@ -2670,9 +2735,17 @@ class InklessClassicToDisklessSwitchTest(Test):
             # The control plane stores the seal and no diskless record yet.
             self._wait_for_list_offsets(-1, seals)
             self._wait_for_list_offsets(-2, {p: 0 for p in seals})
-            # The group resumes in phase 1 and reads the rest of the classic prefix.
-            self._consume_with_group(group, sum(seals[p] - (committed.get(p) or 0) for p in seals))
+            # The group resumes in phase 1 and reads the rest of the classic prefix. No record
+            # exists at the seal yet, so the commit at close stops at the seal, with the epoch
+            # of the last classic record.
+            self._consume_with_group(group, sum(seals[p] - (committed.get(p) or 0) for p in seals),
+                                     auto_commit=True)
             self._wait_for_group_offsets(group, seals, log_end=seals)
+            commits = self._committed_offsets_with_epochs(group)
+            without_epoch = sorted(p for p in seals if commits.get(p, (None, -1))[1] < 0)
+            assert not without_epoch and all(commits[p][0] == seals[p] for p in seals), \
+                "Expected commits at the seals %s with leader epochs, but __consumer_offsets has %s" % \
+                (seals, commits)
             # Hold the outage across several upload retries of the remote log manager.
             self._wait_for_mid_switch_state(
                 "WaitingForUpload", min_oldest_age_ms=self.PHASE_1_FAULT_DURATION_MS)
@@ -2734,8 +2807,9 @@ class InklessClassicToDisklessSwitchTest(Test):
             controllers.stop_node(stopped_controller, clean_shutdown=False)
             controllers.stop_node(standby, clean_shutdown=False)
             self.verifier.heal_dependency("object_storage")
-            self._wait_for_mid_switch_state(
-                "SendingFlagToController", min_oldest_age_ms=self.FLAG_REQUEST_FAULT_DURATION_MS,
+            # The leader of partition 0 must have its own flag request pending when the test kills it.
+            self._wait_for_broker_in_state(
+                leader_node, "SendingFlagToController", self.FLAG_REQUEST_FAULT_DURATION_MS,
                 timeout_sec=self.PHASE_2_TIMEOUT_SEC)
             # A broker can't start without a quorum. The leader starts again after the failover.
             self.logger.info("Killing broker %d while its flag requests are pending", self.kafka.idx(leader_node))
