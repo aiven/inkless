@@ -282,35 +282,6 @@ class DisklessFetchOffsetRouterTest {
   }
 
   @Test
-  def hybridEarliestPendingUploadAlwaysGoesToClassic(): Unit = {
-    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(100L)
-
-    val status = route(newRouter(), timestamp = ListOffsetsRequest.EARLIEST_PENDING_UPLOAD_TIMESTAMP)
-
-    assertSame(defaultClassicResult, status)
-    assertClassicCalledWith(allowFromFollower = true)
-    verify(job, never()).add(any(), any())
-  }
-
-  // A follower with `follower.fetch.last.tiered.offset.enable` asks its leader for the earliest pending upload
-  // offset while the classic fetcher still replicates the prefix. The local log is the only source of it.
-  @Test
-  def hybridConsolidatingFollowerEarliestPendingUploadGoesToClassicWhileSwitchPending(): Unit = {
-    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
-    when(inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)).thenReturn(true)
-
-    val status = route(
-      newRouter(disklessManagedReplicasEnabled = true, disklessConsolidationEnabled = true),
-      timestamp = ListOffsetsRequest.EARLIEST_PENDING_UPLOAD_TIMESTAMP,
-      replicaId = followerReplicaId
-    )
-
-    assertSame(defaultClassicResult, status)
-    assertClassicCalledWith(allowFromFollower = false)
-    verify(job, never()).add(any(), any())
-  }
-
-  @Test
   def hybridLatestTieredAlwaysGoesToClassic(): Unit = {
     when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(100L)
 
@@ -523,21 +494,6 @@ class DisklessFetchOffsetRouterTest {
     val status = route(
       newRouter(disklessManagedReplicasEnabled = true, disklessConsolidationEnabled = true),
       timestamp = ListOffsetsRequest.EARLIEST_LOCAL_TIMESTAMP
-    )
-
-    assertSame(defaultClassicResult, status)
-    assertClassicCalledWith(allowFromFollower = true)
-    verify(job, never()).add(any(), any())
-  }
-
-  @Test
-  def hybridConsolidatingWithoutCommittedBoundaryAllowsFollowerOnEarliestPendingUpload(): Unit = {
-    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
-    when(inklessMetadataView.isConsolidatingDisklessTopic(tp.topic)).thenReturn(true)
-
-    val status = route(
-      newRouter(disklessManagedReplicasEnabled = true, disklessConsolidationEnabled = true),
-      timestamp = ListOffsetsRequest.EARLIEST_PENDING_UPLOAD_TIMESTAMP
     )
 
     assertSame(defaultClassicResult, status)

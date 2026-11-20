@@ -4342,8 +4342,8 @@ public class RemoteLogManagerTest {
     private FetchDataInfo readSegmentWithUpperBound(int tailEpoch, long upperBoundOffset, FetchIsolation isolation)
             throws RemoteStorageException, IOException {
         RemoteLogSegmentMetadata segmentMetadata = mock(RemoteLogSegmentMetadata.class);
-        when(segmentMetadata.remoteLogSegmentId()).thenReturn(new RemoteLogSegmentId(tpId, Uuid.randomUuid()));
-        when(segmentMetadata.topicIdPartition()).thenReturn(tpId);
+        when(segmentMetadata.remoteLogSegmentId()).thenReturn(new RemoteLogSegmentId(leaderTopicIdPartition, Uuid.randomUuid()));
+        when(segmentMetadata.topicIdPartition()).thenReturn(leaderTopicIdPartition);
         when(segmentMetadata.startOffset()).thenReturn(94L);
         when(segmentMetadata.endOffset()).thenReturn(102L);
         LeaderEpochFileCache cache = mock(LeaderEpochFileCache.class);
@@ -4380,7 +4380,7 @@ public class RemoteLogManagerTest {
                 Uuid.randomUuid(), 94L, 0, 1024, Optional.empty()
         );
         RemoteStorageFetchInfo fetchInfo = new RemoteStorageFetchInfo(
-                1024, true, tpId, partitionData, isolation,
+                1024, true, leaderTopicIdPartition.topicPartition(), partitionData, isolation,
                 upperBoundOffset < 0 ? OptionalLong.empty() : OptionalLong.of(upperBoundOffset)
         );
 

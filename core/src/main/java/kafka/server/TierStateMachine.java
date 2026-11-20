@@ -291,7 +291,7 @@ public class TierStateMachine {
                                             RemoteLogManager rlm,
                                             UnifiedLog unifiedLog) throws IOException, RemoteStorageException {
         if (!rlm.isPartitionReady(topicPartition)) {
-            throw new RemoteStorageNotReadyException("RemoteLogManager is not ready for partition: " + topicPartition);
+            throw new RemoteStorageException("RemoteLogManager is not ready for partition: " + topicPartition);
         }
 
         RemoteLogSegmentMetadata remoteLogSegmentMetadata = rlm.fetchRemoteLogSegmentMetadata(topicPartition, lastClassicLeaderEpoch, seal - 1)
@@ -304,7 +304,7 @@ public class TierStateMachine {
         unifiedLog.maybeIncrementLocalLogStartOffset(seal, LeaderOffsetIncremented);
 
         List<EpochEntry> epochs = readLeaderEpochCheckpoint(rlm, remoteLogSegmentMetadata).stream()
-                .filter(entry -> entry.startOffset() < seal)
+                .filter(entry -> entry.startOffset < seal)
                 .toList();
         unifiedLog.leaderEpochCache().assign(epochs);
 

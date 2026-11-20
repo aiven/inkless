@@ -378,6 +378,17 @@ class InitDisklessLogManagerTest {
     )
   }
 
+  // ProducerStateEntry's constructor and addBatch method are package-private to
+  // org.apache.kafka.storage.internals.log, so cross-package tests mock the entry instead
+  // of building one via addBatch.
+  private def mockProducerEntry(producerId: Long, producerEpoch: Short, batches: BatchMetadata*): ProducerStateEntry = {
+    val entry = mock(classOf[ProducerStateEntry])
+    when(entry.producerId()).thenReturn(producerId)
+    when(entry.producerEpoch()).thenReturn(producerEpoch)
+    when(entry.batchMetadata()).thenReturn(util.List.of(batches: _*))
+    entry
+  }
+
   private def setActiveProducers(partition: Partition, entries: ProducerStateEntry*): Unit = {
     val producers = new util.LinkedHashMap[java.lang.Long, ProducerStateEntry]()
     entries.foreach(entry => producers.put(entry.producerId(), entry))

@@ -86,6 +86,7 @@ import org.apache.kafka.coordinator.share.{ShareCoordinator, ShareCoordinatorTes
 import org.apache.kafka.coordinator.transaction.TransactionLogConfig
 import org.apache.kafka.image.{MetadataDelta, MetadataImage, MetadataProvenance}
 import org.apache.kafka.metadata.{ConfigRepository, MetadataCache, MockConfigRepository}
+import org.apache.kafka.network.Session
 import org.apache.kafka.network.metrics.{RequestChannelMetrics, RequestMetrics}
 import org.apache.kafka.raft.QuorumConfig
 import org.apache.kafka.security.authorizer.AclEntry
@@ -9240,7 +9241,8 @@ class KafkaApisTest extends Logging {
       callback(Seq(tidp0 -> new FetchPartitionData(Errors.NONE, 3, 0, records,
         Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false)))
     })
-    val fetchContext = new FullFetchContext(time, new FetchSessionCacheShard(1000, 100, Int.MaxValue, 0), fetchData, true, replicaId >= 0)
+    val fetchContext = new FullFetchContext(time, new FetchSessionCacheShard(1000, 100),
+      new JFetchMetadata(0, 0), fetchData, true, replicaId >= 0)
     when(fetchManager.newContext(
       any[Short],
       any[JFetchMetadata],
@@ -9249,7 +9251,7 @@ class KafkaApisTest extends Logging {
       any[util.List[TopicIdPartition]],
       any[util.Map[Uuid, String]])).thenReturn(fetchContext)
     when(replicaManager.getLogConfig(ArgumentMatchers.eq(tp0))).thenReturn(None)
-    when(clientQuotaManager.maybeRecordAndGetThrottleTimeMs(any[Session](), anyString, anyDouble, anyLong))
+    when(clientQuotaManager.maybeRecordAndGetThrottleTimeMs(any[RequestChannel.Request](), anyDouble, anyLong))
       .thenReturn(if (throttled) 100 else 0)
 
     kafkaApis = createKafkaApis()
