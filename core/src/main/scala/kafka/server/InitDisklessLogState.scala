@@ -264,9 +264,9 @@ object SendingToController {
       .setProducerId(producerId)
       .setProducerEpoch(producerEpoch)
       .setBaseSequence(batch.firstSeq())
-      .setLastSequence(batch.lastSeq())
+      .setLastSequence(batch.lastSeq)
       .setAssignedOffset(batch.firstOffset())
-      .setBatchMaxTimestamp(batch.timestamp())
+      .setBatchMaxTimestamp(batch.timestamp)
 
 }
 

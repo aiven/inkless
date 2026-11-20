@@ -1585,19 +1585,19 @@ class PartitionTest extends AbstractPartitionTest {
 
     val remoteBrokerId = brokerId + 1
     val replicas = Array(brokerId, remoteBrokerId)
-    addBrokerEpochToMockMetadataCache(metadataCache, replicas)
+    addBrokerEpochToMockMetadataCache(metadataCache, replicas.toList)
 
     partition.createLogIfNotExists(isNew = false, isFutureReplica = false, offsetCheckpoints, None)
-    val partitionRegistration = new PartitionRegistration.Builder()
+    val partitionState = new LeaderAndIsrRequest.PartitionState()
+      .setControllerEpoch(0)
       .setLeader(brokerId)
-      .setLeaderRecoveryState(LeaderRecoveryState.RECOVERING)
       .setLeaderEpoch(5)
-      .setIsr(Array(brokerId))
+      .setIsr(java.util.List.of(Int.box(brokerId)))
       .setPartitionEpoch(1)
-      .setReplicas(replicas)
-      .setDirectories(DirectoryId.unassignedArray(replicas.length))
-      .build()
-    assertTrue(partition.makeLeader(partitionRegistration, isNew = true, offsetCheckpoints, None))
+      .setReplicas(replicas.map(Int.box).toList.asJava)
+      .setLeaderRecoveryState(LeaderRecoveryState.RECOVERING.value)
+      .setIsNew(true)
+    assertTrue(partition.makeLeader(partitionState, offsetCheckpoints, None))
 
     // The committed seal is past the leader's log end offset, as after a last-known-leader election that lost records.
     // The partition isn't sealed yet, as on a restarted leader between `makeLeader` and `seal`.
@@ -1606,13 +1606,13 @@ class PartitionTest extends AbstractPartitionTest {
 
     fetchFollower(partition, replicaId = remoteBrokerId, fetchOffset = log.logEndOffset)
     assertEquals(0, alterPartitionManager.isrUpdates.size)
-    assertEquals(util.Set.of(brokerId), partition.partitionState.maximalIsr)
+    assertEquals(Set(brokerId), partition.partitionState.maximalIsr)
 
     // Once the seal sits at the leader's log end offset, the same fetch expands the ISR.
     partition.replicationStopOffset = () => Some(log.logEndOffset)
     fetchFollower(partition, replicaId = remoteBrokerId, fetchOffset = log.logEndOffset)
     assertEquals(1, alterPartitionManager.isrUpdates.size)
-    assertEquals(util.Set.of(brokerId, remoteBrokerId), partition.partitionState.maximalIsr)
+    assertEquals(Set(brokerId, remoteBrokerId), partition.partitionState.maximalIsr)
   }
 
   @Test
@@ -3672,6 +3672,15 @@ class PartitionTest extends AbstractPartitionTest {
 
   private def makeLeader(
     topicId: Option[Uuid],
+    leaderEpoch: Int,
+    isr: Seq[Int],
+    replicas: Seq[Int],
+    partitionEpoch: Int,
+    isNew: Boolean
+  ): Boolean = makeLeader(topicId, 0, leaderEpoch, isr, replicas, partitionEpoch, isNew)
+
+  private def makeLeader(
+    topicId: Option[Uuid],
     controllerEpoch: Int,
     leaderEpoch: Int,
     isr: Seq[Int],
@@ -4499,11 +4508,11 @@ class PartitionTest extends AbstractPartitionTest {
     appendConsolidatedRecords(baseOffset = seal + 2, disklessLeaderEpoch)
 
     val leaderEpochCache = partition.localLogOrException.leaderEpochCache
-    assertEquals(util.List.of(new EpochEntry(lastClassicEpoch, 0L), new EpochEntry(disklessLeaderEpoch, seal)),
+    assertEquals(java.util.List.of(new EpochEntry(lastClassicEpoch, 0L), new EpochEntry(disklessLeaderEpoch, seal)),
       leaderEpochCache.epochEntries)
-    assertEquals(util.OptionalInt.of(disklessLeaderEpoch), leaderEpochCache.epochForOffset(seal + 1))
-    assertEquals(util.OptionalInt.of(disklessLeaderEpoch), leaderEpochCache.epochForOffset(seal + 2))
-    assertEquals(util.List.of(new EpochEntry(disklessLeaderEpoch, seal + 2)),
+    assertEquals(java.util.OptionalInt.of(disklessLeaderEpoch), leaderEpochCache.epochForOffset(seal + 1))
+    assertEquals(java.util.OptionalInt.of(disklessLeaderEpoch), leaderEpochCache.epochForOffset(seal + 2))
+    assertEquals(java.util.List.of(new EpochEntry(disklessLeaderEpoch, seal + 2)),
       leaderEpochCache.epochEntriesInRange(seal + 2, seal + 4))
   }
 
@@ -4524,12 +4533,12 @@ class PartitionTest extends AbstractPartitionTest {
     makeLeader(None, disklessLeaderEpoch + 1, replicas, replicas, partition.getPartitionEpoch + 1, isNew = false)
 
     val leaderEpochCache = partition.localLogOrException.leaderEpochCache
-    assertEquals(util.List.of(new EpochEntry(lastClassicEpoch, 0L), new EpochEntry(disklessLeaderEpoch + 1, seal)),
+    assertEquals(java.util.List.of(new EpochEntry(lastClassicEpoch, 0L), new EpochEntry(disklessLeaderEpoch + 1, seal)),
       leaderEpochCache.epochEntries)
     assertEquals(seal, leaderEpochCache.endOffsetFor(lastClassicEpoch + 1, seal).getValue)
 
     appendConsolidatedRecords(baseOffset = seal, disklessLeaderEpoch)
-    assertEquals(util.List.of(new EpochEntry(lastClassicEpoch, 0L), new EpochEntry(disklessLeaderEpoch, seal)),
+    assertEquals(java.util.List.of(new EpochEntry(lastClassicEpoch, 0L), new EpochEntry(disklessLeaderEpoch, seal)),
       leaderEpochCache.epochEntries)
   }
 
@@ -4545,8 +4554,8 @@ class PartitionTest extends AbstractPartitionTest {
     appendConsolidatedRecords(baseOffset = 2L, consolidationEpoch)
 
     val leaderEpochCache = partition.localLogOrException.leaderEpochCache
-    assertEquals(util.List.of(new EpochEntry(consolidationEpoch, 0L)), leaderEpochCache.epochEntries)
-    assertEquals(util.OptionalInt.of(consolidationEpoch), leaderEpochCache.epochForOffset(1L))
+    assertEquals(java.util.List.of(new EpochEntry(consolidationEpoch, 0L)), leaderEpochCache.epochEntries)
+    assertEquals(java.util.OptionalInt.of(consolidationEpoch), leaderEpochCache.epochForOffset(1L))
   }
 
   @Test
@@ -4556,7 +4565,7 @@ class PartitionTest extends AbstractPartitionTest {
     setupPartitionWithMocks(leaderEpoch = leaderEpoch, isLeader = true)
     partition.consolidationLeaderEpoch = () => Some(consolidationEpoch)
     appendConsolidatedRecords(baseOffset = 0L, consolidationEpoch)
-    assertEquals(util.List.of(new EpochEntry(consolidationEpoch, 0L)),
+    assertEquals(java.util.List.of(new EpochEntry(consolidationEpoch, 0L)),
       partition.localLogOrException.leaderEpochCache.epochEntries)
 
     partition = new Partition(
@@ -4578,12 +4587,12 @@ class PartitionTest extends AbstractPartitionTest {
     appendConsolidatedRecords(baseOffset = 2L, consolidationEpoch)
 
     val leaderEpochCache = partition.localLogOrException.leaderEpochCache
-    assertEquals(util.List.of(new EpochEntry(consolidationEpoch, 0L)), leaderEpochCache.epochEntries)
-    assertEquals(util.OptionalInt.of(consolidationEpoch), leaderEpochCache.epochForOffset(1L))
+    assertEquals(java.util.List.of(new EpochEntry(consolidationEpoch, 0L)), leaderEpochCache.epochEntries)
+    assertEquals(java.util.OptionalInt.of(consolidationEpoch), leaderEpochCache.epochForOffset(1L))
   }
 
   private def appendConsolidatedRecords(baseOffset: Long, epoch: Int): Unit = {
-    val records = createRecords(util.List.of(
+    val records = createRecords(List(
       new SimpleRecord("k".getBytes, "v".getBytes),
       new SimpleRecord("k".getBytes, "v".getBytes)
     ), baseOffset, epoch)

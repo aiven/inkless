@@ -17,6 +17,7 @@
 package org.apache.kafka.jmh.metadata;
 
 import kafka.server.metadata.InklessMetadataView;
+import kafka.server.metadata.KRaftMetadataCache;
 
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.config.ConfigResource;
@@ -26,7 +27,6 @@ import org.apache.kafka.common.metadata.TopicRecord;
 import org.apache.kafka.image.MetadataDelta;
 import org.apache.kafka.image.MetadataImage;
 import org.apache.kafka.image.MetadataProvenance;
-import org.apache.kafka.metadata.KRaftMetadataCache;
 import org.apache.kafka.server.common.KRaftVersion;
 
 import org.openjdk.jmh.annotations.Benchmark;
@@ -66,7 +66,7 @@ public class InklessMetadataViewTopicFlagBenchmark {
 
     @Setup
     public void setup() {
-        MetadataDelta delta = new MetadataDelta(MetadataImage.EMPTY);
+        MetadataDelta delta = new MetadataDelta.Builder().setImage(MetadataImage.EMPTY).build();
         topics = new String[TOPIC_COUNT];
         IntStream.range(0, TOPIC_COUNT).forEach(i -> {
             String topic = "topic-" + i;

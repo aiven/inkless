@@ -109,7 +109,7 @@ public class RaftSnapshotWriterTest {
 
     private static RecordsSnapshotWriter<ApiMessageAndVersion> raftSnapshotWriter(AtomicInteger frozenBytes) {
         return new RecordsSnapshotWriter.Builder()
-            .setMaxBatchSizeBytes(KafkaRaftClient.MAX_BATCH_SIZE_BYTES)
+            .setMaxBatchSize(KafkaRaftClient.MAX_BATCH_SIZE_BYTES)
             .setRawSnapshotWriter(new MockRawSnapshotWriter(
                 new OffsetAndEpoch(100L, 10), buffer -> frozenBytes.set(buffer.remaining())))
             .build(MetadataRecordSerde.INSTANCE);
