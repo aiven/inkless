@@ -2589,8 +2589,6 @@ class InklessClassicToDisklessSwitchTest(Test):
                            (time_spec, through, last, expected))
         return dict(last)
 
-    GROUP_RECORDS_BEFORE_SWITCH = 3000
-
     def _consume_with_group(self, group, num_records, auto_commit=False, timeout_sec=None):
         """Process exactly ``num_records`` with ``group`` from its committed offsets, and commit them.
 
@@ -2781,10 +2779,16 @@ class InklessClassicToDisklessSwitchTest(Test):
 
         group = None
         if fault == "object_storage_outage":
-            # The group commits in the middle of the classic prefix before the switch.
+            # The group commits in the middle of the classic prefix before the switch. It
+            # reads fewer records than the smallest partition holds, so the phase 1 resume
+            # fetches from every partition and commits each one with a leader epoch.
             group = "switch-resume-%s" % uuid.uuid4().hex[:8]
-            self._consume_with_group(group, self.GROUP_RECORDS_BEFORE_SWITCH)
-            committed = self._wait_for_group_offsets(group, self.GROUP_RECORDS_BEFORE_SWITCH)
+            per_partition = {}
+            for partition, _ in self._acked_records[self.topic]:
+                per_partition[partition] = per_partition.get(partition, 0) + 1
+            records_before_switch = min(per_partition.values()) // 2
+            self._consume_with_group(group, records_before_switch)
+            committed = self._wait_for_group_offsets(group, records_before_switch)
 
         self.verifier.block_dependency("object_storage")
         self._switch_topic_to_diskless()
