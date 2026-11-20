@@ -383,16 +383,14 @@ The command rejects a negative offset before it sends the request, because the c
 
 ### Move the local logs past the old seal
 
-After a lowered seal, consolidation appends the diskless records at the old seal, and each replica's leader epoch cache maps the lost offsets to a classic epoch. While a replica holds local segments below the old seal, a broker restart or a leader change makes replicas truncate or recreate their consolidated records, and a follower can stop consolidating. To end that state, follow these steps after the partition enters phase 2:
+After a lowered seal, consolidation appends the diskless records at the old seal, and each replica's leader epoch cache maps the lost offsets to a classic epoch. While a replica holds local segments below the old seal, a broker restart or a leader change makes replicas truncate or recreate their consolidated records, and a follower can stop consolidating. To end that state, follow these steps after the partition enters phase 2 and holds diskless records:
 
 1. Note the values of `segment.ms` and `local.retention.ms` on the topic. Then set both to a low value, such as `1000`.
 2. On every replica, check the base offset of the first `.log` file in the partition directory. Wait until it's past the old seal, which you noted before you lowered the seal. The broker deletes local segments every `log.retention.check.interval.ms`.
 3. If the first `.log` file of a replica stays at the new seal after the other replicas pass step 2, that replica stopped consolidating. Restart the partition leader, and wait until that replica passes step 2.
 4. Set the two topic configs back to the values that you noted. Remove a config that had no value.
 
-Apart from the restart in step 3, don't restart a replica or move leadership of the partition until every replica passes step 2.
-
-Don't restart a replica or move leadership of the partition before step 3 completes.
+Until the partition receives its first diskless record, every local log ends at the new seal. A restart or a leader change then truncates nothing, and no segment can start past the old seal, so wait for a record before you start. From that record until every replica passes step 2, don't restart a replica or move leadership of the partition, apart from the restart in step 3.
 
 ## Elect a chosen replica in phase 1
 
