@@ -5204,7 +5204,8 @@ class ReplicaManagerInklessTest {
       fetchOffsetHandlerCtor.close()
     }
     try {
-      setupHybridLeaderPartition(replicaManager, disklessTopicPartition, localEndOffset = 101L)
+      // Epoch 0 is the diskless placeholder, so the classic prefix uses another epoch.
+      setupHybridLeaderPartition(replicaManager, disklessTopicPartition, localEndOffset = 101L, leaderEpoch = 1)
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
         .thenReturn(101L)
 
@@ -5214,7 +5215,7 @@ class ReplicaManagerInklessTest {
           .setPartitions(util.List.of(
             new OffsetForLeaderPartition()
               .setPartition(disklessTopicPartition.partition())
-              .setLeaderEpoch(0)
+              .setLeaderEpoch(1)
           ))
       )
 
@@ -5248,12 +5249,13 @@ class ReplicaManagerInklessTest {
       fetchOffsetHandlerCtor.close()
     }
     try {
-      val partition = setupHybridLeaderPartition(replicaManager, disklessTopicPartition, localEndOffset = 101L)
+      // Epoch 0 is the diskless placeholder, so the classic prefix uses another epoch.
+      val partition = setupHybridLeaderPartition(replicaManager, disklessTopicPartition, localEndOffset = 101L, leaderEpoch = 1)
       val remoteLeaderId = replicaManager.config.brokerId + 1
       partition.makeFollower(
         partitionRegistration(
           remoteLeaderId,
-          leaderEpoch = 1,
+          leaderEpoch = 2,
           isr = Array(remoteLeaderId, replicaManager.config.brokerId),
           partitionEpoch = 1,
           replicas = Array(replicaManager.config.brokerId, remoteLeaderId)),
@@ -5270,7 +5272,7 @@ class ReplicaManagerInklessTest {
           .setPartitions(util.List.of(
             new OffsetForLeaderPartition()
               .setPartition(disklessTopicPartition.partition())
-              .setLeaderEpoch(0)
+              .setLeaderEpoch(1)
           ))
       )
 
@@ -5382,6 +5384,55 @@ class ReplicaManagerInklessTest {
       val partitionResult = result.head.partitions().get(0)
       assertEquals(Errors.NONE.code, partitionResult.errorCode())
       assertEquals(200L, partitionResult.endOffset())
+      verify(jobMock).add(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), any())
+      verify(jobMock).start()
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testLastOffsetForLeaderEpochHybridFloorsDisklessEndOffsetAtSeal(): Unit = {
+    // A control-plane placeholder row reports end offset 0 for a partition with a committed seal.
+    val disklessResult = new OffsetResultHolder.FileRecordsOrError(
+      Optional.empty(),
+      Optional.of(new FileRecords.TimestampAndOffset(RecordBatch.NO_TIMESTAMP, 0L, Optional.of[Integer](0))))
+    val jobMock = Mockito.mock(classOf[FetchOffsetHandler.Job])
+    when(jobMock.mustHandle(any())).thenReturn(true)
+    when(jobMock.add(any(), any())).thenReturn(CompletableFuture.completedFuture(disklessResult))
+    doNothing().when(jobMock).start()
+
+    val fetchOffsetHandlerCtorInit: MockedConstruction.MockInitializer[FetchOffsetHandler] = {
+      case (handlerMock, _) =>
+        when(handlerMock.createJob()).thenReturn(jobMock)
+    }
+    val fetchOffsetHandlerCtor = mockConstruction(classOf[FetchOffsetHandler], fetchOffsetHandlerCtorInit)
+
+    val replicaManager = try {
+      createReplicaManager(List(disklessTopicPartition.topic()), disklessManagedReplicasEnabled = true)
+    } finally {
+      fetchOffsetHandlerCtor.close()
+    }
+    try {
+      setupHybridLeaderPartition(replicaManager, disklessTopicPartition, localEndOffset = 101L)
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(101L)
+
+      val requestedEpochInfo = Seq(
+        new OffsetForLeaderTopic()
+          .setTopic(disklessTopicPartition.topic())
+          .setPartitions(util.List.of(
+            new OffsetForLeaderPartition()
+              .setPartition(disklessTopicPartition.partition())
+              .setLeaderEpoch(0)
+          ))
+      )
+
+      val result = replicaManager.lastOffsetForLeaderEpoch(requestedEpochInfo)
+
+      val partitionResult = result.head.partitions().get(0)
+      assertEquals(Errors.NONE.code, partitionResult.errorCode())
+      assertEquals(101L, partitionResult.endOffset())
       verify(jobMock).add(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), any())
       verify(jobMock).start()
     } finally {
@@ -10027,6 +10078,94 @@ class ReplicaManagerInklessTest {
     }
   }
 
+  // A consumer that reads past the seal through `FetchHandler` holds the placeholder epoch 0,
+  // because diskless produce stamps every batch with it. The consumer truncates to the returned
+  // end offset when that offset is below its position.
+  @Test
+  def testLastOffsetForLeaderEpochKeepsPlaceholderEpochPositionPastSeal(): Unit = {
+    val topicName = "consolidating-topic"
+    val topicId = Uuid.randomUuid()
+    val tp = new TopicPartition(topicName, 0)
+    val brokerId = 1
+    val leaderId = 2
+    val sealOffset = 10L
+    val leo = 13L
+    val disklessLeaderEpoch = 5
+    val disklessEndOffset = 200L
+
+    val disklessResult = new OffsetResultHolder.FileRecordsOrError(
+      Optional.empty(),
+      Optional.of(new FileRecords.TimestampAndOffset(RecordBatch.NO_TIMESTAMP, disklessEndOffset, Optional.of[Integer](0))))
+    val jobMock = Mockito.mock(classOf[FetchOffsetHandler.Job])
+    when(jobMock.add(any(), any())).thenReturn(CompletableFuture.completedFuture(disklessResult))
+    doNothing().when(jobMock).start()
+    val fetchOffsetHandlerCtorInit: MockedConstruction.MockInitializer[FetchOffsetHandler] = {
+      case (handlerMock, _) =>
+        when(handlerMock.createJob()).thenReturn(jobMock)
+    }
+
+    val consolidationCtor = mockConstruction(classOf[ConsolidationFetcherManager])
+    val fetchOffsetHandlerCtor = mockConstruction(classOf[FetchOffsetHandler], fetchOffsetHandlerCtorInit)
+    try {
+      val replicaManager = try {
+        createReplicaManager(
+          List(topicName),
+          disklessRemoteStorageConsolidationEnabled = true,
+          consolidatingDisklessTopics = Set(topicName),
+        )
+      } finally {
+        fetchOffsetHandlerCtor.close()
+      }
+      try {
+        val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+        populateConsolidatedLocalLogAndCheckpointedHwm(
+          replicaManager, tp, log, sealOffset, leo, disklessLeaderEpoch, hw = sealOffset, rollAtSeal = true)
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(sealOffset)
+        when(replicaManager.inklessMetadataView().getDisklessLeaderEpoch(tp)).thenReturn(disklessLeaderEpoch)
+        when(replicaManager.inklessMetadataView().getLastClassicLeaderEpoch(tp)).thenReturn(0)
+        when(replicaManager.inklessMetadataView().isClassicPrefixInRemoteStorage(tp)).thenReturn(true)
+
+        val followerDelta = disklessFollowerDelta(
+          topicName,
+          topicId,
+          brokerId,
+          leaderId,
+          classicToDisklessStartOffset = sealOffset,
+          disklessLeaderEpoch = disklessLeaderEpoch,
+          classicPrefixInRemoteStorage = true,
+          leaderEpoch = disklessLeaderEpoch
+        )
+        val followerImage = imageFromTopics(followerDelta.apply())
+        replicaManager.applyDelta(followerDelta, followerImage)
+        val leaderDelta = promoteFollowerToLeaderDelta(followerImage.topics(), topicId, tp.partition(), brokerId)
+        replicaManager.applyDelta(leaderDelta, imageFromTopics(leaderDelta.apply()))
+
+        val partition = replicaManager.getPartition(tp).asInstanceOf[HostedPartition.Online[Partition]].partition
+        assertEquals(util.List.of(new EpochEntry(0, 0L), new EpochEntry(disklessLeaderEpoch, sealOffset)),
+          partition.localLogOrException.leaderEpochCache.epochEntries)
+
+        val result = replicaManager.lastOffsetForLeaderEpoch(Seq(
+          new OffsetForLeaderTopic()
+            .setTopic(topicName)
+            .setPartitions(util.List.of(
+              new OffsetForLeaderPartition()
+                .setPartition(tp.partition)
+                .setCurrentLeaderEpoch(partition.getLeaderEpoch)
+                .setLeaderEpoch(0)
+            ))
+        ))
+
+        val partitionResult = result.head.partitions().get(0)
+        assertEquals(Errors.NONE.code, partitionResult.errorCode())
+        assertEquals(disklessEndOffset, partitionResult.endOffset())
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
+    } finally {
+      consolidationCtor.close()
+    }
+  }
+
   @Test
   def testApplyDeltaFencesSwitchedFollowerBelowSealWhenBecomingLeader(): Unit = {
     val topicName = "switched-topic"
@@ -11492,7 +11631,8 @@ class ReplicaManagerInklessTest {
 
   private def setupHybridLeaderPartition(replicaManager: ReplicaManager,
                                          topicIdPartition: TopicIdPartition,
-                                         localEndOffset: Long): Partition = {
+                                         localEndOffset: Long,
+                                         leaderEpoch: Int = 0): Partition = {
     val topicDelta = new TopicsDelta(TopicsImage.EMPTY)
     topicDelta.replay(new TopicRecord()
       .setName(topicIdPartition.topic())
@@ -11501,7 +11641,7 @@ class ReplicaManagerInklessTest {
       .setTopicId(topicIdPartition.topicId())
       .setPartitionId(topicIdPartition.partition())
       .setLeader(replicaManager.config.brokerId)
-      .setLeaderEpoch(0)
+      .setLeaderEpoch(leaderEpoch)
       .setPartitionEpoch(0)
       .setReplicas(List[Integer](replicaManager.config.brokerId).asJava)
       .setIsr(List[Integer](replicaManager.config.brokerId).asJava))
@@ -11513,7 +11653,7 @@ class ReplicaManagerInklessTest {
     partition.makeLeader(
       partitionRegistration(
         replicaManager.config.brokerId,
-        leaderEpoch = 0,
+        leaderEpoch = leaderEpoch,
         isr = Array(replicaManager.config.brokerId),
         partitionEpoch = 0,
         replicas = Array(replicaManager.config.brokerId)),
@@ -11526,7 +11666,7 @@ class ReplicaManagerInklessTest {
         new SimpleRecord(s"key-$i".getBytes, s"value-$i".getBytes)
       }.toArray
       val log = partition.localLogOrException
-      log.appendAsLeader(MemoryRecords.withRecords(0L, Compression.NONE, 0, records: _*), 0)
+      log.appendAsLeader(MemoryRecords.withRecords(0L, Compression.NONE, leaderEpoch, records: _*), leaderEpoch)
       log.updateHighWatermark(localEndOffset)
     }
     partition

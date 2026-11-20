@@ -3998,7 +3998,11 @@ class ReplicaManager(val config: KafkaConfig,
       }
     }
 
-    def disklessOffsetForLeaderEpoch(topicPartition: TopicPartition, offsetForLeaderPartition: OffsetForLeaderPartition): () => EpochEndOffset = {
+    def disklessOffsetForLeaderEpoch(
+      topicPartition: TopicPartition,
+      offsetForLeaderPartition: OffsetForLeaderPartition,
+      minEndOffset: Long = OffsetsForLeaderEpochResponse.UNDEFINED_EPOCH_OFFSET
+    ): () => EpochEndOffset = {
       if (offsetForLeaderPartition.leaderEpoch == OffsetsForLeaderEpochResponse.UNDEFINED_EPOCH) {
         () => new EpochEndOffset()
           .setPartition(topicPartition.partition)
@@ -4025,7 +4029,7 @@ class ReplicaManager(val config: KafkaConfig,
                   epochEndOffset.exception().orElse(null))
               }
               val endOffset = epochEndOffset.timestampAndOffset()
-                .map[Long](_.offset)
+                .map[Long](timestampAndOffset => math.max(timestampAndOffset.offset, minEndOffset))
                 .orElse(OffsetsForLeaderEpochResponse.UNDEFINED_EPOCH_OFFSET)
               new EpochEndOffset()
                 .setPartition(topicPartition.partition)
@@ -4075,11 +4079,17 @@ class ReplicaManager(val config: KafkaConfig,
               val localError = Errors.forCode(localResult.errorCode)
               if (localError != Errors.NONE) {
                 () => localResult
-              } else if (localResult.endOffset != OffsetsForLeaderEpochResponse.UNDEFINED_EPOCH_OFFSET && localResult.endOffset <= classicToDisklessStartOffset) {
+              } else if (offsetForLeaderPartition.leaderEpoch != LeaderAndIsr.INITIAL_LEADER_EPOCH &&
+                  localResult.endOffset != OffsetsForLeaderEpochResponse.UNDEFINED_EPOCH_OFFSET &&
+                  localResult.endOffset <= classicToDisklessStartOffset) {
                 // The requested epoch ends at or before the switch point, so the classic log answers it completely.
                 () => localResult
               } else {
-                disklessOffsetForLeaderEpoch(topicPartition, offsetForLeaderPartition)
+                // Epoch 0 is also the placeholder on every batch that FetchHandler returns, so the
+                // classic log can't answer it: a consumer past the seal would truncate to the end of
+                // classic epoch 0. A control-plane placeholder row reports an end offset below the
+                // committed seal, so the seal is the floor.
+                disklessOffsetForLeaderEpoch(topicPartition, offsetForLeaderPartition, classicToDisklessStartOffset)
               }
 
             case invalidClassicToDisklessStartOffset =>
