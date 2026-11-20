@@ -1988,18 +1988,37 @@ class InklessClassicToDisklessSwitchTest(Test):
                    err_msg="The producer kept getting acks for partition %d after %ds" % (partition, timeout_sec))
 
     def _assert_switch_state_held(self, state, timeout_sec=60):
-        """Assert that a live broker still tracks a partition in ``state``."""
-        count_obj = self.SWITCH_STATE_GAUGES[state][0]
-        counts = []
+        """Assert that a live broker tracks a partition in ``state`` in a sample taken after the call starts.
+
+        Every live broker must report a fresh sample. After a restart or a
+        pause, the newest sample in memory can predate the fault.
+        """
+        count_key = "%s:Value" % self.SWITCH_STATE_GAUGES[state][0]
+        start_sec = int(time.time())
+        counts = {}
 
         def check():
-            count = self._live_cluster_jmx_sum(count_obj)
-            counts.append(count)
-            return count is not None
+            counts.clear()
+            for node in self.kafka.nodes:
+                if not self.kafka.pids(node):
+                    continue
+                idx = self.kafka.idx(node)
+                try:
+                    self.kafka.read_jmx_output(idx, node)
+                except Exception as e:
+                    self.logger.debug("Failed to read JMX from broker %d: %s", idx, e)
+                    return False
+                samples = self.kafka.jmx_stats[idx - 1]
+                fresh = [t for t in samples if t >= start_sec and count_key in samples[t]]
+                if not fresh:
+                    return False
+                counts[idx] = samples[max(fresh)][count_key]
+            return bool(counts)
 
         wait_until(check, timeout_sec=timeout_sec, backoff_sec=2,
-                   err_msg="Live brokers didn't report the %s gauge within %ds" % (state, timeout_sec))
-        assert counts[-1] > 0, "The fault released the %s hold before the test did" % state
+                   err_msg="Live brokers didn't report a fresh %s sample within %ds" % (state, timeout_sec))
+        assert sum(counts.values()) > 0, \
+            "The fault released the %s hold before the test did (fresh counts by broker: %s)" % (state, counts)
 
     @cluster(num_nodes=8)
     @parametrize(metadata_quorum=quorum.isolated_kraft, hold="replication", fault="follower_sigkill")
