@@ -292,7 +292,7 @@ If the log of another replica contains more of the classic prefix than the leade
 
 3. Restart the leader. A broker doesn't apply metadata changes to a partition that it marked offline. The partition doesn't serve requests until the restart. After the restart, the leader's log end offset equals the seal. The other replicas truncate to the seal and rejoin the ISR.
 
-The remote log manager then uploads the prefix, and the partition enters phase 2. A consumer that reads across the lost offsets gets the diskless records from the old seal on. The broker doesn't return an error for the missing offsets.
+The remote log manager then uploads the prefix, and the partition enters phase 2. Then follow [Move the local logs past the old seal](#move-the-local-logs-past-the-old-seal). A consumer that reads across the lost offsets gets the diskless records from the old seal on. The broker doesn't return an error for the missing offsets.
 
 The same election can run while the switch is pending. The leader then seals at its own log end offset, and the switch goes on. As on a classic topic, the partition loses the records that the leader lost, and you don't need to run any recovery steps.
 
@@ -380,6 +380,18 @@ The controller rejects the request with `INVALID_REQUEST` in these cases:
 * The new seal isn't lower than the committed seal.
 
 The command rejects a negative offset before it sends the request, because the controller reads `-2` as a re-arm.
+
+### Move the local logs past the old seal
+
+After a lowered seal, consolidation appends the diskless records at the old seal, and each replica's leader epoch cache maps the lost offsets to a classic epoch. While a replica holds local segments below the old seal, a broker restart or a leader change makes replicas truncate or recreate their consolidated records, and a follower can stop consolidating. To end that state, follow these steps:
+
+1. Before you lower the seal, note the old seal. It's `classicToDisklessStartOffset` in the output of `kafka-topic-switch.sh state`.
+2. After the partition enters phase 2, set `segment.ms` and `local.retention.ms` on the topic to a low value, such as `1000`.
+3. On every replica, wait until the first `.log` file in the partition directory has a base offset past the old seal. The broker deletes local segments every `log.retention.check.interval.ms`.
+4. If the log of a replica still ends at the new seal, restart the partition leader, and repeat step 3 for that replica.
+5. Remove the two topic configs.
+
+Don't restart a replica or move leadership of the partition before step 3 completes.
 
 ## Elect a chosen replica in phase 1
 
