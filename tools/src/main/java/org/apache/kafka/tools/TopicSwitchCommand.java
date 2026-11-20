@@ -171,6 +171,7 @@ public abstract class TopicSwitchCommand {
                 .required(true)
                 .help("The broker ID of the replica to elect. The controller accepts it only in phase 1, and "
                         + "only if the broker is an active replica of the partition with an online log directory. "
+                        + "The controller rejects a replica that a reassignment is adding and that is outside the ISR. "
                         + "The controller doesn't check the replica's log, and it resets the ISR to a replica "
                         + "outside the ISR.");
 

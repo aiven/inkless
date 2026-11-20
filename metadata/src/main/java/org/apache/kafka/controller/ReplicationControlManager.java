@@ -2012,6 +2012,12 @@ public class ReplicationControlManager {
      * The election follows the unclean leader election rules for the chosen replica alone. If the replica is
      * outside the ISR, the record resets the ISR to it and sets the leader recovery state to
      * {@code RECOVERING}. While the switch is pending, the new leader seals at its own log end offset.
+     *
+     * In phase 1 the controller stages a reassignment, so the adding replicas are replicas of the partition
+     * before they join the ISR. The controller rejects the election of such a replica. With an ISR of only
+     * that replica, the next partition change completes the reassignment and drops the removing replicas,
+     * which can store the only copy of the classic prefix. The election of any other replica stays possible
+     * during a reassignment, and it never completes one.
      */
     private ApiMessageAndVersion electPhaseOneLeader(
         String topicName,
@@ -2036,6 +2042,11 @@ public class ReplicationControlManager {
             throw new InvalidRequestException("Cannot elect broker " + leaderId + " as the leader of " +
                 partitionName + ": it already leads the partition.");
         }
+        if (!Replicas.contains(partition.isr, leaderId) && Replicas.contains(partition.addingReplicas, leaderId)) {
+            throw new InvalidRequestException("Cannot elect broker " + leaderId + " as the leader of " +
+                partitionName + ": a reassignment is adding it, and it's outside the ISR. Elect a replica that " +
+                "the reassignment doesn't add.");
+        }
         IntPredicate isAcceptableLeader = leaderAcceptorFor(topicName, partition);
         if (!isAcceptableLeader.test(leaderId)) {
             throw new InvalidRequestException("Cannot elect broker " + leaderId + " as the leader of " +
@@ -2058,6 +2069,14 @@ public class ReplicationControlManager {
         if (record.isEmpty()) {
             throw new InvalidRequestException("Cannot elect broker " + leaderId + " as the leader of " +
                 partitionName + ": the election changes nothing.");
+        }
+        // The builder completes a reassignment whose adding replicas are all in the ISR before it elects a
+        // leader. It then drops the removing replicas, and a removing replica can't become the leader.
+        PartitionChangeRecord change = (PartitionChangeRecord) record.get().message();
+        if (change.leader() != leaderId || change.replicas() != null) {
+            throw new InvalidRequestException("Cannot elect broker " + leaderId + " as the leader of " +
+                partitionName + ": the election would complete a reassignment and change the replicas of the " +
+                "partition.");
         }
         log.info("AlterDisklessSwitch elected broker {} as the leader of {} in phase 1. Previous partition: {}",
             leaderId, partitionName, partition);

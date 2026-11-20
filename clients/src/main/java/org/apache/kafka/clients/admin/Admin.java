@@ -389,7 +389,8 @@ public interface Admin extends AutoCloseable {
      * election resets the ISR to it, and the partition loses the records that the replica doesn't hold. The
      * result fails with {@code InvalidRequestException} if the partition isn't in phase 1, or if the broker
      * isn't a replica of the partition, isn't active, has an offline log directory, or already leads the
-     * partition.
+     * partition. It also fails for a replica that a reassignment is adding and that is outside the ISR, and
+     * for an election that would complete a reassignment.
      *
      * @param topic       The topic name.
      * @param partition   The partition index.

@@ -6948,6 +6948,73 @@ public class ReplicationControlManagerInklessTest {
         assertEquals(1, ctx.replicationControl.getPartition(topicId, 0).leader);
     }
 
+    @Test
+    public void testAlterDisklessSwitchRejectsAnElectionOfAnAddingReplicaOutsideTheIsr() {
+        ReplicationControlTestContext ctx = disklessSwitchTestContext();
+        Uuid topicId = createSwitchingTestTopicWithStagedReassignment(ctx, 0);
+        PartitionRegistration before = ctx.replicationControl.getPartition(topicId, 0);
+
+        InvalidRequestException e = assertThrows(InvalidRequestException.class, () ->
+            ctx.replicationControl.alterDisklessSwitch(electRequest("foo", 0, 3)));
+        assertTrue(e.getMessage().contains("a reassignment is adding it"), e.getMessage());
+        assertEquals(before, ctx.replicationControl.getPartition(topicId, 0));
+    }
+
+    // Replica 0 is the removing replica, and replica 2 stays in the partition. Neither is the adding replica.
+    @ParameterizedTest
+    @ValueSource(ints = {0, 2})
+    public void testAlterDisklessSwitchElectsAReplicaOutsideTheIsrDuringAReassignment(int electedReplica) {
+        ReplicationControlTestContext ctx = disklessSwitchTestContext();
+        Uuid topicId = createSwitchingTestTopicWithStagedReassignment(ctx, 1);
+
+        ctx.replay(ctx.replicationControl.alterDisklessSwitch(electRequest("foo", 0, electedReplica)).records());
+
+        PartitionRegistration after = ctx.replicationControl.getPartition(topicId, 0);
+        assertEquals(electedReplica, after.leader);
+        assertArrayEquals(new int[] {electedReplica}, after.isr);
+        // The election doesn't complete the reassignment, so the removing replica keeps its log.
+        assertArrayEquals(new int[] {3, 1, 2, 0}, after.replicas);
+        assertArrayEquals(new int[] {3}, after.addingReplicas);
+        assertArrayEquals(new int[] {0}, after.removingReplicas);
+    }
+
+    @Test
+    public void testAlterDisklessSwitchRejectsAnElectionThatWouldCompleteAReassignment() {
+        ReplicationControlTestContext ctx = disklessSwitchTestContext();
+        // The adding replica is the whole ISR, so the next partition change completes the reassignment
+        // and drops removing replica 0.
+        Uuid topicId = createSwitchingTestTopicWithStagedReassignment(ctx, 3);
+        PartitionRegistration before = ctx.replicationControl.getPartition(topicId, 0);
+
+        InvalidRequestException e = assertThrows(InvalidRequestException.class, () ->
+            ctx.replicationControl.alterDisklessSwitch(electRequest("foo", 0, 0)));
+        assertTrue(e.getMessage().contains("would complete a reassignment"), e.getMessage());
+        assertEquals(before, ctx.replicationControl.getPartition(topicId, 0));
+    }
+
+    // Partition 0 of the returned topic has a committed seal and the staged reassignment [0, 1, 2] -> [3, 1, 2]:
+    // replicas [3, 1, 2, 0], adding replica 3, removing replica 0. The leader is the only ISR member.
+    private static Uuid createSwitchingTestTopicWithStagedReassignment(ReplicationControlTestContext ctx, int leader) {
+        Uuid topicId = createSwitchingTestTopicWithLeaderOnlyIsr(ctx);
+        commitSeal(ctx, topicId, 100L, List.of());
+        ctx.registerBrokers(3);
+        ctx.unfenceBrokers(3);
+        ctx.replay(List.of(new ApiMessageAndVersion(new PartitionChangeRecord()
+            .setTopicId(topicId)
+            .setPartitionId(0)
+            .setReplicas(List.of(3, 1, 2, 0))
+            .setDirectories(Collections.nCopies(4, DirectoryId.UNASSIGNED))
+            .setIsr(List.of(leader))
+            .setLeader(leader)
+            .setRemovingReplicas(List.of(0))
+            .setAddingReplicas(List.of(3)), (short) 1)));
+        PartitionRegistration partition = ctx.replicationControl.getPartition(topicId, 0);
+        assertEquals(leader, partition.leader);
+        assertArrayEquals(new int[] {leader}, partition.isr);
+        assertFalse(partition.classicPrefixInRemoteStorage);
+        return topicId;
+    }
+
     @ParameterizedTest
     @ValueSource(longs = {-2L, 0L, 40L})
     public void testAlterDisklessSwitchRejectsAnElectionWithASealOffset(long sealOffset) {

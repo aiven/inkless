@@ -408,6 +408,8 @@ The controller rejects the request with `INVALID_REQUEST` in these cases:
 * The partition isn't in phase 1: `classicToDisklessStartOffset` is `-1`, or the partition is in phase 2. In phase 2, use `kafka-leader-election.sh`.
 * The broker isn't a replica of the partition, isn't active, or the log directory of its replica is offline.
 * The broker already leads the partition.
+* A reassignment is adding the broker, and the broker is outside the ISR. In phase 1 the controller stages a reassignment, so an adding replica is a replica of the partition before it joins the ISR. With an ISR of only that replica, the next partition change completes the reassignment and drops the removing replicas, which can store the only copy of the classic prefix. During a reassignment, elect a replica that the reassignment doesn't add.
+* The election would complete a reassignment. If every adding replica is already in the ISR, the controller completes the reassignment before it elects a leader, and it drops the removing replicas.
 * The request also contains a seal offset other than `-1`.
 
 The controller doesn't know replica log end offsets, so it can't check that the log of the chosen replica contains the classic prefix. The elected broker checks its own log against a committed seal:
