@@ -279,7 +279,7 @@ If the unclean shutdown cost the last known leader records, the partition loses 
 
 If the partition is offline, lower the seal to the leader's log end offset. The partition loses the records between that offset and the old seal. To recover the partition, follow these steps:
 
-1. Find the leader's log end offset in the broker log message that marks the partition offline. The message starts with `Leader partition <topic>-<partition> has LEO`.
+1. Find the leader's log end offset in the broker log message that marks the partition offline. The message starts with `Leader partition <topic>-<partition> has LEO`. The same message has the committed seal. Note it as the old seal: after the partition enters phase 2, you need it to [move the local logs past the old seal](#move-the-local-logs-past-the-old-seal).
 2. Lower the seal to that offset:
 
    ```bash
@@ -290,7 +290,7 @@ If the partition is offline, lower the seal to the leader's log end offset. The 
 
 3. Restart the leader. A broker doesn't apply metadata changes to a partition that it marked offline. The partition doesn't serve requests until the restart. After the restart, the leader's log end offset equals the seal. The other replicas truncate to the seal and rejoin the ISR.
 
-The remote log manager then uploads the prefix, and the partition enters phase 2. A consumer that reads across the lost offsets gets the diskless records from the old seal on. The broker doesn't return an error for the missing offsets.
+The remote log manager then uploads the prefix, and the partition enters phase 2. Then follow [Move the local logs past the old seal](#move-the-local-logs-past-the-old-seal). A consumer that reads across the lost offsets gets the diskless records from the old seal on. The broker doesn't return an error for the missing offsets.
 
 The same election can run while the switch is pending. The leader then seals at its own log end offset, and the switch goes on. As on a classic topic, the partition loses the records that the leader lost, and you don't need to run any recovery steps.
 
@@ -378,3 +378,14 @@ The controller rejects the request with `INVALID_REQUEST` in these cases:
 * The new seal isn't lower than the committed seal.
 
 The command rejects a negative offset before it sends the request, because the controller reads `-2` as a re-arm.
+
+### Move the local logs past the old seal
+
+After a lowered seal, consolidation appends the diskless records at the old seal, and each replica's leader epoch cache maps the lost offsets to a classic epoch. While a replica holds local segments below the old seal, a broker restart or a leader change makes replicas truncate or recreate their consolidated records, and a follower can stop consolidating. To end that state, follow these steps after the partition enters phase 2 and holds diskless records:
+
+1. Note the values of `segment.ms` and `local.retention.ms` on the topic. Then set both to a low value, such as `1000`.
+2. On every replica, check the base offset of the first `.log` file in the partition directory. Wait until it's past the old seal, which you noted before you lowered the seal. The broker deletes local segments every `log.retention.check.interval.ms`.
+3. If the first `.log` file of a replica stays at the new seal after the other replicas pass step 2, that replica stopped consolidating. Restart the partition leader, and wait until that replica passes step 2.
+4. Set the two topic configs back to the values that you noted. Remove a config that had no value.
+
+Until the partition receives its first diskless record, every local log ends at the new seal. A restart or a leader change then truncates nothing, and no segment can start past the old seal, so wait for a record before you start. From that record until every replica passes step 2, don't restart a replica or move leadership of the partition, apart from the restart in step 3.
