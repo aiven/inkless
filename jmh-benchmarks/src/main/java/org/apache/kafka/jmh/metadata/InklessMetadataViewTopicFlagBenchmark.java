@@ -66,7 +66,7 @@ public class InklessMetadataViewTopicFlagBenchmark {
 
     @Setup
     public void setup() {
-        MetadataDelta delta = new MetadataDelta(MetadataImage.EMPTY);
+        MetadataDelta delta = new MetadataDelta.Builder().setImage(MetadataImage.EMPTY).build();
         topics = new String[TOPIC_COUNT];
         IntStream.range(0, TOPIC_COUNT).forEach(i -> {
             String topic = "topic-" + i;
