@@ -78,6 +78,7 @@ import org.apache.kafka.common.message.ListPartitionReassignmentsResponseData.On
 import org.apache.kafka.common.message.ListPartitionReassignmentsResponseData.OngoingTopicReassignment;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
+import org.apache.kafka.common.protocol.types.RawTaggedField;
 import org.apache.kafka.common.requests.AbstractRequest;
 import org.apache.kafka.common.requests.AbstractResponse;
 import org.apache.kafka.common.requests.AlterPartitionReassignmentsResponse;
@@ -109,6 +110,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -2833,6 +2835,114 @@ public class KafkaAdminClientTopicTest extends KafkaAdminClientTestBase {
             }
             return false;
         };
+    }
+
+    @Test
+    public void testDescribeTopicPartitionsRawResponse() throws ExecutionException, InterruptedException {
+        try (AdminClientUnitTestEnv env = mockClientEnv()) {
+            env.kafkaClient().setNodeApiVersions(NodeApiVersions.create());
+            String topicName = "test-topic";
+            Uuid topicId = Uuid.randomUuid();
+
+            DescribeTopicPartitionsResponseData responseData = new DescribeTopicPartitionsResponseData();
+            addPartitionToDescribeTopicPartitionsResponse(responseData, topicName, topicId, asList(0, 1));
+            env.kafkaClient().prepareResponse(new DescribeTopicPartitionsResponse(responseData));
+
+            DescribeTopicPartitionsResult result = env.adminClient().describeTopicPartitions(
+                singletonList(topicName), new DescribeTopicsOptions());
+            DescribeTopicPartitionsResponseData data = result.rawResponse().get();
+
+            assertEquals(1, data.topics().size());
+            DescribeTopicPartitionsResponseTopic topic = data.topics().find(topicName);
+            assertEquals(topicName, topic.name());
+            assertEquals(topicId, topic.topicId());
+            assertEquals(2, topic.partitions().size());
+            assertEquals(0, topic.partitions().get(0).partitionIndex());
+            assertEquals(1, topic.partitions().get(1).partitionIndex());
+        }
+    }
+
+    @Test
+    public void testDescribeTopicPartitionsPreservesUnknownTaggedFields() throws Exception {
+        int classicToDisklessStartOffsetTag = 100;
+        byte[] encodedOffset = ByteBuffer.allocate(Long.BYTES).putLong(42L).array();
+
+        try (AdminClientUnitTestEnv env = mockClientEnv()) {
+            env.kafkaClient().setNodeApiVersions(NodeApiVersions.create());
+            String topicName = "test-topic";
+            Uuid topicId = Uuid.randomUuid();
+
+            DescribeTopicPartitionsResponseData responseData = new DescribeTopicPartitionsResponseData();
+            addPartitionToDescribeTopicPartitionsResponse(responseData, topicName, topicId, singletonList(0));
+            responseData.topics().find(topicName).partitions().get(0).unknownTaggedFields()
+                .add(new RawTaggedField(classicToDisklessStartOffsetTag, encodedOffset));
+            env.kafkaClient().prepareResponse(new DescribeTopicPartitionsResponse(responseData));
+
+            DescribeTopicPartitionsResult result = env.adminClient().describeTopicPartitions(
+                singletonList(topicName), new DescribeTopicsOptions());
+            DescribeTopicPartitionsResponseData data = result.rawResponse().get();
+
+            List<RawTaggedField> taggedFields = data.topics().find(topicName)
+                .partitions().get(0).unknownTaggedFields();
+            assertEquals(1, taggedFields.size());
+            RawTaggedField preserved = taggedFields.get(0);
+            assertEquals(classicToDisklessStartOffsetTag, preserved.tag());
+            assertEquals(42L, ByteBuffer.wrap(preserved.data()).getLong());
+        }
+    }
+
+    @Test
+    public void testDescribeTopicPartitionsEmptyTopicsThrows() {
+        try (AdminClientUnitTestEnv env = mockClientEnv()) {
+            assertThrows(IllegalArgumentException.class,
+                () -> env.adminClient().describeTopicPartitions(List.of(), new DescribeTopicsOptions()));
+        }
+    }
+
+    @Test
+    public void testDescribeTopicPartitionsTopicIdChangedDuringPagination() {
+        try (AdminClientUnitTestEnv env = mockClientEnv()) {
+            env.kafkaClient().setNodeApiVersions(NodeApiVersions.create());
+            String topicName = "test-topic";
+            Uuid originalId = Uuid.randomUuid();
+            Uuid newId = Uuid.randomUuid();
+
+            DescribeTopicPartitionsResponseData firstPage = new DescribeTopicPartitionsResponseData();
+            addPartitionToDescribeTopicPartitionsResponse(firstPage, topicName, originalId, singletonList(0));
+            firstPage.setNextCursor(new DescribeTopicPartitionsResponseData.Cursor()
+                .setTopicName(topicName)
+                .setPartitionIndex(1));
+            env.kafkaClient().prepareResponse(new DescribeTopicPartitionsResponse(firstPage));
+
+            DescribeTopicPartitionsResponseData secondPage = new DescribeTopicPartitionsResponseData();
+            addPartitionToDescribeTopicPartitionsResponse(secondPage, topicName, newId, singletonList(1));
+            env.kafkaClient().prepareResponse(new DescribeTopicPartitionsResponse(secondPage));
+
+            DescribeTopicPartitionsResult result = env.adminClient().describeTopicPartitions(
+                singletonList(topicName), new DescribeTopicsOptions());
+
+            TestUtils.assertFutureThrows(UnknownTopicOrPartitionException.class, result.rawResponse());
+        }
+    }
+
+    @Test
+    public void testDescribeTopicPartitionsTopicError() {
+        try (AdminClientUnitTestEnv env = mockClientEnv()) {
+            env.kafkaClient().setNodeApiVersions(NodeApiVersions.create());
+            String topicName = "unauthorized-topic";
+
+            DescribeTopicPartitionsResponseData responseData = new DescribeTopicPartitionsResponseData();
+            responseData.topics().add(new DescribeTopicPartitionsResponseTopic()
+                .setErrorCode(Errors.TOPIC_AUTHORIZATION_FAILED.code())
+                .setTopicId(Uuid.ZERO_UUID)
+                .setName(topicName));
+            env.kafkaClient().prepareResponse(new DescribeTopicPartitionsResponse(responseData));
+
+            DescribeTopicPartitionsResult result = env.adminClient().describeTopicPartitions(
+                singletonList(topicName), new DescribeTopicsOptions());
+
+            TestUtils.assertFutureThrows(TopicAuthorizationException.class, result.rawResponse());
+        }
     }
 
     private void addPartitionToDescribeTopicPartitionsResponse(

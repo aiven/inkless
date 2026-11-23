@@ -3708,7 +3708,7 @@ public class ReplicationControlManagerTest {
             .setConfigs(configs));
 
         final ControllerResult<CreateTopicsResponseData> result = ctx.replicationControl.createTopics(
-            anonymousContextFor(ApiKeys.CREATE_TOPICS), request, Set.of("foo"));
+            anonymousContextFor(ApiKeys.CREATE_TOPICS), request, Set.of("foo"), false);
         assertEquals(NONE.code(), result.response().topics().find("foo").errorCode());
         assertTrue(result.records().stream()
             .filter(m -> m.message() instanceof ConfigRecord)
@@ -3737,7 +3737,7 @@ public class ReplicationControlManagerTest {
             .setConfigs(configs));
 
         final ControllerResult<CreateTopicsResponseData> result = ctx.replicationControl.createTopics(
-            anonymousContextFor(ApiKeys.CREATE_TOPICS), request, Set.of("foo"));
+            anonymousContextFor(ApiKeys.CREATE_TOPICS), request, Set.of("foo"), false);
         assertEquals(NONE.code(), result.response().topics().find("foo").errorCode());
         assertTrue(result.records().stream()
             .filter(m -> m.message() instanceof ConfigRecord)
@@ -3769,7 +3769,7 @@ public class ReplicationControlManagerTest {
             .setConfigs(configs));
 
         final ControllerResult<CreateTopicsResponseData> result = ctx.replicationControl.createTopics(
-            anonymousContextFor(ApiKeys.CREATE_TOPICS), request, Set.of("foo"));
+            anonymousContextFor(ApiKeys.CREATE_TOPICS), request, Set.of("foo"), false);
         assertEquals(NONE.code(), result.response().topics().find("foo").errorCode());
         assertTrue(result.records().stream()
             .filter(m -> m.message() instanceof ConfigRecord)
@@ -3798,7 +3798,7 @@ public class ReplicationControlManagerTest {
             .setConfigs(configs));
 
         final ControllerResult<CreateTopicsResponseData> result = ctx.replicationControl.createTopics(
-            anonymousContextFor(ApiKeys.CREATE_TOPICS), request, Set.of(Topic.GROUP_METADATA_TOPIC_NAME));
+            anonymousContextFor(ApiKeys.CREATE_TOPICS), request, Set.of(Topic.GROUP_METADATA_TOPIC_NAME), false);
         assertEquals(NONE.code(), result.response().topics().find(Topic.GROUP_METADATA_TOPIC_NAME).errorCode());
         assertTrue(result.records().stream()
             .filter(m -> m.message() instanceof ConfigRecord)
@@ -3828,7 +3828,7 @@ public class ReplicationControlManagerTest {
             .setConfigs(configs));
 
         final ControllerResult<CreateTopicsResponseData> result = ctx.replicationControl.createTopics(
-            anonymousContextFor(ApiKeys.CREATE_TOPICS), request, Set.of("mm2-foo"));
+            anonymousContextFor(ApiKeys.CREATE_TOPICS), request, Set.of("mm2-foo"), false);
         assertEquals(NONE.code(), result.response().topics().find("mm2-foo").errorCode());
         assertTrue(result.records().stream()
             .filter(m -> m.message() instanceof ConfigRecord)
@@ -3866,7 +3866,7 @@ public class ReplicationControlManagerTest {
             .setReplicationFactor((short) 1));
 
         final ControllerResult<CreateTopicsResponseData> result = ctx.replicationControl.createTopics(
-            anonymousContextFor(ApiKeys.CREATE_TOPICS), request, Set.of("forced-bad", "normal-topic"));
+            anonymousContextFor(ApiKeys.CREATE_TOPICS), request, Set.of("forced-bad", "normal-topic"), false);
 
         assertEquals(INVALID_REQUEST.code(), result.response().topics().find("forced-bad").errorCode());
         assertEquals(NONE.code(), result.response().topics().find("normal-topic").errorCode());

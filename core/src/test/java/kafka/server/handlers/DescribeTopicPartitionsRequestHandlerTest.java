@@ -549,14 +549,14 @@ class DescribeTopicPartitionsRequestHandlerTest {
         KRaftMetadataCache metadataCache = new KRaftMetadataCache(0, () -> KRaftVersion.KRAFT_VERSION_1);
         updateKraftMetadataCache(metadataCache, records);
         DescribeTopicPartitionsRequestHandler handler =
-            new DescribeTopicPartitionsRequestHandler(metadataCache, new AuthHelper(scala.Option.apply(authorizerPlugin)), createKafkaDefaultConfig());
+            new DescribeTopicPartitionsRequestHandler(metadataCache, new AuthHelper(Optional.ofNullable(authorizerPlugin)), createKafkaDefaultConfig());
 
         DescribeTopicPartitionsRequest describeRequest = new DescribeTopicPartitionsRequest(
             new DescribeTopicPartitionsRequestData()
                 .setTopics(List.of(new DescribeTopicPartitionsRequestData.TopicRequest().setName(topicName)))
         );
 
-        RequestChannel.Request request;
+        Request request;
         try {
             request = buildRequest(describeRequest, plaintextListener);
         } catch (Exception e) {

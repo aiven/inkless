@@ -19,13 +19,13 @@
 package io.aiven.inkless.consolidation
 
 import io.aiven.inkless.consume.{ConcatenatedRecords, FetchHandler, FetchOffsetHandler}
-import kafka.log.LogTestUtils
 import kafka.cluster.Partition
 import kafka.server._
 import kafka.server.metadata.InklessMetadataView
 import kafka.utils.TestUtils
 import org.apache.kafka.common.{TopicIdPartition, TopicPartition, Uuid}
 import org.apache.kafka.common.compress.Compression
+import org.apache.kafka.common.config.TopicConfig
 import org.apache.kafka.common.errors.RecordBatchTooLargeException
 import org.apache.kafka.common.message.FetchResponseData
 import org.apache.kafka.common.protocol.Errors
@@ -40,11 +40,12 @@ import org.apache.kafka.server.metrics.KafkaYammerMetrics
 import org.apache.kafka.server.util.MockTime
 import org.apache.kafka.common.InvalidRecordException
 import org.apache.kafka.common.utils.Utils
+import org.apache.kafka.coordinator.transaction.TransactionLogConfig
 import org.apache.kafka.server.purgatory.DelayedOperationPurgatory
 import org.apache.kafka.server.storage.log.FetchPartitionData
 import org.apache.kafka.storage.internals.checkpoint.LeaderEpochCheckpointFile
 import org.apache.kafka.storage.internals.epoch.LeaderEpochFileCache
-import org.apache.kafka.storage.internals.log.{EpochEntry, LogAppendInfo, LogDirFailureChannel, UnifiedLog}
+import org.apache.kafka.storage.internals.log.{EpochEntry, LogAppendInfo, LogConfig, LogDirFailureChannel, ProducerStateManagerConfig, UnifiedLog}
 import io.aiven.inkless.control_plane.{BatchInfo, BatchMetadata, FindBatchResponse}
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats
 import org.junit.jupiter.api.Assertions._
@@ -56,8 +57,10 @@ import org.mockito.Mockito.{RETURNS_DEEP_STUBS, doAnswer, doNothing, mock, never
 import java.nio.charset.StandardCharsets
 import java.util
 import java.util.concurrent.CompletableFuture
-import java.util.{Optional, OptionalInt, OptionalLong}
+import java.util.{Optional, OptionalInt, OptionalLong, Properties}
 import scala.jdk.CollectionConverters._
+import org.apache.kafka.server.quota.{QuotaFactory, ReplicaQuota, ReplicationQuotaManager}
+import org.apache.kafka.server.util.ServerTestUtils
 
 class ConsolidationFetcherThreadTest {
 
@@ -73,7 +76,7 @@ class ConsolidationFetcherThreadTest {
   @AfterEach
   def tearDown(): Unit = {
     metrics.close()
-    TestUtils.clearYammerMetrics()
+    ServerTestUtils.clearYammerMetrics()
   }
 
   /**
@@ -468,12 +471,23 @@ class ConsolidationFetcherThreadTest {
     val logDir = TestUtils.randomPartitionLogDir(tempDir)
     val brokerTopicStats = new BrokerTopicStats
     val mockTime = new MockTime()
-    val log = LogTestUtils.createLog(
+    val logProps = new Properties()
+    logProps.put(LogConfig.INTERNAL_SEGMENT_BYTES_CONFIG, 1024: Integer)
+    logProps.put(TopicConfig.INDEX_INTERVAL_BYTES_CONFIG, 1: Integer)
+    val log = UnifiedLog.create(
       logDir,
-      LogTestUtils.createLogConfig(segmentBytes = 1024, indexIntervalBytes = 1),
-      brokerTopicStats,
+      new LogConfig(logProps),
+      0L,
+      0L,
       mockTime.scheduler,
-      mockTime
+      brokerTopicStats,
+      mockTime,
+      5 * 60 * 1000,
+      new ProducerStateManagerConfig(TransactionLogConfig.PRODUCER_ID_EXPIRATION_MS_DEFAULT, false),
+      TransactionLogConfig.PRODUCER_ID_EXPIRATION_MS_DEFAULT,
+      new LogDirFailureChannel(10),
+      true,
+      Optional.empty[Uuid]()
     )
 
     try {

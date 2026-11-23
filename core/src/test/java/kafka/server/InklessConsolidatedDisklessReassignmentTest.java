@@ -83,7 +83,6 @@ import io.aiven.inkless.test_utils.InklessPostgreSQLContainer;
 import io.aiven.inkless.test_utils.MinioContainer;
 import io.aiven.inkless.test_utils.PostgreSQLTestContainer;
 import io.aiven.inkless.test_utils.S3TestContainer;
-import scala.Option;
 
 import static org.apache.kafka.common.config.TopicConfig.CLEANUP_POLICY_CONFIG;
 import static org.apache.kafka.common.config.TopicConfig.CLEANUP_POLICY_DELETE;
@@ -415,14 +414,14 @@ public class InklessConsolidatedDisklessReassignmentTest {
     }
 
     private OptionalLong getLogEndOffset(int brokerId) {
-        Option<UnifiedLog> logOpt = cluster.brokers().get(brokerId).logManager().getLog(TOPIC_PARTITION, false);
-        return logOpt.isDefined()
+        Optional<UnifiedLog> logOpt = cluster.brokers().get(brokerId).logManager().getLog(TOPIC_PARTITION, false);
+        return logOpt.isPresent()
             ? OptionalLong.of(logOpt.get().logEndOffset())
             : OptionalLong.empty();
     }
 
     private boolean hasLog(int brokerId) {
-        return cluster.brokers().get(brokerId).logManager().getLog(TOPIC_PARTITION, false).isDefined();
+        return cluster.brokers().get(brokerId).logManager().getLog(TOPIC_PARTITION, false).isPresent();
     }
 
     private void produceRecords(int numRecords) {

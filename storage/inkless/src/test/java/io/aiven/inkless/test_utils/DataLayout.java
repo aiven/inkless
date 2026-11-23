@@ -22,8 +22,8 @@ import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.record.internal.Record;
 import org.apache.kafka.common.record.internal.RecordBatch;
 import org.apache.kafka.common.record.internal.Records;
-import org.apache.kafka.common.utils.BufferSupplier;
-import org.apache.kafka.common.utils.CloseableIterator;
+import org.apache.kafka.common.utils.internals.BufferSupplier;
+import org.apache.kafka.common.utils.internals.CloseableIterator;
 
 import net.jqwik.api.Arbitraries;
 import net.jqwik.api.Arbitrary;

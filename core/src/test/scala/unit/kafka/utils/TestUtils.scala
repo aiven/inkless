@@ -66,6 +66,7 @@ import java.nio.file.{Files, StandardOpenOption}
 import java.time.Duration
 import java.util
 import java.util.concurrent._
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.{Optional, Properties}
 import scala.collection.mutable.ArrayBuffer
 import scala.collection.{Map, Seq, mutable}

@@ -59,6 +59,7 @@ import java.util.concurrent.ExecutionException
 import java.util.{Collections, Properties}
 import scala.collection.{Map, Seq}
 import scala.jdk.CollectionConverters._
+import org.apache.kafka.server.quota.QuotaFactory
 
 @Timeout(100)
 class DynamicConfigChangeTest extends KafkaServerTestHarness {
@@ -646,13 +647,13 @@ class DynamicConfigChangeUnitTest {
   @Test
   def testDisklessTopicConfigUpdateCallsInklessMetadataView(): Unit = {
     val topic = "diskless-topic"
-    val logManager = mock(classOf[kafka.log.LogManager])
+    val logManager = mock(classOf[org.apache.kafka.storage.internals.log.LogManager])
     val replicaManager: ReplicaManager = mock(classOf[ReplicaManager])
     val inklessMetadataView = mock(classOf[kafka.server.metadata.InklessMetadataView])
     when(replicaManager.logManager).thenReturn(logManager)
     when(replicaManager.inklessMetadataView()).thenReturn(inklessMetadataView)
     // No local logs — simulates a diskless topic
-    when(logManager.logsByTopic(topic)).thenReturn(Seq.empty)
+    when(logManager.logsByTopic(topic)).thenReturn(util.List.of[UnifiedLog]())
 
     val quotas = mock(classOf[QuotaFactory.QuotaManagers])
     when(quotas.leader).thenReturn(mock(classOf[ReplicationQuotaManager]))
@@ -685,8 +686,8 @@ class DynamicConfigChangeUnitTest {
     when(metadataCache.topicConfig(topic)).thenReturn(publishedTopicConfig)
     val inklessMetadataView = new InklessMetadataView(metadataCache, () => brokerDefaults)
 
-    val logManager = mock(classOf[kafka.log.LogManager])
-    when(logManager.logsByTopic(topic)).thenReturn(localLogs)
+    val logManager = mock(classOf[org.apache.kafka.storage.internals.log.LogManager])
+    when(logManager.logsByTopic(topic)).thenReturn(localLogs.asJava)
     val replicaManager: ReplicaManager = mock(classOf[ReplicaManager])
     when(replicaManager.logManager).thenReturn(logManager)
     when(replicaManager.inklessMetadataView()).thenReturn(inklessMetadataView)

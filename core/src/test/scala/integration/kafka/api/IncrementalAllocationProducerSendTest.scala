@@ -44,7 +44,7 @@ class IncrementalAllocationProducerSendTest extends BaseProducerSendTest {
   // The incremental strategy does not support compression yet; the base test would fail at
   // producer construction. Overriding without the test annotations removes it from this
   // subclass's run. TODO: remove this override when compression support lands.
-  override def testSendCompressedMessageWithCreateTime(groupProtocol: String): Unit = {}
+  override def testSendCompressedMessageWithCreateTime(groupProtocol: String, topicType: String): Unit = {}
 
   // batch.size=0 is below the internal chunk size, so the incremental strategy falls back to the full
   // allocation path (a batch is smaller than one chunk). Verifies that fallback yields a working producer.

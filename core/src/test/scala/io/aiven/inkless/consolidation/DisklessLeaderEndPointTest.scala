@@ -20,7 +20,7 @@ package io.aiven.inkless.consolidation
 
 import io.aiven.inkless.consume.{ConcatenatedRecords, FetchHandler, FetchOffsetHandler}
 import kafka.cluster.Partition
-import kafka.server.{KafkaConfig, QuotaFactory, ReplicaManager, ReplicaQuota, ReplicationQuotaManager}
+import kafka.server.{KafkaConfig, ReplicaManager}
 import kafka.utils.TestUtils
 import org.apache.kafka.common.errors.{KafkaStorageException, NotLeaderOrFollowerException, UnknownTopicOrPartitionException}
 import org.apache.kafka.server.config.ServerConfigs
@@ -55,6 +55,8 @@ import java.util.OptionalLong
 import java.util.concurrent.CompletableFuture
 import scala.jdk.CollectionConverters._
 import scala.util.{Left, Right}
+import org.apache.kafka.server.quota.{QuotaFactory, ReplicaQuota, ReplicationQuotaManager}
+import org.apache.kafka.server.util.ServerTestUtils
 
 class DisklessLeaderEndPointTest {
 
@@ -1373,7 +1375,7 @@ class DisklessLeaderEndPointTest {
       }
     } finally {
       metrics.close()
-      TestUtils.clearYammerMetrics()
+      ServerTestUtils.clearYammerMetrics()
     }
   }
 
@@ -1425,7 +1427,7 @@ class DisklessLeaderEndPointTest {
       }
     } finally {
       metrics.close()
-      TestUtils.clearYammerMetrics()
+      ServerTestUtils.clearYammerMetrics()
     }
   }
 

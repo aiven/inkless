@@ -195,7 +195,7 @@ class ControllerApisTest {
     numPartitions: Int,
     classicToDisklessStartOffsets: Map[Int, Long] = Map.empty
   ): Unit = {
-    val delta = new MetadataDelta(MetadataImage.EMPTY)
+    val delta = new MetadataDelta.Builder().setImage(MetadataImage.EMPTY).build()
     delta.replay(new TopicRecord().setName(topicName).setTopicId(topicId))
     (0 until numPartitions).foreach { partition =>
       val record = new PartitionRecord()
@@ -1059,7 +1059,7 @@ class ControllerApisTest {
       singletonList(new CreatableTopic().setName("foo").setNumPartitions(1).setReplicationFactor(1)).iterator()))
 
     val response = controllerApis.createTopics(ANONYMOUS_CONTEXT, request,
-      hasClusterAuth = true, _ => Set("foo"), _ => Set("foo")).get()
+      hasClusterAuth = true, _ => util.Set.of("foo"), _ => util.Set.of("foo"), forwarded = false).get()
 
     assertEquals(NONE.code(), response.topics().find("foo").errorCode())
     verifyNoInteractions(controlPlane)
@@ -1080,14 +1080,14 @@ class ControllerApisTest {
     result.setConfigs(singletonList(new CreateTopicsResponseData.CreatableTopicConfigs()
       .setName(TopicConfig.DISKLESS_ENABLE_CONFIG).setValue(disklessEnable)))
     response.topics().add(result)
-    when(controller.createTopics(any(), any(), any()))
+    when(controller.createTopics(any(), any(), any(), any()))
       .thenReturn(CompletableFuture.completedFuture(response))
     controllerApis = createControllerApis(None, controller, inklessControlPlane = Some(controlPlane))
     val request = new CreateTopicsRequestData().setTopics(new CreatableTopicCollection(
       singletonList(new CreatableTopic().setName(topicName).setNumPartitions(2).setReplicationFactor(1)).iterator()))
 
     controllerApis.createTopics(ANONYMOUS_CONTEXT, request,
-      hasClusterAuth = true, _ => Set(topicName), _ => Set(topicName)).get()
+      hasClusterAuth = true, _ => util.Set.of(topicName), _ => util.Set.of(topicName), forwarded = false).get()
 
     verify(controlPlane).createTopicAndPartitions(ArgumentMatchers.eq(singleton(
       new CreateTopicAndPartitionsRequest(topicId, topicName, 2))))
@@ -1103,7 +1103,7 @@ class ControllerApisTest {
 
     val response = controllerApis.deleteTopics(ANONYMOUS_CONTEXT, request,
       ApiKeys.DELETE_TOPICS.latestVersion().toInt,
-      hasClusterAuth = true, _ => Set.empty, _ => Set.empty).get()
+      hasClusterAuth = true, _ => util.Set.of[String](), _ => util.Set.of[String]()).get()
 
     assertEquals(Set(new DeletableTopicResult().setName("foo").setTopicId(fooId)), response.asScala.toSet)
     verifyNoInteractions(controlPlane)
@@ -1128,7 +1128,7 @@ class ControllerApisTest {
 
     val request = new CreatePartitionsRequestData().setValidateOnly(false)
     request.topics().add(topic)
-    controllerApis.createPartitions(ANONYMOUS_CONTEXT, request, _ => Set(topicName)).get()
+    controllerApis.createPartitions(ANONYMOUS_CONTEXT, request, _ => util.Set.of(topicName)).get()
 
     verify(controlPlane).createTopicAndPartitions(ArgumentMatchers.eq(singleton(
       new CreateTopicAndPartitionsRequest(topicId, topicName, 2, 4))))
@@ -1154,7 +1154,7 @@ class ControllerApisTest {
 
     val request = new CreatePartitionsRequestData().setValidateOnly(false)
     request.topics().add(topic)
-    controllerApis.createPartitions(ANONYMOUS_CONTEXT, request, _ => Set(topicName)).get()
+    controllerApis.createPartitions(ANONYMOUS_CONTEXT, request, _ => util.Set.of(topicName)).get()
 
     verify(controlPlane).createTopicAndPartitions(ArgumentMatchers.eq(singleton(
       new CreateTopicAndPartitionsRequest(newTopicId, topicName, 0, 2))))
@@ -1181,7 +1181,7 @@ class ControllerApisTest {
 
     val request = new CreatePartitionsRequestData().setValidateOnly(false)
     request.topics().add(topic)
-    controllerApis.createPartitions(ANONYMOUS_CONTEXT, request, _ => Set(topicName)).get()
+    controllerApis.createPartitions(ANONYMOUS_CONTEXT, request, _ => util.Set.of(topicName)).get()
 
     verify(controlPlane).createTopicAndPartitions(ArgumentMatchers.eq(singleton(
       new CreateTopicAndPartitionsRequest(topicId, topicName, 0, 2))))
@@ -1207,7 +1207,7 @@ class ControllerApisTest {
 
     val request = new CreatePartitionsRequestData().setValidateOnly(false)
     request.topics().add(topic)
-    controllerApis.createPartitions(ANONYMOUS_CONTEXT, request, _ => Set(topicName)).get()
+    controllerApis.createPartitions(ANONYMOUS_CONTEXT, request, _ => util.Set.of(topicName)).get()
 
     verify(controlPlane).createTopicAndPartitions(ArgumentMatchers.eq(singleton(
       new CreateTopicAndPartitionsRequest(topicId, topicName, 0, 4))))
@@ -1235,7 +1235,7 @@ class ControllerApisTest {
 
     val request = new CreatePartitionsRequestData().setValidateOnly(false)
     request.topics().add(topic)
-    controllerApis.createPartitions(ANONYMOUS_CONTEXT, request, _ => Set(topicName)).get()
+    controllerApis.createPartitions(ANONYMOUS_CONTEXT, request, _ => util.Set.of(topicName)).get()
 
     verify(controlPlane).createTopicAndPartitions(ArgumentMatchers.eq(singleton(
       new CreateTopicAndPartitionsRequest(topicId, topicName, 2, 4))))
@@ -1263,7 +1263,7 @@ class ControllerApisTest {
 
     val request = new CreatePartitionsRequestData().setValidateOnly(false)
     request.topics().add(topic)
-    controllerApis.createPartitions(ANONYMOUS_CONTEXT, request, _ => Set(topicName)).get()
+    controllerApis.createPartitions(ANONYMOUS_CONTEXT, request, _ => util.Set.of(topicName)).get()
 
     verify(controlPlane).createTopicAndPartitions(ArgumentMatchers.eq(Set(
       new CreateTopicAndPartitionsRequest(topicId, topicName, 1, 2),
@@ -1293,7 +1293,7 @@ class ControllerApisTest {
 
     val request = new CreatePartitionsRequestData().setValidateOnly(false)
     request.topics().add(topic)
-    controllerApis.createPartitions(ANONYMOUS_CONTEXT, request, _ => Set(topicName)).get()
+    controllerApis.createPartitions(ANONYMOUS_CONTEXT, request, _ => util.Set.of(topicName)).get()
 
     verify(controlPlane, never()).createTopicAndPartitions(any())
   }
@@ -1319,7 +1319,7 @@ class ControllerApisTest {
 
     val request = new CreatePartitionsRequestData().setValidateOnly(false)
     request.topics().add(topic)
-    controllerApis.createPartitions(ANONYMOUS_CONTEXT, request, _ => Set(topicName)).get()
+    controllerApis.createPartitions(ANONYMOUS_CONTEXT, request, _ => util.Set.of(topicName)).get()
 
     verify(controlPlane).createTopicAndPartitions(ArgumentMatchers.eq(singleton(
       new CreateTopicAndPartitionsRequest(topicId, topicName, 1, 3))))
@@ -1344,7 +1344,7 @@ class ControllerApisTest {
 
     val request = new CreatePartitionsRequestData().setValidateOnly(false)
     request.topics().add(topic)
-    controllerApis.createPartitions(ANONYMOUS_CONTEXT, request, _ => Set(topicName)).get()
+    controllerApis.createPartitions(ANONYMOUS_CONTEXT, request, _ => util.Set.of(topicName)).get()
 
     verify(controlPlane, never()).createTopicAndPartitions(any())
   }
@@ -1371,7 +1371,7 @@ class ControllerApisTest {
 
     val request = new CreatePartitionsRequestData().setValidateOnly(false)
     request.topics().add(topic)
-    controllerApis.createPartitions(ANONYMOUS_CONTEXT, request, _ => Set(topicName)).get()
+    controllerApis.createPartitions(ANONYMOUS_CONTEXT, request, _ => util.Set.of(topicName)).get()
 
     verify(controlPlane).createTopicAndPartitions(ArgumentMatchers.eq(singleton(
       new CreateTopicAndPartitionsRequest(topicId, topicName, 3, 4))))
@@ -1391,7 +1391,7 @@ class ControllerApisTest {
 
     val request = new CreatePartitionsRequestData().setValidateOnly(true)
     request.topics().add(topic)
-    controllerApis.createPartitions(ANONYMOUS_CONTEXT, request, _ => Set(topicName)).get()
+    controllerApis.createPartitions(ANONYMOUS_CONTEXT, request, _ => util.Set.of(topicName)).get()
 
     verify(controller, never()).findTopicIds(any(), any())
     verifyNoInteractions(controlPlane)
@@ -1414,7 +1414,7 @@ class ControllerApisTest {
 
     val response = controllerApis.deleteTopics(ANONYMOUS_CONTEXT, request,
       ApiKeys.DELETE_TOPICS.latestVersion().toInt,
-      hasClusterAuth = true, _ => Set.empty, _ => Set.empty).get().asScala.map(r => r.name() -> r).toMap
+      hasClusterAuth = true, _ => util.Set.of[String](), _ => util.Set.of[String]()).get().asScala.map(r => r.name() -> r).toMap
 
     val diskless = response("diskless")
     assertEquals(disklessId, diskless.topicId())
@@ -1441,7 +1441,7 @@ class ControllerApisTest {
       .setErrorCode(NONE.code()).setNumPartitions(2)
     result.setConfigs(singletonList(new CreateTopicsResponseData.CreatableTopicConfigs()
       .setName(TopicConfig.DISKLESS_ENABLE_CONFIG).setValue("true")))
-    when(controller.createTopics(any(), any(), any())).thenAnswer { _ =>
+    when(controller.createTopics(any(), any(), any(), any())).thenAnswer { _ =>
       setDisklessTopicImage(topicName, topicId, 2)
       CompletableFuture.completedFuture(new CreateTopicsResponseData().setTopics(
         new CreateTopicsResponseData.CreatableTopicResultCollection(singletonList(result).iterator())))
@@ -1451,7 +1451,7 @@ class ControllerApisTest {
       singletonList(new CreatableTopic().setName(topicName).setNumPartitions(2).setReplicationFactor(1)).iterator()))
 
     val response = controllerApis.createTopics(ANONYMOUS_CONTEXT, request,
-      hasClusterAuth = true, _ => Set(topicName), _ => Set(topicName)).get()
+      hasClusterAuth = true, _ => util.Set.of(topicName), _ => util.Set.of(topicName), forwarded = false).get()
 
     val topic = response.topics().find(topicName)
     assertEquals(KAFKA_STORAGE_ERROR.code(), topic.errorCode())
@@ -1467,7 +1467,7 @@ class ControllerApisTest {
     val controller = mock(classOf[Controller])
     val controlPlane = mock(classOf[ControlPlane])
     setDisklessTopicImage(topicName, topicId, 3, Map(0 -> 100L))
-    when(controller.createTopics(any(), any(), any())).thenReturn(CompletableFuture.completedFuture(
+    when(controller.createTopics(any(), any(), any(), any())).thenReturn(CompletableFuture.completedFuture(
       new CreateTopicsResponseData().setTopics(new CreateTopicsResponseData.CreatableTopicResultCollection(
         singletonList(new CreatableTopicResult().setName(topicName)
           .setErrorCode(TOPIC_ALREADY_EXISTS.code()).setErrorMessage(s"Topic '$topicName' already exists.")).iterator()))))
@@ -1476,7 +1476,7 @@ class ControllerApisTest {
       singletonList(new CreatableTopic().setName(topicName).setNumPartitions(3).setReplicationFactor(1)).iterator()))
 
     val response = controllerApis.createTopics(ANONYMOUS_CONTEXT, request,
-      hasClusterAuth = true, _ => Set(topicName), _ => Set(topicName)).get()
+      hasClusterAuth = true, _ => util.Set.of(topicName), _ => util.Set.of(topicName), forwarded = false).get()
 
     assertEquals(TOPIC_ALREADY_EXISTS.code(), response.topics().find(topicName).errorCode())
     verify(controlPlane).createTopicAndPartitions(singleton(
@@ -1492,7 +1492,7 @@ class ControllerApisTest {
     doThrow(new ControlPlaneUnavailableException("Diskless control plane is not ready"))
       .when(controlPlane).createTopicAndPartitions(any())
     setDisklessTopicImage(topicName, topicId, 2)
-    when(controller.createTopics(any(), any(), any())).thenReturn(CompletableFuture.completedFuture(
+    when(controller.createTopics(any(), any(), any(), any())).thenReturn(CompletableFuture.completedFuture(
       new CreateTopicsResponseData().setTopics(new CreateTopicsResponseData.CreatableTopicResultCollection(
         singletonList(new CreatableTopicResult().setName(topicName)
           .setErrorCode(TOPIC_ALREADY_EXISTS.code()).setErrorMessage(s"Topic '$topicName' already exists.")).iterator()))))
@@ -1501,7 +1501,7 @@ class ControllerApisTest {
       singletonList(new CreatableTopic().setName(topicName).setNumPartitions(2).setReplicationFactor(1)).iterator()))
 
     val response = controllerApis.createTopics(ANONYMOUS_CONTEXT, request,
-      hasClusterAuth = true, _ => Set(topicName), _ => Set(topicName)).get()
+      hasClusterAuth = true, _ => util.Set.of(topicName), _ => util.Set.of(topicName), forwarded = false).get()
 
     val topic = response.topics().find(topicName)
     assertEquals(KAFKA_STORAGE_ERROR.code(), topic.errorCode())
@@ -1514,7 +1514,7 @@ class ControllerApisTest {
     val controller = mock(classOf[Controller])
     val controlPlane = mock(classOf[ControlPlane])
     setDisklessTopicImage(topicName, Uuid.randomUuid(), 2)
-    when(controller.createTopics(any(), any(), any())).thenReturn(CompletableFuture.completedFuture(
+    when(controller.createTopics(any(), any(), any(), any())).thenReturn(CompletableFuture.completedFuture(
       new CreateTopicsResponseData().setTopics(new CreateTopicsResponseData.CreatableTopicResultCollection(
         singletonList(new CreatableTopicResult().setName(topicName)
           .setErrorCode(TOPIC_ALREADY_EXISTS.code()).setErrorMessage(s"Topic '$topicName' already exists.")).iterator()))))
@@ -1523,7 +1523,7 @@ class ControllerApisTest {
       singletonList(new CreatableTopic().setName(topicName).setNumPartitions(2).setReplicationFactor(1)).iterator()))
 
     val response = controllerApis.createTopics(ANONYMOUS_CONTEXT, request,
-      hasClusterAuth = true, _ => Set(topicName), _ => Set(topicName)).get()
+      hasClusterAuth = true, _ => util.Set.of(topicName), _ => util.Set.of(topicName), forwarded = false).get()
 
     assertEquals(TOPIC_ALREADY_EXISTS.code(), response.topics().find(topicName).errorCode())
     verifyNoInteractions(controlPlane)
@@ -1535,7 +1535,7 @@ class ControllerApisTest {
     val controller = mock(classOf[Controller])
     val controlPlane = mock(classOf[ControlPlane])
     // KRaft reports the topic, but the published image hasn't caught up with it yet.
-    when(controller.createTopics(any(), any(), any())).thenReturn(CompletableFuture.completedFuture(
+    when(controller.createTopics(any(), any(), any(), any())).thenReturn(CompletableFuture.completedFuture(
       new CreateTopicsResponseData().setTopics(new CreateTopicsResponseData.CreatableTopicResultCollection(
         singletonList(new CreatableTopicResult().setName(topicName)
           .setErrorCode(TOPIC_ALREADY_EXISTS.code()).setErrorMessage(s"Topic '$topicName' already exists.")).iterator()))))
@@ -1544,7 +1544,7 @@ class ControllerApisTest {
       singletonList(new CreatableTopic().setName(topicName).setNumPartitions(2).setReplicationFactor(1)).iterator()))
 
     val response = controllerApis.createTopics(ANONYMOUS_CONTEXT, request,
-      hasClusterAuth = true, _ => Set(topicName), _ => Set(topicName)).get()
+      hasClusterAuth = true, _ => util.Set.of(topicName), _ => util.Set.of(topicName), forwarded = false).get()
 
     assertEquals(TOPIC_ALREADY_EXISTS.code(), response.topics().find(topicName).errorCode())
     verifyNoInteractions(controlPlane)
@@ -1559,7 +1559,7 @@ class ControllerApisTest {
       singletonList(new CreatableTopic().setName("foo").setNumPartitions(1).setReplicationFactor(1)).iterator()))
 
     val response = controllerApis.createTopics(ANONYMOUS_CONTEXT, request,
-      hasClusterAuth = true, _ => Set("foo"), _ => Set("foo")).get()
+      hasClusterAuth = true, _ => util.Set.of("foo"), _ => util.Set.of("foo"), forwarded = false).get()
 
     assertEquals(TOPIC_ALREADY_EXISTS.code(), response.topics().find("foo").errorCode())
     verifyNoInteractions(controlPlane)
@@ -1590,7 +1590,7 @@ class ControllerApisTest {
     val request = new CreatePartitionsRequestData().setValidateOnly(false)
     request.topics().add(topic)
     request.topics().add(classicTopic)
-    val results = controllerApis.createPartitions(ANONYMOUS_CONTEXT, request, _ => Set(topicName, classicTopicName))
+    val results = controllerApis.createPartitions(ANONYMOUS_CONTEXT, request, _ => util.Set.of(topicName, classicTopicName))
       .get().asScala.map(r => r.name() -> r).toMap
 
     assertEquals(KAFKA_STORAGE_ERROR.code(), results(topicName).errorCode())

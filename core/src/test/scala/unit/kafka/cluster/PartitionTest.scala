@@ -1591,7 +1591,7 @@ class PartitionTest extends AbstractPartitionTest {
 
   @Test
   def testIsrNotExpandedWhileLeaderLogEndsBelowSeal(): Unit = {
-    val log = logManager.getOrCreateLog(topicPartition, topicId = topicId.toJava)
+    val log = logManager.getOrCreateLog(topicPartition, topicId.toJava)
     seedLogData(log, numRecords = 10, leaderEpoch = 4)
 
     val remoteBrokerId = brokerId + 1
@@ -4445,7 +4445,7 @@ class PartitionTest extends AbstractPartitionTest {
     val lastClassicEpoch = 2
     val disklessLeaderEpoch = 4
     val seal = 2L
-    val log = logManager.getOrCreateLog(topicPartition, topicId = Optional.empty)
+    val log = logManager.getOrCreateLog(topicPartition, Optional.empty)
     log.appendAsLeader(MemoryRecords.withRecords(0L, Compression.NONE, lastClassicEpoch,
       new SimpleRecord("k1".getBytes, "v1".getBytes),
       new SimpleRecord("k2".getBytes, "v2".getBytes)
@@ -4473,7 +4473,7 @@ class PartitionTest extends AbstractPartitionTest {
     val lastClassicEpoch = 2
     val disklessLeaderEpoch = 4
     val seal = 2L
-    val log = logManager.getOrCreateLog(topicPartition, topicId = Optional.empty)
+    val log = logManager.getOrCreateLog(topicPartition, Optional.empty)
     log.appendAsLeader(MemoryRecords.withRecords(0L, Compression.NONE, lastClassicEpoch,
       new SimpleRecord("k1".getBytes, "v1".getBytes),
       new SimpleRecord("k2".getBytes, "v2".getBytes)

@@ -25,6 +25,7 @@ import org.apache.kafka.common.compress.Compression;
 import org.apache.kafka.common.config.AbstractConfig;
 import org.apache.kafka.common.errors.OffsetOutOfRangeException;
 import org.apache.kafka.common.errors.ReplicaNotAvailableException;
+import org.apache.kafka.common.message.AbortedTxn;
 import org.apache.kafka.common.message.FetchResponseData;
 import org.apache.kafka.common.metrics.KafkaMetric;
 import org.apache.kafka.common.metrics.Metrics;
@@ -51,7 +52,6 @@ import org.apache.kafka.server.storage.log.FetchIsolation;
 import org.apache.kafka.server.util.MockScheduler;
 import org.apache.kafka.storage.internals.checkpoint.LeaderEpochCheckpointFile;
 import org.apache.kafka.storage.internals.epoch.LeaderEpochFileCache;
-import org.apache.kafka.storage.internals.log.AbortedTxn;
 import org.apache.kafka.storage.internals.log.EpochEntry;
 import org.apache.kafka.storage.internals.log.FetchDataInfo;
 import org.apache.kafka.storage.internals.log.LazyIndex;
@@ -4833,8 +4833,8 @@ public class RemoteLogManagerTest {
         OffsetIndex offsetIdx = new OffsetIndex(new File(indexDir, "94" + UnifiedLog.INDEX_FILE_SUFFIX), 94L, 8);
         TimeIndex timeIdx = new TimeIndex(new File(indexDir, "94" + UnifiedLog.TIME_INDEX_FILE_SUFFIX), 94L, 12);
         TransactionIndex txnIdx = new TransactionIndex(94L, new File(indexDir, "94" + UnifiedLog.TXN_INDEX_FILE_SUFFIX));
-        txnIdx.append(new AbortedTxn(1L, 95L, 96L, 97L));
-        txnIdx.append(new AbortedTxn(2L, 100L, 101L, 103L));
+        txnIdx.append(new AbortedTxn().setProducerId(1L).setFirstOffset(95L).setLastOffset(96L).setLastStableOffset(97L));
+        txnIdx.append(new AbortedTxn().setProducerId(2L).setFirstOffset(100L).setLastOffset(101L).setLastStableOffset(103L));
         txnIdx.flush();
         when(remoteStorageManager.fetchIndex(any(RemoteLogSegmentMetadata.class), any(IndexType.class)))
                 .thenAnswer(ans -> switch ((IndexType) ans.getArgument(1)) {

@@ -58,7 +58,7 @@ class DynamicConfigPublisherTest {
     val publisher = newPublisher(config, faultHandler)
     assertFalse(publisher.initialPublishFuture.isDone, "must not complete before the first update")
 
-    val delta = new MetadataDelta(MetadataImage.EMPTY)
+    val delta = new MetadataDelta.Builder().setImage(MetadataImage.EMPTY).build()
     val image = delta.apply(MetadataProvenance.EMPTY)
     publisher.onMetadataUpdate(delta, image)
 
@@ -75,7 +75,7 @@ class DynamicConfigPublisherTest {
     val faultHandler = new MockFaultHandler("test")
     val publisher = newPublisher(config, faultHandler)
 
-    val delta = new MetadataDelta(MetadataImage.EMPTY)
+    val delta = new MetadataDelta.Builder().setImage(MetadataImage.EMPTY).build()
     delta.replay(new ConfigRecord()
       .setResourceType(ConfigResource.Type.BROKER.id())
       .setResourceName("")
@@ -98,12 +98,12 @@ class DynamicConfigPublisherTest {
     val faultHandler = new MockFaultHandler("test")
     val publisher = newPublisher(config, faultHandler)
 
-    val delta = new MetadataDelta(MetadataImage.EMPTY)
+    val delta = new MetadataDelta.Builder().setImage(MetadataImage.EMPTY).build()
     val image = delta.apply(MetadataProvenance.EMPTY)
     publisher.onMetadataUpdate(delta, image)
     val completedAfterFirst = publisher.initialPublishFuture
 
-    publisher.onMetadataUpdate(new MetadataDelta(image), image)
+    publisher.onMetadataUpdate(new MetadataDelta.Builder().setImage(image).build(), image)
 
     assertTrue(completedAfterFirst.isDone)
     faultHandler.maybeRethrowFirstException()

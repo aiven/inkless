@@ -1390,14 +1390,13 @@ class KafkaApisTest extends Logging {
 
     val topicPartition = new TopicPartition(topic, 0)
     val partitionOffsetCommitData = new TxnOffsetCommitRequest.CommittedOffset(15L, "", Optional.empty())
-    val offsetCommitRequest = new TxnOffsetCommitRequest.Builder(
-      "txnId",
-      "groupId",
-      15L,
-      0.toShort,
-      Map(topicPartition -> partitionOffsetCommitData).asJava,
-      true
-    ).build()
+    val data = new TxnOffsetCommitRequestData()
+      .setTransactionalId("txnId")
+      .setGroupId("groupId")
+      .setProducerId(15L)
+      .setProducerEpoch(0.toShort)
+      .setTopics(TxnOffsetCommitRequest.getTopics(util.Map.of(topicPartition, partitionOffsetCommitData)))
+    val offsetCommitRequest = TxnOffsetCommitRequest.Builder.forTopicNames(data, true).build()
     val request = buildRequest(offsetCommitRequest)
 
     val coordinatorResponse = new TxnOffsetCommitResponseData().setTopics(util.List.of(
@@ -1420,7 +1419,7 @@ class KafkaApisTest extends Logging {
       kafkaApis.handleTxnOffsetCommitRequest(request, requestLocal)
 
       val response = verifyNoThrottling[TxnOffsetCommitResponse](request)
-      assertEquals(Errors.NONE, response.errors().get(topicPartition))
+      assertEquals(Errors.NONE.code, response.data.topics.get(0).partitions.get(0).errorCode)
     } finally {
       kafkaApis.close()
     }
@@ -3158,7 +3157,7 @@ class KafkaApisTest extends Logging {
     ).build()
     val request = buildRequest(addPartitionsToTxnRequest)
 
-    when(clientRequestQuotaManager.maybeRecordAndGetThrottleTimeMs(any[RequestChannel.Request](),
+    when(clientRequestQuotaManager.maybeRecordAndGetThrottleTimeMs(any[Request](),
       any[Long])).thenReturn(0)
     val kafkaApis = createKafkaApis(inklessSharedState = Some(createInklessSharedStateWithTopic(topic)))
     try {
@@ -3660,8 +3659,7 @@ class KafkaApisTest extends Logging {
 
     verify(requestChannel).sendResponse(
       ArgumentMatchers.eq(request),
-      capturedResponse.capture(),
-      ArgumentMatchers.eq(None)
+      capturedResponse.capture()
     )
     val markersResponse = capturedResponse.getValue
     assertEquals(expectedErrors, markersResponse.errorsByProducerId.get(1L))
@@ -10150,7 +10148,7 @@ class KafkaApisTest extends Logging {
     when(replicaManager.handleProduceAppend(anyLong, anyShort, ArgumentMatchers.eq(false), any(), any(),
       responseCallback.capture(), any(), any(), any())
     ).thenAnswer(_ => responseCallback.getValue.apply(Map(tp -> new PartitionResponse(error))))
-    when(clientRequestQuotaManager.maybeRecordAndGetThrottleTimeMs(any[RequestChannel.Request](), any[Long])).thenReturn(0)
+    when(clientRequestQuotaManager.maybeRecordAndGetThrottleTimeMs(any[Request](), any[Long])).thenReturn(0)
     when(clientQuotaManager.maybeRecordAndGetThrottleTimeMs(any[Session](), anyString, anyDouble, anyLong)).thenReturn(0)
 
     kafkaApis = createKafkaApis()

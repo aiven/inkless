@@ -1447,7 +1447,7 @@ public class QuorumControllerTest {
             CreateTopicsResponseData createTopicsResponse = active.createTopics(ANONYMOUS_CONTEXT,
                 new CreateTopicsRequestData().setTopics(new CreatableTopicCollection(List.of(
                     new CreatableTopic().setName("foo").setNumPartitions(1).setReplicationFactor((short) 3)
-                ).iterator())), Set.of("foo")).get();
+                ).iterator())), Set.of("foo"), false).get();
             Uuid topicId = createTopicsResponse.topics().find("foo").topicId();
 
             long seal = 100L;

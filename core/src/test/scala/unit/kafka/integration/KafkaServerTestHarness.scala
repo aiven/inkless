@@ -170,8 +170,7 @@ abstract class KafkaServerTestHarness extends QuorumTestHarness {
     adminClientConfig: Properties = new Properties
   ): scala.collection.immutable.Map[Int, Int] = {
     var innerReplicationFactor = replicationFactor
-    val innerTopicConfig = new Properties()
-    innerTopicConfig.putAll(topicConfig)
+    val innerTopicConfig = new util.HashMap[String, String](topicConfig)
     if (topicTypeSpecified() == "diskless") {
       innerTopicConfig.put("diskless.enable", "true")
       innerReplicationFactor = 1
@@ -192,12 +191,13 @@ abstract class KafkaServerTestHarness extends QuorumTestHarness {
 
   def createDisklessTopic(topic: String,
                           numPartitions: Int = 1,
-                          topicConfig: Properties = new Properties,
+                          topicConfig: util.Map[String, String] = util.Map.of(),
                           listenerName: ListenerName = listenerName,
                           adminClientConfig: Properties = new Properties): Map[Int, Int] = {
-    topicConfig.put("diskless.enable", "true")
+    val disklessTopicConfig = new util.HashMap[String, String](topicConfig)
+    disklessTopicConfig.put("diskless.enable", "true")
 
-    createTopic(topic, numPartitions, 1, topicConfig, listenerName, adminClientConfig)
+    createTopic(topic, numPartitions, 1, disklessTopicConfig, listenerName, adminClientConfig)
   }
 
   /**
