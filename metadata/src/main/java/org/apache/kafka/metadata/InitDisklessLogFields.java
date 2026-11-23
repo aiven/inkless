@@ -41,6 +41,7 @@ public final class InitDisklessLogFields {
     public static final int DISKLESS_LEADER_EPOCH_TAG = 102;
     public static final int CLASSIC_PREFIX_IN_REMOTE_STORAGE_TAG = 103;
     public static final int LAST_CLASSIC_LEADER_EPOCH_TAG = 104;
+    public static final int INITIAL_DISKLESS_LEADER_EPOCH_TAG = 105;
 
     /**
      * The most producer state entries that the records of one {@code InitDisklessLog} request can contain.
@@ -190,5 +191,26 @@ public final class InitDisklessLogFields {
             }
         }
         return PartitionRegistration.NO_LAST_CLASSIC_LEADER_EPOCH;
+    }
+
+    // --- initialDisklessLeaderEpoch (tag 105): a single int32 ---
+    // The diskless leader epoch of the seal commit. The record that starts phase 2 sets disklessLeaderEpoch
+    // again, and a lowered seal can too, so this field keeps the first value. Every classic record is in an
+    // earlier leader epoch, except the abort markers that the sealed leader writes, and every diskless batch
+    // that a consumer fetches has this epoch or a later one.
+
+    public static RawTaggedField encodeInitialDisklessLeaderEpoch(int initialDisklessLeaderEpoch) {
+        byte[] data = new byte[4];
+        ByteBuffer.wrap(data).putInt(initialDisklessLeaderEpoch);
+        return new RawTaggedField(INITIAL_DISKLESS_LEADER_EPOCH_TAG, data);
+    }
+
+    public static int decodeInitialDisklessLeaderEpoch(List<RawTaggedField> taggedFields) {
+        for (RawTaggedField field : taggedFields) {
+            if (field.tag() == INITIAL_DISKLESS_LEADER_EPOCH_TAG) {
+                return ByteBuffer.wrap(field.data()).getInt();
+            }
+        }
+        return PartitionRegistration.NO_DISKLESS_LEADER_EPOCH;
     }
 }

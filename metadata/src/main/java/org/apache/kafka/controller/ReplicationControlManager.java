@@ -1715,6 +1715,11 @@ public class ReplicationControlManager {
                 }
                 record.unknownTaggedFields().add(
                     InitDisklessLogFields.encodeDisklessLeaderEpoch(disklessLeaderEpoch));
+                // The record that starts phase 2 and a lowered seal set the diskless leader epoch again.
+                // This field keeps the first value. A broker treats the epoch of a consumer position
+                // as a classic epoch if it's below this value.
+                record.unknownTaggedFields().add(
+                    InitDisklessLogFields.encodeInitialDisklessLeaderEpoch(disklessLeaderEpoch));
 
                 records.add(new ApiMessageAndVersion(record, (short) 0));
 

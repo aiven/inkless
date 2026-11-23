@@ -4087,39 +4087,38 @@ class ReplicaManager(val config: KafkaConfig,
               disklessOffsetForLeaderEpoch(topicPartition, offsetForLeaderPartition)
 
             case classicToDisklessStartOffset if classicToDisklessStartOffset >= 0L =>
-              val localLog = getPartition(topicPartition) match {
-                case online: HostedPartition.Online[Partition] => online.partition.log
-                case _ => None
-              }
               // The classic prefix is sealed at the switch offset, so any replica with the
               // complete local classic log can answer epoch lookups for that prefix.
-              val hasCompleteLocalClassicPrefix = localLog.exists(_.highWatermark >= classicToDisklessStartOffset)
+              val hasCompleteLocalClassicPrefix = getPartition(topicPartition) match {
+                case online: HostedPartition.Online[Partition] =>
+                  online.partition.log.exists(_.highWatermark >= classicToDisklessStartOffset)
+                case _ => false
+              }
               val localResult = localOffsetForLeaderEpoch(
                 topicPartition,
                 offsetForLeaderPartition,
                 fetchOnlyFromLeader = !hasCompleteLocalClassicPrefix)
               val localError = Errors.forCode(localResult.errorCode)
-              // The partition registration has the last classic leader epoch from phase 2 on. Before
-              // that, the local log still holds the classic prefix.
-              val lastClassicLeaderEpoch = _inklessMetadataView.getLastClassicLeaderEpoch(topicPartition) match {
-                case PartitionRegistration.NO_LAST_CLASSIC_LEADER_EPOCH =>
-                  localLog.map(_.leaderEpochCache.epochForOffset(classicToDisklessStartOffset - 1))
-                    .filter(_.isPresent).map(_.getAsInt)
-                case epoch => Some(epoch)
+              // Every classic epoch is below the diskless leader epoch of the seal commit, and every
+              // diskless batch that a consumer fetches has that epoch or a later one. A partition
+              // that switched before the registration kept that epoch has only the current one.
+              val firstDisklessLeaderEpoch = _inklessMetadataView.getInitialDisklessLeaderEpoch(topicPartition) match {
+                case PartitionRegistration.NO_DISKLESS_LEADER_EPOCH => _inklessMetadataView.getDisklessLeaderEpoch(topicPartition)
+                case epoch => epoch
               }
-              val isClassicEpoch = lastClassicLeaderEpoch.exists(offsetForLeaderPartition.leaderEpoch <= _)
+              val isDisklessEpoch = firstDisklessLeaderEpoch != PartitionRegistration.NO_DISKLESS_LEADER_EPOCH &&
+                offsetForLeaderPartition.leaderEpoch >= firstDisklessLeaderEpoch
               if (localError != Errors.NONE) {
                 () => localResult
-              } else if (isClassicEpoch &&
+              } else if (!isDisklessEpoch &&
                   localResult.endOffset != OffsetsForLeaderEpochResponse.UNDEFINED_EPOCH_OFFSET &&
                   localResult.endOffset <= classicToDisklessStartOffset) {
                 // The requested epoch ends at or before the switch point, so the classic log answers it completely.
                 () => localResult
               } else {
-                // An epoch above the last classic one belongs to diskless records. The classic log
-                // maps it to the seal, and a consumer past the seal would truncate to that offset.
-                // A control-plane placeholder row reports an end offset below the committed seal,
-                // so the seal is the floor.
+                // The classic log maps a diskless epoch to the seal, and a consumer past the seal
+                // would truncate to that offset. A control-plane placeholder row reports an end
+                // offset below the committed seal, so the seal is the floor.
                 disklessOffsetForLeaderEpoch(topicPartition, offsetForLeaderPartition, classicToDisklessStartOffset)
               }
 

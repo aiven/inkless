@@ -5390,7 +5390,7 @@ class ReplicaManagerInklessTest {
   }
 
   @Test
-  def testLastOffsetForLeaderEpochHybridRoutesByLastClassicEpochOfLocalLog(): Unit = {
+  def testLastOffsetForLeaderEpochHybridAsksDisklessForEpochOfSealCommit(): Unit = {
     val disklessResult = new OffsetResultHolder.FileRecordsOrError(
       Optional.empty(),
       Optional.of(new FileRecords.TimestampAndOffset(RecordBatch.NO_TIMESTAMP, 200L, Optional.of[Integer](0))))
@@ -5411,14 +5411,20 @@ class ReplicaManagerInklessTest {
       fetchOffsetHandlerCtor.close()
     }
     try {
-      // In phase 1 the registration has no last classic leader epoch, and the leader's epoch cache
-      // has the leader epoch of the seal commit at the seal. The classic log maps that epoch to the seal.
+      // The sealed leader aborts an open transaction with a marker in the leader epoch of the seal
+      // commit, which is also the initial diskless leader epoch. The classic log maps that epoch
+      // to the seal.
       val partition = setupHybridLeaderPartition(replicaManager, disklessTopicPartition, localEndOffset = 101L)
-      partition.localLogOrException.assignEpochStartOffset(1, 101L)
+      val log = partition.localLogOrException
+      log.appendAsLeader(MemoryRecords.withRecords(0L, Compression.NONE, 1, new SimpleRecord("marker".getBytes)), 1)
+      log.updateHighWatermark(102L)
+      assertEquals(OptionalInt.of(1), log.leaderEpochCache.epochForOffset(101L))
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
-        .thenReturn(101L)
-      when(replicaManager.inklessMetadataView().getLastClassicLeaderEpoch(disklessTopicPartition.topicPartition()))
-        .thenReturn(PartitionRegistration.NO_LAST_CLASSIC_LEADER_EPOCH)
+        .thenReturn(102L)
+      when(replicaManager.inklessMetadataView().getDisklessLeaderEpoch(disklessTopicPartition.topicPartition()))
+        .thenReturn(1)
+      when(replicaManager.inklessMetadataView().getInitialDisklessLeaderEpoch(disklessTopicPartition.topicPartition()))
+        .thenReturn(1)
 
       def endOffsetFor(leaderEpoch: Int): Long = {
         val result = replicaManager.lastOffsetForLeaderEpoch(Seq(
@@ -5435,10 +5441,10 @@ class ReplicaManagerInklessTest {
         partitionResult.endOffset()
       }
 
-      // Epoch 0 is the last classic epoch, so the classic log answers with the seal.
+      // Epoch 0 is below the initial diskless leader epoch, so the classic log answers it.
       assertEquals(101L, endOffsetFor(0))
       verify(jobMock, never()).add(any(), any())
-      // Epoch 1 is above it, so it belongs to diskless records.
+      // Epoch 1 is the initial diskless leader epoch. A consumer past the seal has it.
       assertEquals(200L, endOffsetFor(1))
       verify(jobMock).add(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), any())
     } finally {
@@ -5472,8 +5478,8 @@ class ReplicaManagerInklessTest {
       setupHybridLeaderPartition(replicaManager, disklessTopicPartition, localEndOffset = 101L)
       when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
         .thenReturn(101L)
-      when(replicaManager.inklessMetadataView().getLastClassicLeaderEpoch(disklessTopicPartition.topicPartition()))
-        .thenReturn(PartitionRegistration.NO_LAST_CLASSIC_LEADER_EPOCH)
+      when(replicaManager.inklessMetadataView().getInitialDisklessLeaderEpoch(disklessTopicPartition.topicPartition()))
+        .thenReturn(1)
 
       val requestedEpochInfo = Seq(
         new OffsetForLeaderTopic()
@@ -10135,11 +10141,12 @@ class ReplicaManagerInklessTest {
     }
   }
 
-  // A consumer that reads past the seal holds a diskless leader epoch, and the consumer truncates
-  // to the returned end offset when that offset is below its position. The diskless leader epoch
-  // goes up when phase 2 starts, so the consumer can hold one below the epoch of the local log.
+  // The epoch of a consumer position past the seal is a diskless leader epoch, and the consumer
+  // truncates to the returned end offset when that offset is below its position. The diskless
+  // leader epoch goes up when phase 2 starts, so the position can have one below the epoch of the
+  // local log.
   @Test
-  def testLastOffsetForLeaderEpochAsksDisklessForEpochAboveLastClassicEpoch(): Unit = {
+  def testLastOffsetForLeaderEpochRoutesByInitialDisklessLeaderEpoch(): Unit = {
     val topicName = "consolidating-topic"
     val topicId = Uuid.randomUuid()
     val tp = new TopicPartition(topicName, 0)
@@ -10148,6 +10155,7 @@ class ReplicaManagerInklessTest {
     val sealOffset = 10L
     val leo = 13L
     val disklessLeaderEpoch = 5
+    val initialDisklessLeaderEpoch = 3
     val disklessEndOffset = 200L
 
     val disklessResult = new OffsetResultHolder.FileRecordsOrError(
@@ -10179,6 +10187,7 @@ class ReplicaManagerInklessTest {
           replicaManager, tp, log, sealOffset, leo, disklessLeaderEpoch, hw = sealOffset, rollAtSeal = true)
         when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(sealOffset)
         when(replicaManager.inklessMetadataView().getDisklessLeaderEpoch(tp)).thenReturn(disklessLeaderEpoch)
+        when(replicaManager.inklessMetadataView().getInitialDisklessLeaderEpoch(tp)).thenReturn(initialDisklessLeaderEpoch)
         when(replicaManager.inklessMetadataView().getLastClassicLeaderEpoch(tp)).thenReturn(0)
         when(replicaManager.inklessMetadataView().isClassicPrefixInRemoteStorage(tp)).thenReturn(true)
 
@@ -10217,11 +10226,20 @@ class ReplicaManagerInklessTest {
           partitionResult.endOffset()
         }
 
-        assertEquals(disklessEndOffset, endOffsetFor(disklessLeaderEpoch - 1))
+        assertEquals(disklessEndOffset, endOffsetFor(initialDisklessLeaderEpoch))
         assertEquals(disklessEndOffset, endOffsetFor(disklessLeaderEpoch))
-        // Epoch 0 is the classic epoch. A consumer that holds it past the seal read records that
-        // the partition lost, and the seal tells the consumer to truncate.
+        // Epoch 0 is the classic epoch of the local log. A consumer past the seal with that epoch
+        // read records that the partition lost, and the seal tells the consumer to truncate.
         assertEquals(sealOffset, endOffsetFor(0))
+        // So does a consumer with a classic epoch that the partition lost with its records.
+        assertEquals(sealOffset, endOffsetFor(initialDisklessLeaderEpoch - 1))
+
+        // A partition that switched before the registration kept the initial epoch has only the
+        // current diskless leader epoch to compare with.
+        when(replicaManager.inklessMetadataView().getInitialDisklessLeaderEpoch(tp))
+          .thenReturn(PartitionRegistration.NO_DISKLESS_LEADER_EPOCH)
+        assertEquals(sealOffset, endOffsetFor(initialDisklessLeaderEpoch))
+        assertEquals(disklessEndOffset, endOffsetFor(disklessLeaderEpoch))
       } finally {
         replicaManager.shutdown(checkpointHW = false)
       }
@@ -12475,6 +12493,8 @@ class ReplicaManagerInklessTest {
     when(inklessMetadata.getClassicToDisklessStartOffset(any()))
       .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
     when(inklessMetadata.getDisklessLeaderEpoch(any()))
+      .thenReturn(PartitionRegistration.NO_DISKLESS_LEADER_EPOCH)
+    when(inklessMetadata.getInitialDisklessLeaderEpoch(any()))
       .thenReturn(PartitionRegistration.NO_DISKLESS_LEADER_EPOCH)
     when(inklessMetadata.getLastClassicLeaderEpoch(any()))
       .thenReturn(PartitionRegistration.NO_LAST_CLASSIC_LEADER_EPOCH)
