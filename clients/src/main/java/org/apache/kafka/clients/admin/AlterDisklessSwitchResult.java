@@ -18,6 +18,7 @@
 package org.apache.kafka.clients.admin;
 
 import org.apache.kafka.common.KafkaFuture;
+import org.apache.kafka.common.annotation.InterfaceAudience;
 import org.apache.kafka.common.annotation.InterfaceStability;
 
 /**
@@ -25,6 +26,7 @@ import org.apache.kafka.common.annotation.InterfaceStability;
  *
  * The API of this class is evolving, see {@link Admin} for details.
  */
+@InterfaceAudience.Public
 @InterfaceStability.Unstable
 public class AlterDisklessSwitchResult {
     private final KafkaFuture<Void> future;

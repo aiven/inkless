@@ -25,8 +25,8 @@ import org.apache.kafka.common.errors.TimeoutException;
 import org.apache.kafka.common.message.ListOffsetsRequestData;
 import org.apache.kafka.common.record.internal.FileRecords;
 import org.apache.kafka.common.record.internal.RecordBatch;
-import org.apache.kafka.common.utils.internals.ThreadUtils;
 import org.apache.kafka.common.utils.Time;
+import org.apache.kafka.common.utils.internals.ThreadUtils;
 import org.apache.kafka.metadata.LeaderAndIsr;
 import org.apache.kafka.storage.internals.log.OffsetResultHolder;
 

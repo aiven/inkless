@@ -326,7 +326,7 @@
               files="(LogLoader|LogManager|UnifiedLog).java"/>
     <suppress checks="(ClassDataAbstractionCoupling|ClassFanOutComplexity)"
               files="(UnifiedLog|RemoteLogManager|RemoteLogManagerTest|UnifiedLogTest).java"/>
-    <suppress checks="MethodLength" files="RemoteLogManagerConfig.java"/>
+    <suppress checks="MethodLength" files="(RemoteLogManagerConfig|RemoteLogManager).java"/>
     <suppress checks="JavaNCSS" files="(RemoteLogManagerTest|UnifiedLogTest).java"/>
     
     <!-- storage test -->
