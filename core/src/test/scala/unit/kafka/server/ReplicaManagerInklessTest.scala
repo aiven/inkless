@@ -5390,6 +5390,114 @@ class ReplicaManagerInklessTest {
   }
 
   @Test
+  def testLastOffsetForLeaderEpochHybridRoutesByLastClassicEpochOfLocalLog(): Unit = {
+    val disklessResult = new OffsetResultHolder.FileRecordsOrError(
+      Optional.empty(),
+      Optional.of(new FileRecords.TimestampAndOffset(RecordBatch.NO_TIMESTAMP, 200L, Optional.of[Integer](0))))
+    val jobMock = Mockito.mock(classOf[FetchOffsetHandler.Job])
+    when(jobMock.mustHandle(any())).thenReturn(true)
+    when(jobMock.add(any(), any())).thenReturn(CompletableFuture.completedFuture(disklessResult))
+    doNothing().when(jobMock).start()
+
+    val fetchOffsetHandlerCtorInit: MockedConstruction.MockInitializer[FetchOffsetHandler] = {
+      case (handlerMock, _) =>
+        when(handlerMock.createJob()).thenReturn(jobMock)
+    }
+    val fetchOffsetHandlerCtor = mockConstruction(classOf[FetchOffsetHandler], fetchOffsetHandlerCtorInit)
+
+    val replicaManager = try {
+      createReplicaManager(List(disklessTopicPartition.topic()), disklessManagedReplicasEnabled = true)
+    } finally {
+      fetchOffsetHandlerCtor.close()
+    }
+    try {
+      // In phase 1 the registration has no last classic leader epoch, and the leader's epoch cache
+      // has the leader epoch of the seal commit at the seal. The classic log maps that epoch to the seal.
+      val partition = setupHybridLeaderPartition(replicaManager, disklessTopicPartition, localEndOffset = 101L)
+      partition.localLogOrException.assignEpochStartOffset(1, 101L)
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(101L)
+      when(replicaManager.inklessMetadataView().getLastClassicLeaderEpoch(disklessTopicPartition.topicPartition()))
+        .thenReturn(PartitionRegistration.NO_LAST_CLASSIC_LEADER_EPOCH)
+
+      def endOffsetFor(leaderEpoch: Int): Long = {
+        val result = replicaManager.lastOffsetForLeaderEpoch(Seq(
+          new OffsetForLeaderTopic()
+            .setTopic(disklessTopicPartition.topic())
+            .setPartitions(util.List.of(
+              new OffsetForLeaderPartition()
+                .setPartition(disklessTopicPartition.partition())
+                .setLeaderEpoch(leaderEpoch)
+            ))
+        ))
+        val partitionResult = result.head.partitions().get(0)
+        assertEquals(Errors.NONE.code, partitionResult.errorCode())
+        partitionResult.endOffset()
+      }
+
+      // Epoch 0 is the last classic epoch, so the classic log answers with the seal.
+      assertEquals(101L, endOffsetFor(0))
+      verify(jobMock, never()).add(any(), any())
+      // Epoch 1 is above it, so it belongs to diskless records.
+      assertEquals(200L, endOffsetFor(1))
+      verify(jobMock).add(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), any())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testLastOffsetForLeaderEpochHybridFloorsDisklessEndOffsetAtSeal(): Unit = {
+    // A control-plane placeholder row reports end offset 0 for a partition with a committed seal.
+    val disklessResult = new OffsetResultHolder.FileRecordsOrError(
+      Optional.empty(),
+      Optional.of(new FileRecords.TimestampAndOffset(RecordBatch.NO_TIMESTAMP, 0L, Optional.of[Integer](0))))
+    val jobMock = Mockito.mock(classOf[FetchOffsetHandler.Job])
+    when(jobMock.mustHandle(any())).thenReturn(true)
+    when(jobMock.add(any(), any())).thenReturn(CompletableFuture.completedFuture(disklessResult))
+    doNothing().when(jobMock).start()
+
+    val fetchOffsetHandlerCtorInit: MockedConstruction.MockInitializer[FetchOffsetHandler] = {
+      case (handlerMock, _) =>
+        when(handlerMock.createJob()).thenReturn(jobMock)
+    }
+    val fetchOffsetHandlerCtor = mockConstruction(classOf[FetchOffsetHandler], fetchOffsetHandlerCtorInit)
+
+    val replicaManager = try {
+      createReplicaManager(List(disklessTopicPartition.topic()), disklessManagedReplicasEnabled = true)
+    } finally {
+      fetchOffsetHandlerCtor.close()
+    }
+    try {
+      setupHybridLeaderPartition(replicaManager, disklessTopicPartition, localEndOffset = 101L)
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(101L)
+      when(replicaManager.inklessMetadataView().getLastClassicLeaderEpoch(disklessTopicPartition.topicPartition()))
+        .thenReturn(PartitionRegistration.NO_LAST_CLASSIC_LEADER_EPOCH)
+
+      val requestedEpochInfo = Seq(
+        new OffsetForLeaderTopic()
+          .setTopic(disklessTopicPartition.topic())
+          .setPartitions(util.List.of(
+            new OffsetForLeaderPartition()
+              .setPartition(disklessTopicPartition.partition())
+              .setLeaderEpoch(1)
+          ))
+      )
+
+      val result = replicaManager.lastOffsetForLeaderEpoch(requestedEpochInfo)
+
+      val partitionResult = result.head.partitions().get(0)
+      assertEquals(Errors.NONE.code, partitionResult.errorCode())
+      assertEquals(101L, partitionResult.endOffset())
+      verify(jobMock).add(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), any())
+      verify(jobMock).start()
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
   def testLastOffsetForLeaderEpochHybridFallsBackToDisklessWhenClassicOffsetIsUndefined(): Unit = {
     val disklessResult = new OffsetResultHolder.FileRecordsOrError(
       Optional.empty(),
@@ -10027,6 +10135,101 @@ class ReplicaManagerInklessTest {
     }
   }
 
+  // A consumer that reads past the seal holds a diskless leader epoch, and the consumer truncates
+  // to the returned end offset when that offset is below its position. The diskless leader epoch
+  // goes up when phase 2 starts, so the consumer can hold one below the epoch of the local log.
+  @Test
+  def testLastOffsetForLeaderEpochAsksDisklessForEpochAboveLastClassicEpoch(): Unit = {
+    val topicName = "consolidating-topic"
+    val topicId = Uuid.randomUuid()
+    val tp = new TopicPartition(topicName, 0)
+    val brokerId = 1
+    val leaderId = 2
+    val sealOffset = 10L
+    val leo = 13L
+    val disklessLeaderEpoch = 5
+    val disklessEndOffset = 200L
+
+    val disklessResult = new OffsetResultHolder.FileRecordsOrError(
+      Optional.empty(),
+      Optional.of(new FileRecords.TimestampAndOffset(RecordBatch.NO_TIMESTAMP, disklessEndOffset, Optional.of[Integer](0))))
+    val jobMock = Mockito.mock(classOf[FetchOffsetHandler.Job])
+    when(jobMock.add(any(), any())).thenReturn(CompletableFuture.completedFuture(disklessResult))
+    doNothing().when(jobMock).start()
+    val fetchOffsetHandlerCtorInit: MockedConstruction.MockInitializer[FetchOffsetHandler] = {
+      case (handlerMock, _) =>
+        when(handlerMock.createJob()).thenReturn(jobMock)
+    }
+
+    val consolidationCtor = mockConstruction(classOf[ConsolidationFetcherManager])
+    val fetchOffsetHandlerCtor = mockConstruction(classOf[FetchOffsetHandler], fetchOffsetHandlerCtorInit)
+    try {
+      val replicaManager = try {
+        createReplicaManager(
+          List(topicName),
+          disklessRemoteStorageConsolidationEnabled = true,
+          consolidatingDisklessTopics = Set(topicName),
+        )
+      } finally {
+        fetchOffsetHandlerCtor.close()
+      }
+      try {
+        val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+        populateConsolidatedLocalLogAndCheckpointedHwm(
+          replicaManager, tp, log, sealOffset, leo, disklessLeaderEpoch, hw = sealOffset, rollAtSeal = true)
+        when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(sealOffset)
+        when(replicaManager.inklessMetadataView().getDisklessLeaderEpoch(tp)).thenReturn(disklessLeaderEpoch)
+        when(replicaManager.inklessMetadataView().getLastClassicLeaderEpoch(tp)).thenReturn(0)
+        when(replicaManager.inklessMetadataView().isClassicPrefixInRemoteStorage(tp)).thenReturn(true)
+
+        val followerDelta = disklessFollowerDelta(
+          topicName,
+          topicId,
+          brokerId,
+          leaderId,
+          classicToDisklessStartOffset = sealOffset,
+          disklessLeaderEpoch = disklessLeaderEpoch,
+          classicPrefixInRemoteStorage = true,
+          leaderEpoch = disklessLeaderEpoch
+        )
+        val followerImage = imageFromTopics(followerDelta.apply())
+        replicaManager.applyDelta(followerDelta, followerImage)
+        val leaderDelta = promoteFollowerToLeaderDelta(followerImage.topics(), topicId, tp.partition(), brokerId)
+        replicaManager.applyDelta(leaderDelta, imageFromTopics(leaderDelta.apply()))
+
+        val partition = replicaManager.getPartition(tp).asInstanceOf[HostedPartition.Online[Partition]].partition
+        assertEquals(util.List.of(new EpochEntry(0, 0L), new EpochEntry(disklessLeaderEpoch, sealOffset)),
+          partition.localLogOrException.leaderEpochCache.epochEntries)
+
+        def endOffsetFor(leaderEpoch: Int): Long = {
+          val result = replicaManager.lastOffsetForLeaderEpoch(Seq(
+            new OffsetForLeaderTopic()
+              .setTopic(topicName)
+              .setPartitions(util.List.of(
+                new OffsetForLeaderPartition()
+                  .setPartition(tp.partition)
+                  .setCurrentLeaderEpoch(partition.getLeaderEpoch)
+                  .setLeaderEpoch(leaderEpoch)
+              ))
+          ))
+          val partitionResult = result.head.partitions().get(0)
+          assertEquals(Errors.NONE.code, partitionResult.errorCode())
+          partitionResult.endOffset()
+        }
+
+        assertEquals(disklessEndOffset, endOffsetFor(disklessLeaderEpoch - 1))
+        assertEquals(disklessEndOffset, endOffsetFor(disklessLeaderEpoch))
+        // Epoch 0 is the classic epoch. A consumer that holds it past the seal read records that
+        // the partition lost, and the seal tells the consumer to truncate.
+        assertEquals(sealOffset, endOffsetFor(0))
+      } finally {
+        replicaManager.shutdown(checkpointHW = false)
+      }
+    } finally {
+      consolidationCtor.close()
+    }
+  }
+
   @Test
   def testApplyDeltaFencesSwitchedFollowerBelowSealWhenBecomingLeader(): Unit = {
     val topicName = "switched-topic"
@@ -11856,6 +12059,40 @@ class ReplicaManagerInklessTest {
     replicaManager.fetchDisklessMessages(params, fetches, deferPrefixReads = true).get()
 
   private def prefixErrors(results: Seq[(TopicIdPartition, FetchPartitionData)]): Seq[Errors] = results.map(_._2.error)
+
+  private def disklessFetchResponse(records: Records): FetchPartitionData =
+    new FetchPartitionData(Errors.NONE, 900L, prefixWalStart, records,
+      Optional.empty(), OptionalLong.empty(), Optional.empty(), OptionalInt.empty(), false)
+
+  private def batchLeaderEpochs(records: Records): Seq[Int] =
+    records.batches().asScala.map(_.partitionLeaderEpoch).toSeq
+
+  @Test
+  def testDisklessFetchOfSwitchedPartitionCarriesDisklessLeaderEpoch(): Unit = {
+    def batch(baseOffset: Long): MemoryRecords =
+      TestUtils.records(Seq(new SimpleRecord("value".getBytes)), baseOffset = baseOffset, partitionLeaderEpoch = 0)
+    val responses = Map(
+      prefixTp0 -> disklessFetchResponse(new ConcatenatedRecords(util.List.of(batch(600L), batch(601L)))),
+      prefixTp1 -> disklessFetchResponse(batch(600L)))
+    withPrefixFixture(responses) { replicaManager =>
+      when(replicaManager.inklessMetadataView().getDisklessLeaderEpoch(prefixTp0.topicPartition())).thenReturn(5)
+      when(replicaManager.inklessMetadataView().getDisklessLeaderEpoch(prefixTp1.topicPartition())).thenReturn(5)
+      val results = fetchPrefix(replicaManager, consumerParams, prefixFetch(prefixTp0, 600L), prefixFetch(prefixTp1, 600L)).toMap
+      assertEquals(Seq(5, 5), batchLeaderEpochs(results(prefixTp0).records))
+      assertEquals(Seq(5), batchLeaderEpochs(results(prefixTp1).records))
+    }
+  }
+
+  @Test
+  def testDisklessFetchOfPartitionWithoutDisklessLeaderEpochKeepsBatchEpoch(): Unit = {
+    val records = TestUtils.records(Seq(new SimpleRecord("value".getBytes)), baseOffset = 600L, partitionLeaderEpoch = 0)
+    withPrefixFixture(Map(prefixTp0 -> disklessFetchResponse(records))) { replicaManager =>
+      when(replicaManager.inklessMetadataView().getDisklessLeaderEpoch(prefixTp0.topicPartition()))
+        .thenReturn(PartitionRegistration.NO_DISKLESS_LEADER_EPOCH)
+      val results = fetchPrefix(replicaManager, consumerParams, prefixFetch(prefixTp0, 600L))
+      assertEquals(Seq(0), batchLeaderEpochs(results.head._2.records))
+    }
+  }
 
   @Test
   def testDisklessConsumerFetchInPrefixRangeIsNotAvailable(): Unit = {
