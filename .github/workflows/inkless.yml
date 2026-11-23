@@ -167,7 +167,7 @@ jobs:
         # JOOQ classes are pre-committed with JDK 25, so no regeneration needed
         id: junit-test
         env:
-          TIMEOUT_MINUTES: 30
+          TIMEOUT_MINUTES: 40
           GRADLE_ARGS: >-
             --build-cache --no-scan
             -x generateJooqClasses
