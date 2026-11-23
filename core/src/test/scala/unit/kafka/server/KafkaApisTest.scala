@@ -1384,7 +1384,7 @@ class KafkaApisTest extends Logging {
   @Test
   def testTxnOffsetCommitWithDisklessTopic(): Unit = {
     val topic = "diskless-topic"
-    addTopicToMetadataCache(topic, numPartitions = 1)
+    addTopicToMetadataCache(topic, numPartitions = 1, topicId = Uuid.randomUuid())
 
     reset(replicaManager, clientRequestQuotaManager, requestChannel)
 

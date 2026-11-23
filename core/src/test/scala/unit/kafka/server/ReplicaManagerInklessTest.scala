@@ -5913,7 +5913,7 @@ class ReplicaManagerInklessTest {
     val unifiedLogMock = mock(classOf[UnifiedLog])
     when(unifiedLogMock.logStartOffset).thenReturn(0L)
     val logManagerMock = mock(classOf[LogManager])
-    when(logManagerMock.getLog(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), anyBoolean()))
+    when(logManagerMock.getLog(ArgumentMatchers.eq(disklessTopicPartition.topicPartition())))
       .thenReturn(Optional.of(unifiedLogMock))
     doReturn(logManagerMock).when(replicaManager).logManager
 
@@ -9293,7 +9293,7 @@ class ReplicaManagerInklessTest {
         replicaManager.applyDelta(leaderDelta, leaderImage)
 
         assertTrue(replicaManager.getPartition(tp).isInstanceOf[HostedPartition.Offline[_]])
-        assertEquals(None, replicaManager.logManager.getLog(tp))
+        assertEquals(None, replicaManager.logManager.getLog(tp).toScala)
         if (failingLog == "current") {
           assertEquals(Some(futureLog), replicaManager.logManager.getLog(tp, true).toScala)
         } else {
@@ -9309,7 +9309,7 @@ class ReplicaManagerInklessTest {
         replicaManager.applyDelta(followerDelta, imageFromTopics(followerDelta.apply()))
 
         assertTrue(replicaManager.getPartition(tp).isInstanceOf[HostedPartition.Offline[_]])
-        assertEquals(None, replicaManager.logManager.getLog(tp))
+        assertEquals(None, replicaManager.logManager.getLog(tp).toScala)
         verify(mockAlterLogDirsManager, never()).addFetcherForPartitions(any())
         verify(mockCfm, never()).addFetcherForPartitions(any())
         verify(mockFetcherManager, never()).addFetcherForPartitions(any())
