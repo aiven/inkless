@@ -16,8 +16,6 @@
  */
 package org.apache.kafka.tools;
 
-import kafka.utils.TestUtils;
-
 import org.apache.kafka.clients.consumer.ConsumerPartitionAssignor.Assignment;
 import org.apache.kafka.clients.consumer.ConsumerPartitionAssignor.Subscription;
 import org.apache.kafka.clients.consumer.internals.ConsumerProtocol;
@@ -28,6 +26,7 @@ import org.apache.kafka.common.compress.Compression;
 import org.apache.kafka.common.config.AbstractConfig;
 import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.common.internals.Topic;
+import org.apache.kafka.common.message.AbortedTxn;
 import org.apache.kafka.common.message.KRaftVersionRecord;
 import org.apache.kafka.common.message.LeaderChangeMessage;
 import org.apache.kafka.common.message.SnapshotFooterRecord;
@@ -51,8 +50,8 @@ import org.apache.kafka.common.record.internal.Record;
 import org.apache.kafka.common.record.internal.RecordBatch;
 import org.apache.kafka.common.record.internal.RecordVersion;
 import org.apache.kafka.common.record.internal.SimpleRecord;
-import org.apache.kafka.common.utils.Exit;
 import org.apache.kafka.common.utils.Utils;
+import org.apache.kafka.common.utils.internals.Exit;
 import org.apache.kafka.coordinator.group.generated.ConsumerGroupMemberMetadataValue;
 import org.apache.kafka.coordinator.group.generated.ConsumerGroupMetadataKey;
 import org.apache.kafka.coordinator.group.generated.ConsumerGroupMetadataValue;
@@ -85,7 +84,6 @@ import org.apache.kafka.server.log.remote.storage.RemotePartitionDeleteState;
 import org.apache.kafka.server.storage.log.FetchIsolation;
 import org.apache.kafka.server.util.MockTime;
 import org.apache.kafka.snapshot.RecordsSnapshotWriter;
-import org.apache.kafka.storage.internals.log.AbortedTxn;
 import org.apache.kafka.storage.internals.log.AppendOrigin;
 import org.apache.kafka.storage.internals.log.FetchDataInfo;
 import org.apache.kafka.storage.internals.log.LogConfig;
@@ -98,6 +96,7 @@ import org.apache.kafka.storage.internals.log.TransactionIndex;
 import org.apache.kafka.storage.internals.log.UnifiedLog;
 import org.apache.kafka.storage.internals.log.VerificationGuard;
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats;
+import org.apache.kafka.test.TestUtils;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -138,19 +137,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 public class DumpLogSegmentsTest {
     private static final Pattern SIZE_PATTERN = Pattern.compile(".+?size:\\s(\\d+).+");
 
-    private static final class BatchInfo {
-        private final List<SimpleRecord> records;
-        private final boolean hasKeys;
-        private final boolean hasValues;
+    private record BatchInfo(
+        List<SimpleRecord> records,
+        boolean hasKeys,
+        boolean hasValues
+    ) { }
 
-        private BatchInfo(List<SimpleRecord> records, boolean hasKeys, boolean hasValues) {
-            this.records = records;
-            this.hasKeys = hasKeys;
-            this.hasValues = hasValues;
-        }
-    }
-
-    private final File tmpDir = TestUtils.tempDir();
+    private final File tmpDir = TestUtils.tempDirectory();
     private final File logDir = TestUtils.randomPartitionLogDir(tmpDir);
     private final String segmentName = "00000000000000000000";
     private final String logFilePath = new File(logDir, segmentName + ".log").getAbsolutePath();
@@ -634,12 +627,11 @@ public class DumpLogSegmentsTest {
 
         List<SimpleRecord> records = new ArrayList<>();
         for (ApiMessageAndVersion message : metadataRecords) {
-            MetadataRecordSerde serde = MetadataRecordSerde.INSTANCE;
             ObjectSerializationCache cache = new ObjectSerializationCache();
-            int size = serde.recordSize(message, cache);
+            int size = MetadataRecordSerde.INSTANCE.recordSize(message, cache);
             ByteBuffer buf = ByteBuffer.allocate(size);
             ByteBufferAccessor writer = new ByteBufferAccessor(buf);
-            serde.write(message, cache, writer);
+            MetadataRecordSerde.INSTANCE.write(message, cache, writer);
             buf.flip();
             records.add(new SimpleRecord(null, buf.array()));
         }
@@ -825,7 +817,7 @@ public class DumpLogSegmentsTest {
 
     private Record serializedRecord(ApiMessage key, ApiMessageAndVersion value) {
         byte[] valueBytes = value == null ? null : MessageUtil.toVersionPrefixedBytes(value.version(), value.message());
-        return TestUtils.singletonRecords(
+        return singletonRecords(
             valueBytes,
             MessageUtil.toCoordinatorTypePrefixedBytes(key),
             Compression.NONE,
@@ -842,7 +834,7 @@ public class DumpLogSegmentsTest {
         assertEquals(
             "Failed to decode message at offset 0 using the specified decoder (message had a missing key)",
             assertThrows(RuntimeException.class, () ->
-                parser.parse(TestUtils.singletonRecords(null, null, Compression.NONE, RecordBatch.NO_TIMESTAMP,
+                parser.parse(singletonRecords(null, null, Compression.NONE, RecordBatch.NO_TIMESTAMP,
                     RecordBatch.CURRENT_MAGIC_VALUE).records().iterator().next())
             ).getMessage()
         );
@@ -946,7 +938,7 @@ public class DumpLogSegmentsTest {
         // An unknown record type should be handled and reported as such.
         assertParseResult(
             parser.parse(
-                TestUtils.singletonRecords(
+                singletonRecords(
                     new byte[0],
                     ByteBuffer.allocate(2).putShort(Short.MAX_VALUE).array(),
                     Compression.NONE,
@@ -981,7 +973,7 @@ public class DumpLogSegmentsTest {
         assertEquals(
             "Failed to decode message at offset 0 using the specified decoder (message had a missing key)",
             assertThrows(RuntimeException.class, () ->
-                parser.parse(TestUtils.singletonRecords(null, null, Compression.NONE, RecordBatch.NO_TIMESTAMP,
+                parser.parse(singletonRecords(null, null, Compression.NONE, RecordBatch.NO_TIMESTAMP,
                     RecordBatch.CURRENT_MAGIC_VALUE).records().iterator().next())
             ).getMessage()
         );
@@ -997,7 +989,7 @@ public class DumpLogSegmentsTest {
             )),
             Optional.of("{\"type\":\"0\",\"data\":{\"transactionalId\":\"txnId\"}}"),
             Optional.of("{\"version\":\"0\",\"data\":{\"producerId\":123,\"producerEpoch\":0,\"transactionTimeoutMs\":0," +
-                "\"transactionStatus\":0,\"transactionPartitions\":[],\"transactionLastUpdateTimestampMs\":0," +
+                "\"transactionStatus\":\"Empty\",\"transactionPartitions\":[],\"transactionLastUpdateTimestampMs\":0," +
                 "\"transactionStartTimestampMs\":0}}")
         );
 
@@ -1014,7 +1006,7 @@ public class DumpLogSegmentsTest {
         // An unknown record type should be handled and reported as such.
         assertParseResult(
             parser.parse(
-                TestUtils.singletonRecords(
+                singletonRecords(
                     new byte[0],
                     ByteBuffer.allocate(2).putShort(Short.MAX_VALUE).array(),
                     Compression.NONE,
@@ -1054,7 +1046,7 @@ public class DumpLogSegmentsTest {
             )),
             Optional.of("{\"type\":\"0\",\"data\":{\"transactionalId\":\"txnId\"}}"),
             Optional.of("{\"version\":\"1\",\"data\":{\"producerId\":12,\"previousProducerId\":11,\"nextProducerId\":10," +
-                "\"producerEpoch\":2,\"transactionTimeoutMs\":14,\"transactionStatus\":0," +
+                "\"producerEpoch\":2,\"transactionTimeoutMs\":14,\"transactionStatus\":\"Empty\"," +
                 "\"transactionPartitions\":[{\"topic\":\"topic1\",\"partitionIds\":[0,1,2]}," +
                 "{\"topic\":\"topic2\",\"partitionIds\":[3,4,5]}],\"transactionLastUpdateTimestampMs\":123," +
                 "\"transactionStartTimestampMs\":13}}")
@@ -1203,7 +1195,7 @@ public class DumpLogSegmentsTest {
         assertEquals(
             "Failed to decode message at offset 0 using the specified decoder (message had a missing key)",
             assertThrows(RuntimeException.class, () ->
-                parser.parse(TestUtils.singletonRecords(null, null, Compression.NONE, RecordBatch.NO_TIMESTAMP,
+                parser.parse(singletonRecords(null, null, Compression.NONE, RecordBatch.NO_TIMESTAMP,
                     RecordBatch.CURRENT_MAGIC_VALUE).records().iterator().next())
             ).getMessage()
         );
@@ -1279,7 +1271,7 @@ public class DumpLogSegmentsTest {
         // An unknown record type should be handled and reported as such.
         assertParseResult(
             parser.parse(
-                TestUtils.singletonRecords(
+                singletonRecords(
                     new byte[0],
                     ByteBuffer.allocate(2).putShort(Short.MAX_VALUE).array(),
                     Compression.NONE,
@@ -1486,8 +1478,8 @@ public class DumpLogSegmentsTest {
     public void testDumpTxnIndex() throws Exception {
         File txnIndexFile = new File(logDir, segmentName + ".txnindex");
         try (TransactionIndex index = new TransactionIndex(0L, txnIndexFile)) {
-            index.append(new AbortedTxn(1L, 0, 10, 11));
-            index.append(new AbortedTxn(2L, 15, 25, 26));
+            index.append(new AbortedTxn().setProducerId(1L).setFirstOffset(0).setLastOffset(10).setLastStableOffset(11));
+            index.append(new AbortedTxn().setProducerId(2L).setFirstOffset(15).setLastOffset(25).setLastStableOffset(26));
             index.flush();
         }
 
@@ -1622,5 +1614,15 @@ public class DumpLogSegmentsTest {
         String errOutput = captureStandardErr(
             () -> runDumpLogSegments(new String[]{"--files", noDotFile.getAbsolutePath()}));
         assertTrue(errOutput.contains("Ignoring unknown file"), errOutput);
+    }
+
+    private static MemoryRecords singletonRecords(byte[] value, byte[] key, Compression compression, long timestamp, byte magicValue) {
+        return MemoryRecords.withRecords(
+            magicValue,
+            0L,
+            compression,
+            TimestampType.CREATE_TIME,
+            new SimpleRecord(timestamp, key, value)
+        );
     }
 }

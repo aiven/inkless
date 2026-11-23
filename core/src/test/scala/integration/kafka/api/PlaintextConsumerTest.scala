@@ -15,66 +15,15 @@ package kafka.api
 import java.util
 import java.time.Duration
 import kafka.server.GroupProtocolAndMaybeTopicTypeProvider
-import kafka.utils.{TestInfoUtils, TestUtils}
-import org.apache.kafka.clients.consumer._
-import org.apache.kafka.common.errors.InterruptException
-import org.apache.kafka.common.test.api.Flaky
+import kafka.utils.TestInfoUtils
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.{Tag, Timeout}
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ArgumentsSource
 
-import java.util.concurrent.ExecutionException
-
 @Tag("inkless")
 @Timeout(600)
 class PlaintextConsumerTest extends BaseConsumerTest {
-
-  @Flaky("KAFKA-18031")
-  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNamesAndTopicType)
-  @ArgumentsSource(classOf[GroupProtocolAndMaybeTopicTypeProvider])
-  def testCloseLeavesGroupOnInterrupt(groupProtocol: String, topicType: String): Unit = {
-    val adminClient = createAdminClient()
-    val consumer = createConsumer()
-    val listener = new TestConsumerReassignmentListener()
-    consumer.subscribe(java.util.List.of(topic), listener)
-    awaitRebalance(consumer, listener)
-
-    assertEquals(1, listener.callsToAssigned)
-    assertEquals(0, listener.callsToRevoked)
-
-    try {
-      Thread.currentThread().interrupt()
-      assertThrows(classOf[InterruptException], () => consumer.close())
-    } finally {
-      // Clear the interrupted flag so we don't create problems for subsequent tests.
-      Thread.interrupted()
-    }
-
-    assertEquals(1, listener.callsToAssigned)
-    assertEquals(1, listener.callsToRevoked)
-
-    val config = new ConsumerConfig(consumerConfig)
-
-    // Set the wait timeout to be only *half* the configured session timeout. This way we can make sure that the
-    // consumer explicitly left the group as opposed to being kicked out by the broker.
-    val leaveGroupTimeoutMs = config.getInt(ConsumerConfig.SESSION_TIMEOUT_MS_CONFIG) / 2
-
-    TestUtils.waitUntilTrue(
-      () => {
-        try {
-          val groupId = config.getString(ConsumerConfig.GROUP_ID_CONFIG)
-          val groupDescription = adminClient.describeConsumerGroups(util.List.of(groupId)).describedGroups.get(groupId).get
-          groupDescription.members.isEmpty
-        } catch {
-          case _: ExecutionException | _: InterruptedException =>
-            false
-        }
-      },
-      msg=s"Consumer did not leave the consumer group within $leaveGroupTimeoutMs ms of close",
-      waitTimeMs=leaveGroupTimeoutMs
-    )
-  }
 
   @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNamesAndTopicType)
   @ArgumentsSource(classOf[GroupProtocolAndMaybeTopicTypeProvider])

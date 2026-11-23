@@ -91,8 +91,8 @@ N=500; I=0; while [ $I -lt $N ] && ./gradlew clients:test --tests RequestRespons
 
 ### Running a particular test method within a unit/integration test
 ```bash
-./gradlew core:test --tests kafka.api.ProducerFailureHandlingTest.testCannotSendToInternalTopic
 ./gradlew clients:test --tests org.apache.kafka.clients.MetadataTest.testTimeToNextUpdate
+./gradlew clients:clients-integration-tests:test --tests org.apache.kafka.clients.producer.ProducerFailureHandlingTest.testCannotSendToInternalTopic
 ./gradlew streams:integration-tests:test --tests org.apache.kafka.streams.integration.RestoreIntegrationTest.shouldRestoreNullRecord
 ```
 
@@ -200,7 +200,7 @@ Streams has multiple sub-projects, but you can run all the tests:
 ### Building IDE project
 *Note: Please ensure that JDK 17 is used when developing Kafka.*
 
-IntelliJ supports Gradle natively and it will automatically check Java syntax and compatibility for each module, even if
+IntelliJ supports Gradle natively, and it will automatically check Java syntax and compatibility for each module, even if
 the Java version shown in the `Structure > Project Settings > Modules` may not be the correct one.
 
 When it comes to Eclipse, run:
@@ -210,7 +210,7 @@ When it comes to Eclipse, run:
 ```
 
 The `eclipse` task has been configured to use `${project_dir}/build_eclipse` as Eclipse's build directory. Eclipse's default
-build directory (`${project_dir}/bin`) clashes with Kafka's scripts directory and we don't use Gradle's build directory
+build directory (`${project_dir}/bin`) clashes with Kafka's scripts directory, and we don't use Gradle's build directory
 to avoid known issues with this configuration.
 
 ### Publishing the streams quickstart archetype artifact to maven
@@ -315,7 +315,7 @@ These take the same arguments as the built-in variants.
 
 ### Determining if any dependencies could be updated
 ```bash
-./gradlew dependencyUpdates --no-parallel
+./gradlew dependencyUpdates
 ```
 
 ### Common build options ###

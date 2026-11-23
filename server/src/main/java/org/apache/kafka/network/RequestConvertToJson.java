@@ -185,12 +185,16 @@ import org.apache.kafka.common.message.StreamsGroupDescribeRequestDataJsonConver
 import org.apache.kafka.common.message.StreamsGroupDescribeResponseDataJsonConverter;
 import org.apache.kafka.common.message.StreamsGroupHeartbeatRequestDataJsonConverter;
 import org.apache.kafka.common.message.StreamsGroupHeartbeatResponseDataJsonConverter;
+import org.apache.kafka.common.message.StreamsGroupTopologyDescriptionUpdateRequestDataJsonConverter;
+import org.apache.kafka.common.message.StreamsGroupTopologyDescriptionUpdateResponseDataJsonConverter;
 import org.apache.kafka.common.message.SyncGroupRequestDataJsonConverter;
 import org.apache.kafka.common.message.SyncGroupResponseDataJsonConverter;
 import org.apache.kafka.common.message.TxnOffsetCommitRequestDataJsonConverter;
 import org.apache.kafka.common.message.TxnOffsetCommitResponseDataJsonConverter;
 import org.apache.kafka.common.message.UnregisterBrokerRequestDataJsonConverter;
 import org.apache.kafka.common.message.UnregisterBrokerResponseDataJsonConverter;
+import org.apache.kafka.common.message.UnregisterControllerRequestDataJsonConverter;
+import org.apache.kafka.common.message.UnregisterControllerResponseDataJsonConverter;
 import org.apache.kafka.common.message.UpdateFeaturesRequestDataJsonConverter;
 import org.apache.kafka.common.message.UpdateFeaturesResponseDataJsonConverter;
 import org.apache.kafka.common.message.UpdateRaftVoterRequestDataJsonConverter;
@@ -374,12 +378,16 @@ import org.apache.kafka.common.requests.StreamsGroupDescribeRequest;
 import org.apache.kafka.common.requests.StreamsGroupDescribeResponse;
 import org.apache.kafka.common.requests.StreamsGroupHeartbeatRequest;
 import org.apache.kafka.common.requests.StreamsGroupHeartbeatResponse;
+import org.apache.kafka.common.requests.StreamsGroupTopologyDescriptionUpdateRequest;
+import org.apache.kafka.common.requests.StreamsGroupTopologyDescriptionUpdateResponse;
 import org.apache.kafka.common.requests.SyncGroupRequest;
 import org.apache.kafka.common.requests.SyncGroupResponse;
 import org.apache.kafka.common.requests.TxnOffsetCommitRequest;
 import org.apache.kafka.common.requests.TxnOffsetCommitResponse;
 import org.apache.kafka.common.requests.UnregisterBrokerRequest;
 import org.apache.kafka.common.requests.UnregisterBrokerResponse;
+import org.apache.kafka.common.requests.UnregisterControllerRequest;
+import org.apache.kafka.common.requests.UnregisterControllerResponse;
 import org.apache.kafka.common.requests.UpdateFeaturesRequest;
 import org.apache.kafka.common.requests.UpdateFeaturesResponse;
 import org.apache.kafka.common.requests.UpdateRaftVoterRequest;
@@ -396,6 +404,7 @@ import com.fasterxml.jackson.databind.node.BooleanNode;
 import com.fasterxml.jackson.databind.node.DoubleNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.LongNode;
+import com.fasterxml.jackson.databind.node.NullNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.node.TextNode;
 
@@ -577,10 +586,14 @@ public class RequestConvertToJson {
                 TxnOffsetCommitRequestDataJsonConverter.write(((TxnOffsetCommitRequest) request).data(), request.version());
             case UNREGISTER_BROKER ->
                 UnregisterBrokerRequestDataJsonConverter.write(((UnregisterBrokerRequest) request).data(), request.version());
+            case UNREGISTER_CONTROLLER ->
+                UnregisterControllerRequestDataJsonConverter.write(((UnregisterControllerRequest) request).data(), request.version());
             case UPDATE_FEATURES ->
                 UpdateFeaturesRequestDataJsonConverter.write(((UpdateFeaturesRequest) request).data(), request.version());
             case UPDATE_RAFT_VOTER ->
                 UpdateRaftVoterRequestDataJsonConverter.write(((UpdateRaftVoterRequest) request).data(), request.version());
+            case STREAMS_GROUP_TOPOLOGY_DESCRIPTION_UPDATE ->
+                StreamsGroupTopologyDescriptionUpdateRequestDataJsonConverter.write(((StreamsGroupTopologyDescriptionUpdateRequest) request).data(), request.version());
             case VOTE -> VoteRequestDataJsonConverter.write(((VoteRequest) request).data(), request.version());
             case WRITE_SHARE_GROUP_STATE ->
                 WriteShareGroupStateRequestDataJsonConverter.write(((WriteShareGroupStateRequest) request).data(), request.version());
@@ -760,10 +773,14 @@ public class RequestConvertToJson {
                 TxnOffsetCommitResponseDataJsonConverter.write(((TxnOffsetCommitResponse) response).data(), version);
             case UNREGISTER_BROKER ->
                 UnregisterBrokerResponseDataJsonConverter.write(((UnregisterBrokerResponse) response).data(), version);
+            case UNREGISTER_CONTROLLER ->
+                UnregisterControllerResponseDataJsonConverter.write(((UnregisterControllerResponse) response).data(), version);
             case UPDATE_FEATURES ->
                 UpdateFeaturesResponseDataJsonConverter.write(((UpdateFeaturesResponse) response).data(), version);
             case UPDATE_RAFT_VOTER ->
                 UpdateRaftVoterResponseDataJsonConverter.write(((UpdateRaftVoterResponse) response).data(), version);
+            case STREAMS_GROUP_TOPOLOGY_DESCRIPTION_UPDATE ->
+                StreamsGroupTopologyDescriptionUpdateResponseDataJsonConverter.write(((StreamsGroupTopologyDescriptionUpdateResponse) response).data(), version);
             case VOTE -> VoteResponseDataJsonConverter.write(((VoteResponse) response).data(), version);
             case WRITE_SHARE_GROUP_STATE ->
                 WriteShareGroupStateResponseDataJsonConverter.write(((WriteShareGroupStateResponse) response).data(), version);
@@ -790,7 +807,7 @@ public class RequestConvertToJson {
         ObjectNode node = JsonNodeFactory.instance.objectNode();
         node.set("isForwarded", isForwarded ? BooleanNode.TRUE : BooleanNode.FALSE);
         node.set("requestHeader", requestHeaderNode(header));
-        node.set("request", requestNode.orElse(new TextNode("")));
+        node.set("request", requestNode.orElse(NullNode.getInstance()));
         return node;
     }
 
@@ -808,7 +825,7 @@ public class RequestConvertToJson {
                                               double responseSendTimeMs, long temporaryMemoryBytes,
                                               double messageConversionsTimeMs) {
         ObjectNode node = (ObjectNode) requestDesc(header, requestNode, isForwarded);
-        node.set("response", responseNode.orElse(new TextNode("")));
+        node.set("response", responseNode.orElse(NullNode.getInstance()));
         node.set("connection", new TextNode(context.connectionId));
         node.set("totalTimeMs", new DoubleNode(totalTimeMs));
         node.set("requestQueueTimeMs", new DoubleNode(requestQueueTimeMs));

@@ -152,6 +152,8 @@ import org.apache.kafka.clients.admin.TerminateTransactionOptions;
 import org.apache.kafka.clients.admin.TerminateTransactionResult;
 import org.apache.kafka.clients.admin.UnregisterBrokerOptions;
 import org.apache.kafka.clients.admin.UnregisterBrokerResult;
+import org.apache.kafka.clients.admin.UnregisterControllerOptions;
+import org.apache.kafka.clients.admin.UnregisterControllerResult;
 import org.apache.kafka.clients.admin.UpdateFeaturesOptions;
 import org.apache.kafka.clients.admin.UpdateFeaturesResult;
 import org.apache.kafka.clients.admin.UserScramCredentialAlteration;
@@ -419,6 +421,11 @@ public class TestingMetricsInterceptingAdminClient extends AdminClient {
     @Override
     public UnregisterBrokerResult unregisterBroker(final int brokerId, final UnregisterBrokerOptions options) {
         return adminDelegate.unregisterBroker(brokerId, options);
+    }
+
+    @Override
+    public UnregisterControllerResult unregisterController(final int controllerId, final UnregisterControllerOptions options) {
+        return adminDelegate.unregisterController(controllerId, options);
     }
 
     @Override

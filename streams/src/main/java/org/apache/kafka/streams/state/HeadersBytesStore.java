@@ -14,8 +14,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.apache.kafka.streams.state;
 
+import org.apache.kafka.common.annotation.InterfaceAudience;
 
 /**
  * Marker interface to indicate that a bytes store understands the value-with-headers format
@@ -26,6 +28,7 @@ package org.apache.kafka.streams.state;
  * Per KIP-1271, the value format is: [headersSize(varint)][headersBytes][payloadBytes]
  * where payloadBytes is the existing serialized value (e.g., [timestamp(8)][value] for timestamped stores).
  */
+@InterfaceAudience.Public
 public interface HeadersBytesStore {
 
     /**
@@ -54,10 +57,10 @@ public interface HeadersBytesStore {
         //   headersSize = varint(0) = [0x00]
         //   headersBytes = [] (empty, 0 bytes)
         // Result: [0x00][payload]
-        final byte[] res = new byte[1 + value.length];
-        // res[0] is initialized to 0x00 per Java Specification
-        System.arraycopy(value, 0, res, 1, value.length);
-        return res;
+        final byte[] valueHeaders = new byte[1 + value.length];
+        // valueHeaders[0] is initialized to 0x00 per Java Specification
+        System.arraycopy(value, 0, valueHeaders, 1, value.length);
+        return valueHeaders;
     }
 
     static byte[] convertFromPlainToHeaderFormat(final byte[] value) {
