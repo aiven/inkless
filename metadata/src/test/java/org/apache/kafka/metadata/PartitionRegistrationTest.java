@@ -817,4 +817,49 @@ public class PartitionRegistrationTest {
             "disklessLeaderEpoch: -1 -> 5, classicPrefixInRemoteStorage: false -> true"), after.diff(before));
         assertTrue(after.toString().contains("classicPrefixInRemoteStorage=true"));
     }
+
+    @Test
+    public void testLastClassicLeaderEpochRoundTrip() {
+        PartitionRegistration original = classicPrefixBuilder().setClassicPrefixInRemoteStorage(true).
+            setLastClassicLeaderEpoch(3).build();
+
+        ApiMessageAndVersion record = original.toRecord(Uuid.randomUuid(), 0,
+            new ImageWriterOptions.Builder(MetadataVersion.latestTesting()).build());
+        PartitionRecord partitionRecord = (PartitionRecord) record.message();
+        PartitionRegistration restored = new PartitionRegistration(partitionRecord);
+
+        assertEquals(3, InitDisklessLogFields.decodeLastClassicLeaderEpoch(partitionRecord.unknownTaggedFields()));
+        assertEquals(3, restored.lastClassicLeaderEpoch);
+        assertEquals(original, restored);
+        assertEquals(PartitionRegistration.NO_LAST_CLASSIC_LEADER_EPOCH, classicPrefixBuilder().build().lastClassicLeaderEpoch);
+    }
+
+    @Test
+    public void testMergeSetsPreservesAndDropsLastClassicLeaderEpoch() {
+        PartitionChangeRecord flag = new PartitionChangeRecord();
+        flag.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicPrefixInRemoteStorage());
+        flag.unknownTaggedFields().add(InitDisklessLogFields.encodeLastClassicLeaderEpoch(3));
+        PartitionRegistration flagged = classicPrefixBuilder().build().merge(flag);
+        assertEquals(3, flagged.lastClassicLeaderEpoch);
+
+        PartitionRegistration leaderChanged = flagged.merge(new PartitionChangeRecord().setLeader(2).setIsr(List.of(2, 3)));
+        assertEquals(3, leaderChanged.lastClassicLeaderEpoch);
+
+        PartitionChangeRecord undo = new PartitionChangeRecord();
+        undo.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicToDisklessStartOffset(
+            PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET));
+        assertEquals(PartitionRegistration.NO_LAST_CLASSIC_LEADER_EPOCH, leaderChanged.merge(undo).lastClassicLeaderEpoch);
+    }
+
+    @Test
+    public void testLastClassicLeaderEpochInEqualsDiffAndToString() {
+        PartitionRegistration before = classicPrefixBuilder().setClassicPrefixInRemoteStorage(true).build();
+        PartitionRegistration after = classicPrefixBuilder().setClassicPrefixInRemoteStorage(true).
+            setLastClassicLeaderEpoch(3).build();
+
+        assertNotEquals(before, after);
+        assertEquals(after, classicPrefixBuilder().setClassicPrefixInRemoteStorage(true).setLastClassicLeaderEpoch(3).build());
+        assertEquals("lastClassicLeaderEpoch: -1 -> 3", after.diff(before));
+        assertTrue(after.toString().contains("lastClassicLeaderEpoch=3"));
+    }
 }

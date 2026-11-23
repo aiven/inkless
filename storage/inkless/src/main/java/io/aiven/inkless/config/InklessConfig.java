@@ -26,6 +26,7 @@ import org.apache.kafka.common.network.ListenerName;
 import java.lang.reflect.InvocationTargetException;
 import java.time.Duration;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -71,6 +72,18 @@ public class InklessConfig extends AbstractConfig {
     private static final int PRODUCE_UPLOAD_BACKOFF_MS_DEFAULT = 10;
 
     public static final String STORAGE_PREFIX = "storage.";
+    public static final String STORAGE_ROLE_FETCH = "fetch";
+    public static final String STORAGE_ROLE_PRODUCE = "produce";
+    public static final String STORAGE_ROLE_BACKGROUND = "background";
+    // S3 DeleteObjects requests hold up to 1000 keys and consolidation cold reads are large.
+    // The background role needs longer S3 and GCS timeouts than the produce and fetch paths.
+    // A group applies only if no layer sets any of its keys. The S3 attempt timeout must not exceed the call timeout.
+    private static final Map<String, List<Map<String, String>>> STORAGE_ROLE_DEFAULTS = Map.of(
+        STORAGE_ROLE_BACKGROUND, List.of(
+            Map.of("s3.api.call.timeout", "30000", "s3.api.call.attempt.timeout", "10000"),
+            Map.of("gcs.read.timeout", "10000")
+        )
+    );
 
     public static final String STORAGE_BACKEND_CLASS_CONFIG = STORAGE_PREFIX + "backend.class";
     private static final String STORAGE_BACKEND_CLASS_DOC = "The storage backend implementation class";
@@ -142,6 +155,13 @@ public class InklessConfig extends AbstractConfig {
         + "and a 1,000,000-batch backlog drains in about 8 hours. A higher batch-row rate needs a proportionally higher value here "
         + "or a shorter consolidation.cleanup.interval.ms.";
     private static final int CONSOLIDATION_CLEANUP_MAX_BATCHES_PER_REQUEST_DEFAULT = 2000;
+
+    public static final String PARTITION_RATE_WINDOW_MS_CONFIG = "partition.rate.window.ms";
+    private static final String PARTITION_RATE_WINDOW_MS_DOC = "The interval with which the broker snapshots the client bytes in and bytes out "
+        + "rate of each partition for the PartitionBytesInRate and PartitionBytesOutRate metrics. "
+        + "A partition with no client traffic during the interval is idle. "
+        + "A longer interval smooths sporadic traffic but delays changes in the metrics.";
+    private static final int PARTITION_RATE_WINDOW_MS_DEFAULT = 60 * 1000;  // 1 minute
 
     public static final String FILE_CLEANER_INTERVAL_MS_CONFIG = "file.cleaner.interval.ms";
     private static final String FILE_CLEANER_INTERVAL_MS_DOC = "The interval with which to clean up files marked for deletion. "
@@ -410,6 +430,15 @@ public class InklessConfig extends AbstractConfig {
             ConfigDef.Range.atLeast(0),
             ConfigDef.Importance.LOW,
             CONSOLIDATION_CLEANUP_MAX_BATCHES_PER_REQUEST_DOC
+        );
+
+        configDef.define(
+            PARTITION_RATE_WINDOW_MS_CONFIG,
+            ConfigDef.Type.INT,
+            PARTITION_RATE_WINDOW_MS_DEFAULT,
+            ConfigDef.Range.atLeast(1000),
+            ConfigDef.Importance.LOW,
+            PARTITION_RATE_WINDOW_MS_DOC
         );
 
         configDef.define(
@@ -773,11 +802,36 @@ public class InklessConfig extends AbstractConfig {
     }
 
     public StorageBackend storage(final Metrics metrics) {
+        return storage(metrics, null);
+    }
+
+    /**
+     * Creates a storage backend configured from {@code storage.*}. Keys under
+     * {@code storage.<role>.*} override the shared {@code storage.*} keys for that role only.
+     * Such a key is {@code storage.background.s3.api.call.timeout}. A role can also have defaults
+     * that apply when neither {@code storage.*} nor {@code storage.<role>.*} sets the key.
+     *
+     * @param role one of the {@code STORAGE_ROLE_*} names, or null for the shared configuration
+     */
+    public StorageBackend storage(final Metrics metrics, final String role) {
         try {
             @SuppressWarnings("unchecked")
             final Class<? extends StorageBackend> storageClass = (Class<? extends StorageBackend>) getClass(STORAGE_BACKEND_CLASS_CONFIG);
             final StorageBackend storage = storageClass.getDeclaredConstructor(Metrics.class).newInstance(metrics);
-            storage.configure(this.originalsWithPrefix(STORAGE_PREFIX));
+            final Map<String, Object> explicit = new HashMap<>(originalsWithPrefix(STORAGE_PREFIX));
+            if (role != null) {
+                explicit.putAll(originalsWithPrefix(STORAGE_PREFIX + role + "."));
+            }
+            final Map<String, Object> storageConfigs = new HashMap<>();
+            if (role != null) {
+                for (final Map<String, String> group : STORAGE_ROLE_DEFAULTS.getOrDefault(role, List.of())) {
+                    if (group.keySet().stream().noneMatch(explicit::containsKey)) {
+                        storageConfigs.putAll(group);
+                    }
+                }
+            }
+            storageConfigs.putAll(explicit);
+            storage.configure(storageConfigs);
             return storage;
         } catch (NoSuchMethodException | InvocationTargetException | InstantiationException |
                  IllegalAccessException e) {
@@ -815,6 +869,10 @@ public class InklessConfig extends AbstractConfig {
 
     public int maxBatchesPerConsolidationCleanupRequest() {
         return getInt(CONSOLIDATION_CLEANUP_MAX_BATCHES_PER_REQUEST_CONFIG);
+    }
+
+    public Duration partitionRateWindow() {
+        return Duration.ofMillis(getInt(PARTITION_RATE_WINDOW_MS_CONFIG));
     }
 
     public Duration fileCleanerInterval() {

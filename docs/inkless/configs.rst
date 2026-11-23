@@ -266,6 +266,14 @@ Under ``inkless.``
   * Default: false
   * Importance: low
 
+``partition.rate.window.ms``
+  The interval with which the broker snapshots the client bytes in and bytes out rate of each partition for the PartitionBytesInRate and PartitionBytesOutRate metrics. A partition with no client traffic during the interval is idle. A longer interval smooths sporadic traffic but delays changes in the metrics.
+
+  * Type: int
+  * Default: 60000 (1 minute)
+  * Valid Values: [1000,...]
+  * Importance: low
+
 ``produce.upload.thread.pool.size``
   Thread pool size to concurrently upload files to remote storage
 

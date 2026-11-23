@@ -66,7 +66,9 @@ I need to sync the inkless release branch with an upstream Apache Kafka release.
    mv .inkless-sync/RELEASE-SESSION-*.md inkless-sync/sessions/
    ```
 
-10. **Push**: When verified, push the sync branch for PR review
+10. **Push**: When verified, push the sync branch for PR review.
+
+11. **Land**: After CI and approval, tell me to choose **Create a merge commit**, then report the tag command from "Land the sync" in `inkless-sync/RELEASE-SYNC-GUIDE.md`. Do not merge the PR or push the tag.
 
 Please help me execute this release sync process.
 ````
@@ -132,6 +134,10 @@ make test
 ```
 
 Expected: All builds and tests pass.
+
+## After the merge
+
+If the branch has no new Inkless commits, release the sync under the current Inkless version. Follow [Release the sync under the current Inkless version](RELEASE-SYNC-GUIDE.md#release-the-sync-under-the-current-inkless-version). Don't push the tag or run the release workflow without the user's approval.
 
 ## Common Issues
 

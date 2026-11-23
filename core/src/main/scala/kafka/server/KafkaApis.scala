@@ -253,7 +253,6 @@ class KafkaApis(val requestChannel: RequestChannel,
         case ApiKeys.STREAMS_GROUP_DESCRIBE => handleStreamsGroupDescribe(request).exceptionally(handleError)
         case ApiKeys.STREAMS_GROUP_HEARTBEAT => handleStreamsGroupHeartbeat(request).exceptionally(handleError)
         case ApiKeys.ALTER_DISKLESS_SWITCH => forwardToController(request)
-        case ApiKeys.REPAIR_DISKLESS_LOG => handleRepairDisklessLogRequest(request)
         case _ => throw new IllegalStateException(s"No handler for request api key ${request.header.apiKey}")
       }
     } catch {
@@ -454,6 +453,8 @@ class KafkaApis(val requestChannel: RequestChannel,
             invalidRequestResponses += topicIdPartition -> new PartitionResponse(Errors.forException(e))
         }
     }
+    // Only the sizes, so that the response callback does not hold the records while the request waits in purgatory.
+    val authorizedRecordsSizes = authorizedRequestInfo.map { case (topicIdPartition, records) => topicIdPartition -> records.sizeInBytes }
 
     // the callback for sending a produce response
     // The construction of ProduceResponse is able to accept auto-generated protocol data so
@@ -461,6 +462,10 @@ class KafkaApis(val requestChannel: RequestChannel,
     // https://issues.apache.org/jira/browse/KAFKA-10730
     @nowarn("cat=deprecation")
     def sendResponseCallback(responseStatus: Map[TopicIdPartition, PartitionResponse]): Unit = {
+      responseStatus.foreachEntry { (topicIdPartition, status) =>
+        if (status.error == Errors.NONE)
+          authorizedRecordsSizes.get(topicIdPartition).foreach(replicaManager.recordClientBytesIn(topicIdPartition.topicPartition, _))
+      }
       val mergedResponseStatus = responseStatus ++ unauthorizedTopicResponses ++ nonExistingTopicResponses ++ invalidRequestResponses
       var errorInResponse = false
 
@@ -684,6 +689,8 @@ class KafkaApis(val requestChannel: RequestChannel,
               val tp = new TopicIdPartition(topicResponse.topicId, new TopicPartition(topicResponse.topic, data.partitionIndex))
               val isDiskless = inklessSharedState.exists(_.metadata().isDisklessTopic(tp.topic))
               brokerTopicStats.updateBytesOut(tp.topic, fetchRequest.isFromFollower, reassigningPartitions.contains(tp), FetchResponse.recordsSize(data), isDiskless)
+              if (!fetchRequest.isFromFollower)
+                replicaManager.recordClientBytesOut(tp.topicPartition, FetchResponse.recordsSize(data))
             }
           }
         }
@@ -1812,8 +1819,13 @@ class KafkaApis(val requestChannel: RequestChannel,
       val currentErrors = new ConcurrentHashMap[TopicPartition, Errors]()
       marker.partitions.forEach { partition =>
         if (inklessSharedState.exists(s => s.metadata().isDisklessTopic(partition.topic()))) {
-          warn("Attempt to call WriteTxnMarkersRequest with diskless topic")
-          currentErrors.put(partition, Errors.INVALID_TOPIC_EXCEPTION)
+          // Only a transaction that was open when the topic switched from classic to diskless gets here.
+          // The leader aborted it in the classic log when it sealed the partition. With
+          // UNSUPPORTED_FOR_MESSAGE_FORMAT, the transaction coordinator stops waiting for this partition
+          // and completes the transaction. Its completion handler doesn't handle INVALID_TOPIC_EXCEPTION.
+          warn(s"Dropping the ${marker.transactionResult} marker of producer $producerId for diskless partition $partition. " +
+            "The classic-to-diskless switch aborted the open transactions of the partition.")
+          currentErrors.put(partition, Errors.UNSUPPORTED_FOR_MESSAGE_FORMAT)
         } else {
           replicaManager.onlinePartition(partition) match {
             case Some(_) =>
@@ -4019,18 +4031,6 @@ class KafkaApis(val requestChannel: RequestChannel,
         requestHelper.sendMaybeThrottle(request, deleteShareGroupStateResponse)
       }
     }}
-  }
-
-  def handleRepairDisklessLogRequest(request: RequestChannel.Request): Unit = {
-    val repairRequest = request.body[RepairDisklessLogRequest]
-    authHelper.authorizeClusterOperation(request, ALTER)
-    val tp = new TopicPartition(repairRequest.data.topicName, repairRequest.data.partitionIndex)
-    val error = replicaManager.repairDisklessLog(tp)
-    requestHelper.sendResponseMaybeThrottle(request, requestThrottleMs =>
-      new RepairDisklessLogResponse(new RepairDisklessLogResponseData()
-        .setThrottleTimeMs(requestThrottleMs)
-        .setErrorCode(error.code)
-        .setErrorMessage(if (error == Errors.NONE) null else error.message)))
   }
 
   // Visible for Testing

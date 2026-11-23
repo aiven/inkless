@@ -291,19 +291,26 @@ public class InklessDisklessTopicDeleteTest {
     }
 
     /**
-     * One cycle cannot finish the drain: each broker deletes at most
-     * {@code topic.purger.max.batches.per.cycle} batches. Count saturated cycles from TopicPurger
-     * logs instead of a {@code COUNT(*)} poll, which can miss leftovers between 1s ticks.
+     * With one batch per cycle, every deleting cycle hits the cap except the one that removes the
+     * last deleted log: {@code capReached} requires {@code moreRemain}. Both brokers can finish
+     * concurrently, but each probes {@code moreRemain} before it commits, so at most one of them
+     * finds every deleted log gone. That gives a floor of {@code batchesAtDelete - 1} saturated
+     * lines.
      */
-    private static void assertSaturatedAcrossMultipleCycles(LogCaptureAppender appender, long batchesAtDelete) {
-        long saturated = appender.getMessages().stream()
-            .filter(message -> message.contains("per-cycle cap reached"))
-            .count();
-        assertTrue(saturated >= batchesAtDelete - NUM_BROKERS,
-            "TopicPurger must hit the per-cycle cap across multiple cycles (max "
-                + MAX_BATCHES_PER_CYCLE + " per cycle); saturated=" + saturated
+    private static void assertSaturatedAcrossMultipleCycles(LogCaptureAppender appender, long batchesAtDelete)
+            throws InterruptedException {
+        final long expected = batchesAtDelete - 1;
+        TestUtils.waitForCondition(() -> countSaturated(appender) >= expected, 10_000,
+            () -> "TopicPurger must hit the per-cycle cap on every cycle but the last (max "
+                + MAX_BATCHES_PER_CYCLE + " per cycle); saturated=" + countSaturated(appender)
                 + " batchesAtDelete=" + batchesAtDelete
                 + " messages=" + appender.getMessages());
+    }
+
+    private static long countSaturated(LogCaptureAppender appender) {
+        return appender.getMessages().stream()
+            .filter(message -> message.contains(TopicPurger.CAP_REACHED_LOG_FRAGMENT))
+            .count();
     }
 
     private record ControlPlaneSnapshot(

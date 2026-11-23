@@ -17,6 +17,9 @@
 
 package org.apache.kafka.image.writer;
 
+import org.apache.kafka.common.protocol.ObjectSerializationCache;
+import org.apache.kafka.metadata.MetadataRecordSerde;
+import org.apache.kafka.raft.KafkaRaftClient;
 import org.apache.kafka.server.common.ApiMessageAndVersion;
 import org.apache.kafka.snapshot.SnapshotWriter;
 
@@ -29,28 +32,62 @@ import java.util.OptionalLong;
  * Writes out a metadata image to a SnapshotWriter.
  */
 public class RaftSnapshotWriter implements ImageWriter {
+    // Inkless: the snapshot writer rejects a batch over KafkaRaftClient.MAX_BATCH_SIZE_BYTES. The record of a
+    // switched partition has its committed producer states, and a batch of batchSize such records can exceed
+    // that size. Half of that size leaves room for the framing of the records.
+    static final int DEFAULT_MAX_BATCH_BYTES = KafkaRaftClient.MAX_BATCH_SIZE_BYTES / 2;
+
     private final SnapshotWriter<ApiMessageAndVersion> snapshotWriter;
     private final int batchSize;
+    private final int maxBatchBytes;
     private List<ApiMessageAndVersion> records;
+    private long recordsBytes;
+    private ObjectSerializationCache serializationCache;
     private OptionalLong frozenSize = OptionalLong.empty();
 
     public RaftSnapshotWriter(
         SnapshotWriter<ApiMessageAndVersion> snapshotWriter,
         int batchSize
     ) {
+        this(snapshotWriter, batchSize, DEFAULT_MAX_BATCH_BYTES);
+    }
+
+    RaftSnapshotWriter(
+        SnapshotWriter<ApiMessageAndVersion> snapshotWriter,
+        int batchSize,
+        int maxBatchBytes
+    ) {
         this.snapshotWriter = snapshotWriter;
         this.batchSize = batchSize;
-        this.records = new ArrayList<>();
+        this.maxBatchBytes = maxBatchBytes;
+        startBatch();
     }
 
     @Override
     public void write(ApiMessageAndVersion record) {
         if (records == null) throw new ImageWriterClosedException();
-        records.add(record);
-        if (records.size() >= batchSize) {
-            snapshotWriter.append(records);
-            records = new ArrayList<>();
+        // Inkless: a record that doesn't fit starts the next batch. A record over the limit goes alone.
+        int recordBytes = MetadataRecordSerde.INSTANCE.recordSize(record, serializationCache);
+        if (!records.isEmpty() && recordsBytes + recordBytes > maxBatchBytes) {
+            appendBatch();
         }
+        records.add(record);
+        recordsBytes += recordBytes;
+        if (records.size() >= batchSize) {
+            appendBatch();
+        }
+    }
+
+    private void appendBatch() {
+        snapshotWriter.append(records);
+        startBatch();
+    }
+
+    private void startBatch() {
+        records = new ArrayList<>();
+        recordsBytes = 0;
+        // The cache keeps a reference to every object it measured, so each batch gets its own.
+        serializationCache = new ObjectSerializationCache();
     }
 
     @Override

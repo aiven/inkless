@@ -88,6 +88,10 @@ git push -u origin inkless-4.0-sync-4.0.1
 gh pr create --base inkless-4.0 --title "Sync inkless-4.0 to upstream 4.0.1"
 ```
 
+### Step 9: merge the PR
+
+After CI is green and a reviewer approves the PR, choose **Create a merge commit**. Don't squash or rebase. Follow [Land the sync](RELEASE-SYNC-GUIDE.md#land-the-sync). Then tag the new head.
+
 ## Conflict Resolution Playbook
 
 ### Version Files
@@ -240,6 +244,12 @@ If there are fixes in the release that should go to main:
 # Check what commits are in release but not main
 git log main..inkless-4.0 --oneline
 ```
+
+### Release the sync
+
+Sync the upstream Kafka patch release first. Then sync the Inkless commits. Open one pull request for each sync.
+
+If a new Inkless release follows soon, skip this section. If the release branch has no other new Inkless commits, tag the merge commit with the current Inkless version and add it to the published release. Don't cut a new Inkless version. See [Release the sync under the current Inkless version](RELEASE-SYNC-GUIDE.md#release-the-sync-under-the-current-inkless-version).
 
 ### Clean Up Worktree
 
