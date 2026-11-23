@@ -17,7 +17,7 @@
  */
 package io.aiven.inkless.delete;
 
-import org.apache.kafka.common.utils.ExponentialBackoff;
+import org.apache.kafka.common.utils.internals.ExponentialBackoff;
 import org.apache.kafka.common.utils.Time;
 
 import org.slf4j.Logger;

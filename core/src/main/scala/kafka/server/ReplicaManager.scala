@@ -2262,9 +2262,9 @@ class ReplicaManager(val config: KafkaConfig,
       (tp, p, allowFromFollower) =>
         classicFetchOffset(tp, p, replicaId, isolationLevel, version,
           correlationId, clientId, buildErrorResponse, allowFromFollower = allowFromFollower)
-    val classicLogStart: TopicPartition => Option[Long] = tp => logManager.getLog(tp).map(_.logStartOffset)
+    val classicLogStart: TopicPartition => Option[Long] = tp => logManager.getLog(tp).toScala.map(_.logStartOffset)
     val hasCompleteClassicPrefix: (TopicPartition, Long) => Boolean =
-      (tp, classicToDisklessStartOffset) => logManager.getLog(tp).exists(_.highWatermark >= classicToDisklessStartOffset)
+      (tp, classicToDisklessStartOffset) => logManager.getLog(tp).toScala.exists(_.highWatermark >= classicToDisklessStartOffset)
     // The remote search starts at the leader epoch of the log start. A tier-state rebuild clears the epoch cache
     // before it restores it, so until then the search reads nothing below the local log start. The truncation count
     // is read first, so a truncation that the reads below straddle changes it and the range stops being current.
@@ -2278,14 +2278,14 @@ class ReplicaManager(val config: KafkaConfig,
       if (!isClientRequest) log.logEndOffset
       else if (isolationLevel == IsolationLevel.READ_COMMITTED) log.lastStableOffset
       else log.highWatermark
-    val classicSearchRange: TopicPartition => ClassicSearchRange = tp => logManager.getLog(tp) match {
+    val classicSearchRange: TopicPartition => ClassicSearchRange = tp => logManager.getLog(tp).toScala match {
       case Some(log) =>
         val truncationCount = log.truncationCount()
         val logStartOffset = log.logStartOffset
         val remotePrefixUnsearchable = log.remoteLogEnabled() && logStartOffset < log.localLogStartOffset &&
           log.leaderEpochCache.epochForOffset(logStartOffset).isEmpty
         val end = if (remotePrefixUnsearchable) logStartOffset else lastFetchableOffset(log)
-        ClassicSearchRange(end, () => logManager.getLog(tp).exists(_ eq log) &&
+        ClassicSearchRange(end, () => logManager.getLog(tp).toScala.exists(_ eq log) &&
           log.truncationCount() == truncationCount && log.logStartOffset == logStartOffset)
       case None => ClassicSearchRange.Unknown
     }
@@ -4296,8 +4296,8 @@ class ReplicaManager(val config: KafkaConfig,
   private def divergenceFromCommittedHistory(tp: TopicPartition): Option[String] = {
     val seal = _inklessMetadataView.getClassicToDisklessStartOffset(tp)
     val lastClassicLeaderEpoch = _inklessMetadataView.getLastClassicLeaderEpoch(tp)
-    val futureLog = logManager.getLog(tp, isFuture = true)
-    logManager.getLog(tp) match {
+    val futureLog = logManager.getLog(tp, true).toScala
+    logManager.getLog(tp).toScala match {
       case None => futureLog.map(_ => "the broker holds a future log without a current log")
       case Some(log) =>
         val classicEnd = math.min(seal, log.logEndOffset)
@@ -4913,7 +4913,7 @@ class ReplicaManager(val config: KafkaConfig,
               s"with topic id ${info.topicId} due to a storage error ${e.getMessage}")
             markPartitionOffline(tp)
         }
-      } else if (logManager.getLog(tp).isDefined && !isConsolidatingDisklessTopic) {
+      } else if (logManager.getLog(tp).toScala.isDefined && !isConsolidatingDisklessTopic) {
         // Post-restart: diskless topic still has classic data on local disk (offsets < disklessStartOffset).
         // Create the Partition so classic data remains accessible for reads. A pending switch never
         // reaches this branch: the branch above handles it, so the seal here is always committed.
@@ -4994,7 +4994,7 @@ class ReplicaManager(val config: KafkaConfig,
         // progress without a committed seal (seal == -2), a missing local log means
         // there is no classic data to expose on this broker, so we leave the partition
         // unmanaged here.
-        if (!isConsolidatingDisklessTopic && (logManager.getLog(tp).isDefined || seal >= 0)) {
+        if (!isConsolidatingDisklessTopic && (logManager.getLog(tp).toScala.isDefined || seal >= 0)) {
           getOrCreatePartition(tp, delta, info.topicId).foreach { case (partition, isNew) =>
             try {
               val partitionAssignedDirectoryId = directoryIds.find(_._1.topicPartition() == tp).map(_._2)

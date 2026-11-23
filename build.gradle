@@ -1356,7 +1356,7 @@ project(':core') {
     testImplementation libs.tieredStorageForKafkaCore
     testImplementation libs.tieredStorageForKafkaS3
     testImplementation libs.awsSdkS3
-    testImplementation project(':storage:inkless').sourceSets.test.output
+    testImplementation rootProject.project(':storage:inkless').sourceSets.test.output
 
     configurations {
       // To prevent a UniqueResourceException due the same resource existing in both
@@ -2646,7 +2646,7 @@ project(':storage') {
     testImplementation libs.testcontainersLocalstack
     testImplementation libs.testcontainersPostgresql
     testImplementation libs.awsSdkS3
-    testImplementation project(':storage:inkless').sourceSets.test.output
+    testImplementation rootProject.project(':storage:inkless').sourceSets.test.output
     testImplementation project(':test-common:test-common-internal-api')
     testImplementation project(':test-common:test-common-runtime')
     testImplementation project(':test-common:test-common-util')
@@ -2806,7 +2806,7 @@ project(':storage:inkless') {
     implementation libs.caffeine
     implementation libs.bucket4jCore
 
-    testImplementation project(':clients').sourceSets.test.output.classesDirs
+    testImplementation testFixtures(project(':clients'))
     testImplementation project(':test-common')
     testImplementation libs.assertj
     testImplementation libs.awaitility
@@ -3140,7 +3140,7 @@ project(':tools') {
     testImplementation libs.testcontainersLocalstack
     testImplementation libs.testcontainersPostgresql
     testImplementation libs.awsSdkS3
-    testImplementation project(':storage:inkless').sourceSets.test.output
+    testImplementation rootProject.project(':storage:inkless').sourceSets.test.output
 
     testRuntimeOnly runtimeTestLibs
     testRuntimeOnly libs.hamcrest

@@ -22,7 +22,7 @@ import org.apache.kafka.common.record.internal.AbstractRecords;
 import org.apache.kafka.common.record.internal.MemoryRecords;
 import org.apache.kafka.common.record.internal.MutableRecordBatch;
 import org.apache.kafka.common.record.internal.Records;
-import org.apache.kafka.common.utils.AbstractIterator;
+import org.apache.kafka.common.utils.internals.AbstractIterator;
 import org.apache.kafka.common.utils.FlattenedIterator;
 
 import java.io.IOException;

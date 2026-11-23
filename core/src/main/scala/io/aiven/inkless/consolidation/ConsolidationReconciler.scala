@@ -19,7 +19,8 @@
 package io.aiven.inkless.consolidation
 
 import kafka.cluster.Partition
-import kafka.server.{InitialFetchState, ReplicaManager, ReplicationQuotaManager}
+import kafka.server.{InitialFetchState, ReplicaManager}
+import org.apache.kafka.server.quota.ReplicationQuotaManager
 import kafka.server.metadata.InklessMetadataView
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.logger.StateChangeLogger

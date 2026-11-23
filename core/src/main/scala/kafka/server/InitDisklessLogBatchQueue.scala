@@ -23,7 +23,7 @@ import org.apache.kafka.clients.ClientResponse
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.message.{InitDisklessLogResponseData, SetClassicPrefixInRemoteStorageResponseData}
 import org.apache.kafka.common.requests.{InitDisklessLogRequest, InitDisklessLogResponse, SetClassicPrefixInRemoteStorageRequest, SetClassicPrefixInRemoteStorageResponse}
-import org.apache.kafka.common.utils.ExponentialBackoff
+import org.apache.kafka.common.utils.internals.ExponentialBackoff
 import org.apache.kafka.metadata.InitDisklessLogFields
 import org.apache.kafka.server.common.{ControllerRequestCompletionHandler, NodeToControllerChannelManager}
 import org.apache.kafka.server.util.Scheduler

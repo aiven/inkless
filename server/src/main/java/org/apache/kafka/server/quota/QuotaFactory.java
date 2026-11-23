@@ -27,6 +27,7 @@ import org.apache.kafka.server.config.AbstractKafkaConfig;
 import org.apache.kafka.server.config.ClientQuotaManagerConfig;
 import org.apache.kafka.server.config.QuotaConfig;
 import org.apache.kafka.server.config.ReplicationQuotaManagerConfig;
+import org.apache.kafka.server.config.ServerConfigs;
 
 import java.util.Optional;
 
@@ -91,7 +92,7 @@ public class QuotaFactory {
         ReplicationQuotaManager disklessConsolidationFetch =
             new ReplicationQuotaManager(replicationConfig(cfg), metrics, QuotaType.DISKLESS_CONSOLIDATION_FETCH, time);
         disklessConsolidationFetch.updateQuota(
-            new Quota(cfg.disklessConsolidationFetchRateLimitBytesPerSecond(), true));
+            new Quota(cfg.getLong(ServerConfigs.DISKLESS_CONSOLIDATION_FETCH_RATE_LIMIT_BYTES_PER_SECOND_CONFIG), true));
 
         return new QuotaManagers(
             new ClientQuotaManager(clientConfig(cfg), metrics, QuotaType.FETCH, time, threadNamePrefix, clientQuotaCallbackPlugin),
