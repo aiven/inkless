@@ -38,6 +38,7 @@ config/inkless/**                                        @aiven/inkless
 docker/inkless/**                                        @aiven/inkless
 docker/examples/docker-compose-files/inkless/**          @aiven/inkless
 inkless-benchmarks/**                                    @aiven/inkless
+jmh-benchmarks/src/main/java/org/apache/kafka/jmh/*/Inkless*.java @aiven/inkless  # Inkless JMH benchmarks
 inkless-sync/**                                          @aiven/inkless
 tests/kafkatest/tests/inkless/**                         @aiven/inkless
 tests/kafkatest/services/inkless/**                      @aiven/inkless
@@ -65,9 +66,14 @@ core/src/main/scala/kafka/server/DynamicBrokerConfig.scala @aiven/inkless @apach
 core/src/main/scala/kafka/server/ConfigHandler.scala       @aiven/inkless @apache/kafka  # topic-config propagation
 core/src/main/scala/kafka/server/ControllerServer.scala    @aiven/inkless @apache/kafka  # controller-side diskless wiring
 core/src/main/scala/kafka/server/AbstractFetcherThread.scala @aiven/inkless @apache/kafka  # consolidation fetcher skips ConsumerLag JMX registration
+core/src/main/java/kafka/server/TierStateMachine.java     @aiven/inkless @apache/kafka  # phase 2 remote rebuild starts at the classic-to-diskless seal
 metadata/src/main/java/org/apache/kafka/controller/ReplicationControlManager.java @aiven/inkless @apache/kafka  # diskless placement, election, and classic-to-diskless switch commits
 metadata/src/main/java/org/apache/kafka/controller/PartitionChangeBuilder.java @aiven/inkless @apache/kafka  # classic-to-diskless switch flag commit
-storage/src/main/java/org/apache/kafka/storage/internals/log/UnifiedLog.java @aiven/inkless @apache/kafka  # forced deletion of the local classic prefix
+metadata/src/main/java/org/apache/kafka/image/writer/RaftSnapshotWriter.java @aiven/inkless @apache/kafka  # snapshot batches split by size, for the producer states of switched partitions
+storage/src/main/java/org/apache/kafka/storage/internals/log/UnifiedLog.java @aiven/inkless @apache/kafka  # forced deletion of the local classic prefix; truncation count that fences remote offset updates
+storage/src/main/java/org/apache/kafka/storage/internals/epoch/LeaderEpochFileCache.java @aiven/inkless @apache/kafka  # a restored list of epoch entries becomes visible to readers all at once
 core/src/main/scala/kafka/server/ReplicaAlterLogDirsThread.scala @aiven/inkless @apache/kafka  # future log rolls at the seal; promotion waits for classic prefix deletion
-storage/src/main/java/org/apache/kafka/server/log/remote/storage/RemoteLogManager.java @aiven/inkless @apache/kafka  # remote read throws LeaderEpochNotAvailableException when the epoch cache has no epoch
-core/src/main/scala/kafka/cluster/Partition.scala          @aiven/inkless @apache/kafka  # classic-to-diskless seal; ISR checks capped at the seal in phase 1
+storage/src/main/java/org/apache/kafka/server/log/remote/storage/RemoteLogManager.java @aiven/inkless @apache/kafka  # remote read throws LeaderEpochNotAvailableException when the epoch cache has no epoch; remote offset updates skip a log that truncated during the task; epoch cleanup keeps consolidating segments from the cross-tier log start; remote read ends at the upper bound offset
+storage/src/main/java/org/apache/kafka/storage/internals/log/RemoteStorageFetchInfo.java @aiven/inkless @apache/kafka  # upper bound offset that ends a tiered read at the classic-to-diskless seal
+core/src/main/scala/kafka/cluster/Partition.scala          @aiven/inkless @apache/kafka  # classic-to-diskless seal; ISR checks capped at the seal in phase 1; no new epoch entry for a consolidating leader
+checkstyle/import-control-core.xml                         @aiven/inkless @apache/kafka  # kafka.server allows io.aiven.inkless, Testcontainers, and the AWS SDK

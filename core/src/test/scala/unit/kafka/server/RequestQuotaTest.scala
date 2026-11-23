@@ -769,9 +769,6 @@ class RequestQuotaTest extends BaseRequestTest {
         case ApiKeys.ALTER_DISKLESS_SWITCH =>
           new AlterDisklessSwitchRequest.Builder(new AlterDisklessSwitchRequestData())
 
-        case ApiKeys.REPAIR_DISKLESS_LOG =>
-          new RepairDisklessLogRequest.Builder(new RepairDisklessLogRequestData())
-
         case _ =>
           throw new IllegalArgumentException("Unsupported API key " + apiKey)
     }

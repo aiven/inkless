@@ -32,8 +32,9 @@ The switch state lives in the KRaft metadata log, but `classicToDisklessStartOff
 
 * **High tag numbers (100+).** `classicToDisklessStartOffset` uses tag `100` (`CLASSIC_TO_DISKLESS_START_OFFSET_TAG`). The 100+ range is reserved to avoid colliding with upstream tagged fields. Because the tag is unknown to vanilla Kafka, it is **silently skipped** when read by an upstream broker, which keeps the on-disk metadata format compatible in both directions. Two sibling fields ride along on the same record using the same mechanism: producer states (tag `101`) and the diskless leader epoch (tag `102`).
 * **Custom serde in `InitDisklessLogFields`.** The value is encoded by hand into the tagged field's raw byte payload: a single big-endian `int64` (8 bytes) written via `ByteBuffer.putLong`, and read back via `ByteBuffer.getLong`. There is no generated message class for it.
-* **Sentinel is normally not serialized.** When `classicToDisklessStartOffset == -1`, automatic paths (`toRecord()` snapshots and ordinary change records) omit the tag entirely to save space; on read, an absent tag decodes back to `-1` (`NO_CLASSIC_TO_DISKLESS_START_OFFSET`). The one exception is the operator seal/abort path, which encodes an explicit `-1` to actively reset a sealed partition back to classic (see [Operator override](#operator-override-of-the-seal-offset)).
-* **Replay and merge.** On load, `PartitionRegistration` decodes the tag from `PartitionRecord.unknownTaggedFields()`; `merge(PartitionChangeRecord)` applies updates from change records and carries the existing value forward when a change record **omits** the tag; `toRecord()` re-encodes it. Crucially, "tag omitted" and "tag explicitly set to `-1`" are distinguished at decode time (`decodeClassicToDisklessStartOffsetIfPresent` returns an empty `OptionalLong` only when the tag is absent): an omitted tag keeps the existing value, while a present tag — including an explicit `-1` — is applied verbatim. This is how the value survives metadata-log replay and propagates to brokers via metadata deltas, and how an operator can abort a switch.
+* **Sentinel is normally not serialized.** When `classicToDisklessStartOffset == -1`, automatic paths (`toRecord()` snapshots and ordinary change records) omit the tag entirely to save space; on read, an absent tag decodes back to `-1` (`NO_CLASSIC_TO_DISKLESS_START_OFFSET`).
+* **Replay and merge.** On load, `PartitionRegistration` decodes the tag from `PartitionRecord.unknownTaggedFields()`. `merge(PartitionChangeRecord)` applies updates from change records and carries the existing value forward when a change record **omits** the tag. `toRecord()` re-encodes it. `decodeClassicToDisklessStartOffsetIfPresent` returns an empty `OptionalLong` only when the tag is absent, so `merge` keeps the existing value for an omitted tag and applies a present tag verbatim, including an explicit `-1`. Brokers get the value through metadata-log replay and metadata deltas.
+* **Phase 2 fields.** The record that starts phase 2 sets `classicPrefixInRemoteStorage` (tag `103`, one byte) and `lastClassicLeaderEpoch` (tag `104`, a big-endian `int32`). The second field is the leader epoch of the record at `classicToDisklessStartOffset - 1`. The record omits tag `104` if the value is `-1`, and an absent tag decodes to `-1`. `merge` keeps both fields when a change record omits them.
 
 ## Protocol Steps
 
@@ -52,6 +53,7 @@ sequenceDiagram
 
     Leader->>Leader: seal() local classic log
     Leader->>Leader: makeLeader() with bumped epoch
+    Leader->>Leader: Abort open transactions
     Leader->>InitManager: registerPartition()
 
     InitManager->>Leader: Wait until HW == LEO
@@ -70,8 +72,8 @@ sequenceDiagram
 
     InitManager->>Leader: Wait until the classic prefix is in remote storage
     Leader-->>InitManager: logStartOffset >= seal or<br/>highestOffsetInRemoteStorage >= seal - 1
-    InitManager->>Controller: SetClassicPrefixInRemoteStorage(seal, leaderEpoch)
-    Controller->>MetadataLog: PartitionChangeRecord<br/>classicPrefixInRemoteStorage = true
+    InitManager->>Controller: SetClassicPrefixInRemoteStorage(seal, leaderEpoch,<br/>lastClassicLeaderEpoch)
+    Controller->>MetadataLog: PartitionChangeRecord<br/>classicPrefixInRemoteStorage = true<br/>lastClassicLeaderEpoch
 ```
 
 ### Step 1: mark the switch as pending
@@ -87,9 +89,11 @@ Setting the leader to the current leader bumps the leader epoch, which forces th
 
 When a leader broker applies the metadata delta for a diskless topic with `classicToDisklessStartOffset = -2`, it seals the existing local `Partition` before calling `makeLeader`.
 
-Sealing happens under the `leaderIsrUpdateLock` write lock. If there are undecided transactions, the broker aborts them first; then it marks the partition sealed. Once sealed, `appendRecordsToLeader` rejects classic produce requests with `ReplicaNotAvailableException`, so the local LEO cannot increase.
+Sealing happens under the `leaderIsrUpdateLock` write lock. Once sealed, `appendRecordsToLeader` rejects classic produce requests with `ReplicaNotAvailableException`, so clients can't increase the local LEO.
 
 If the metadata delta also elects a new leader for the partition, the new leader seals before it is placed in the leader role. This prevents the new leader from accepting classic writes during the switch.
+
+After `makeLeader`, the leader aborts every undecided transaction in its log. It appends one `ABORT` marker per open transaction and rolls the active segment again, so the markers are in a closed segment. For more information, see [Open transactions at the switch](#open-transactions-at-the-switch).
 
 ### Step 3: propose the final start offset
 
@@ -107,6 +111,13 @@ Once HW catches up to LEO, the partition moves to `SendingToController`. The bro
 
 At this point `HW == LEO`, so the proposed start offset is the sealed LEO and is safely replicated to the ISR.
 
+The producer states contain one entry per retained batch of each active producer. One request contains at most 123,361 entries. The controller writes the records of a request in metadata batches of at most 10,000 records, and this limit keeps the entries of all batches together within half of the 8 MiB that the Raft client accepts in one batch. The broker applies the limit in two ways:
+
+* If the ready partitions exceed the limit together, the broker sends them in several requests. A partition that waits for a later request doesn't count as a retry.
+* If one partition exceeds the limit, the broker sends only the newest batch of each producer. The control plane needs only that batch to check the next sequence of a producer. A retry of an older batch then fails with `OUT_OF_ORDER_SEQUENCE_NUMBER`, because the control plane no longer recognizes it as a duplicate. If the producers still don't fit, the broker keeps the producers whose newest batch has the highest offset and drops the others. The control plane rejects the next batch of a dropped producer with `OUT_OF_ORDER_SEQUENCE_NUMBER` until the producer bumps its epoch. A dropped producer also loses duplicate detection and epoch fencing. If it retries a batch that starts at sequence 0, the control plane appends the batch again. The control plane also accepts a batch from an older epoch of that producer. The broker logs a warning with the number of producers it dropped.
+
+If the broker can't build the request entry of a partition, it logs the error and retries that partition alone. The broker still sends the other partitions of the batch to the controller.
+
 ### Step 4: persist the final start offset
 
 The controller handles `InitDisklessLog` as a serialized write operation. For each partition, it validates that:
@@ -120,6 +131,10 @@ If validation succeeds, the controller writes a `PartitionChangeRecord` containi
 
 If the broker is stale, the controller rejects the request. A lower leader epoch is a permanent failure for that broker's attempt; retriable controller or transport failures are retried by the broker.
 
+The controller applies the same limit of 123,361 producer state entries to the records of one request. It rejects a partition whose entries don't fit with `RECORD_LIST_TOO_LARGE` and doesn't write a record for it. The broker retries that partition in a later request. A metadata batch over the Raft batch size fails the whole request and makes the active controller resign. The limit prevents the controller from passing such a batch to the Raft client.
+
+The producer states stay in the metadata of the partition, and every metadata snapshot writes them in the record of the partition. The snapshot writer starts a new batch when the next record doesn't fit in 4 MiB. Without that split, the records of several switched partitions exceed the Raft batch size in one snapshot batch, and the snapshot fails.
+
 ### Step 5: initialize the diskless log
 
 After the final offset is committed to the metadata log, brokers receive a new metadata delta with `classicToDisklessStartOffset >= 0`. The local leader then initializes the diskless log on the control plane using the authoritative data from metadata, not the earlier controller response.
@@ -127,11 +142,13 @@ After the final offset is committed to the metadata log, brokers receive a new m
 The leader calls the control-plane `InitDisklessLog` API with:
 
 * topic ID, topic name, and partition
-* local classic log start offset
+* local log start offset, or the committed `classicToDisklessStartOffset` if the local log starts past it
 * committed `classicToDisklessStartOffset`
 * committed producer states
 
 Control-plane initialization is batched and retried on transient failures. An `INVALID_REQUEST` response from the control plane is treated as success because it means the diskless log is already initialized.
+
+If the leader can't build the request of a partition, it logs the error and retries that partition alone. The leader still sends the other partitions of the batch to the control plane.
 
 Once control-plane initialization succeeds, produce requests can use the diskless append path from the committed start offset onward. If `classicPrefixInRemoteStorage` is already `true`, `InitDisklessLogManager` removes the partition from tracking. Otherwise `InitDisklessLogManager` keeps tracking the partition for the next step.
 
@@ -142,7 +159,13 @@ In phase 1, the leader tracks the partition in the `WaitingForUpload` state unti
 * `logStartOffset >= classicToDisklessStartOffset`: the prefix is empty, or retention or `DeleteRecords` already removed it.
 * `highestOffsetInRemoteStorage >= classicToDisklessStartOffset - 1`: the remote log manager copied the whole prefix.
 
-When the check passes, the partition moves to `SendingFlagToController`. The broker batches ready partitions and sends `SetClassicPrefixInRemoteStorage` to the controller with the seal offset and the current leader epoch. The controller sets `classicPrefixInRemoteStorage`, which starts phase 2, and `InitDisklessLogManager` removes the partition from tracking.
+When the check passes, the partition moves to `SendingFlagToController`. The broker batches ready partitions and sends `SetClassicPrefixInRemoteStorage` to the controller with these values:
+
+* The seal offset.
+* The current leader epoch.
+* The leader epoch of the record at `seal - 1`, from the leader epoch cache. The value is `-1` if the log doesn't contain a record below the seal.
+
+The controller sets `classicPrefixInRemoteStorage`, which starts phase 2, and stores the last value as `lastClassicLeaderEpoch`. `InitDisklessLogManager` removes the partition from tracking. For more information about how brokers use the epoch, see [Divergent classic tails in phase 2](#divergent-classic-tails-in-phase-2). If the epoch is below `-1` or higher than the current leader epoch, the controller rejects the request with `INVALID_REQUEST`. No replica's leader epoch cache can hold such an epoch, and every replica would recreate its log on every leader change.
 
 The broker handles the controller response per partition:
 
@@ -150,7 +173,7 @@ The broker handles the controller response per partition:
 * `INVALID_REQUEST`, `UNKNOWN_TOPIC_ID`, or `UNKNOWN_TOPIC_OR_PARTITION`: the broker stops. The partition isn't in the state the request assumed, and a retry can't change that.
 * Any other error, including `FENCED_LEADER_EPOCH` and `NOT_CONTROLLER`: the broker retries with backoff. An epoch bump that keeps the same leader fences the in-flight request. The retry sends the current epoch.
 
-If an operator lowers the seal in phase 1, the leader restarts the watch with the new seal. The re-seal keeps the same leader and leader epoch. The broker detects the changed seal in the metadata delta. For more information, see [Operator override of the seal offset](#operator-override-of-the-seal-offset).
+If an operator lowers the seal in phase 1, the leader restarts the watch with the new seal. The lower seal keeps the same leader and leader epoch. The broker detects the changed seal in the metadata delta. For more information, see [Lower a committed seal](#lower-a-committed-seal).
 
 A partition in phase 1 counts toward the `DisklessSwitchedPartitionsPendingUploadCount` controller metric until the controller sets the flag. For more information, see [Controller Metrics](FEATURES.md#controller-metrics).
 
@@ -169,9 +192,33 @@ Followers also seal during the switch. They use the classic fetcher to replicate
 When a broker applies a newly committed seal offset, it reconciles the local classic log:
 
 * if local LEO is above the seal, it truncates to the seal because offsets at and above the seal belong to diskless storage
+* if the partition is in phase 1, this replica is in the ISR, local LEO is at or past the seal, and the high watermark is below it, it advances the high watermark to the seal. In phase 1 the leader admits a replica to the ISR only after a fetch at the seal validated its log, and it requests the seal only after its high watermark reaches its frozen LEO, so the records of such a replica below the seal are the committed ones. A follower doesn't wait for a fetch response with that high watermark: the fetcher drops the response if the seal's leader epoch arrives first, and the leader's fetch session omits a sealed partition from later responses because nothing in it changes. In phase 2 the controller adds replicas to the ISR without checking their logs. A replica there keeps its high watermark and reconciles through a fetch
 * if a leader's local LEO is below the seal, it marks the partition offline because the classic prefix is incomplete
 
-If leadership changes while the switch is pending, the new leader seals and re-drives the `InitDisklessLog` controller request. If leadership changes after the controller commits the final offset, the new leader skips the controller step and initializes the control plane directly from metadata. If the flag is still unset, the new leader also rolls its active segment when that segment holds part of the classic prefix, so the remote log manager can copy it. The new leader then watches the upload itself, as in [Step 6](#step-6-request-the-classicprefixinremotestorage-flag).
+A broker answers `ListOffsets` from its local classic log while the switch is pending, because the control plane has no entry for the partition yet. The leader and the in-sync followers answer client requests, because the metadata routing sends clients to any alive ISR member. A replica outside the ISR answers `NOT_LEADER_OR_FOLLOWER`. After the controller commits the final start offset and until the leader initializes the control plane, `ListOffsets` for the latest offset fails with the retriable `UNKNOWN_TOPIC_OR_PARTITION`. On a consolidating topic, `ListOffsets` for the earliest offset fails the same way.
+
+If leadership changes while the switch is pending, the new leader seals and re-drives the `InitDisklessLog` controller request. A leader that restarts while the switch is pending does the same when it applies its first metadata image. After a crash, that image can still show the broker as the leader in the same leader epoch, because the controller keeps the old broker session until `broker.session.timeout.ms` expires. If leadership changes after the controller commits the final offset, the new leader skips the controller step and initializes the control plane directly from metadata. If the flag is still unset, the new leader also rolls its active segment when that segment holds part of the classic prefix, so the remote log manager can copy it. The new leader then watches the upload itself, as in [Step 6](#step-6-request-the-classicprefixinremotestorage-flag).
+
+If a broker deletes a partition, it also removes the partition from `InitDisklessLogManager`, whatever its state. This covers a topic deletion and a reassignment that takes the replica away from the broker. The manager tracks partitions by topic name, so an entry of a deleted topic would otherwise block the switch of a later topic with the same name.
+
+## Open transactions at the switch
+
+Diskless topics don't support transactions. After the switch starts, the brokers reject `AddPartitionsToTxn` for the topic with `INVALID_TOPIC_EXCEPTION`, and the diskless produce path rejects a transactional batch with `INVALID_REQUEST`. A transaction can still be open on a partition at the switch: it added the partition and wrote to it while the topic was classic.
+
+The leader ends such a transaction without the transaction coordinator:
+
+* Only the leader writes the `ABORT` markers. A follower seals without aborting and replicates the leader's markers. Its log then contains only records that the leader wrote. If a sealed follower becomes the leader while the switch is pending, it aborts the transactions that are still undecided in its log.
+* The leader writes the markers after `makeLeader`, in the leader epoch in which it leads. A marker in an earlier epoch is a record that the leader of that epoch didn't write.
+* The leader proposes the seal offset only after `HW == LEO`. The classic prefix then includes the markers, and the ISR has replicated them.
+
+When the producer ends the transaction or the transaction times out, the coordinator sends `WriteTxnMarkers` to the partition. The broker answers `UNSUPPORTED_FOR_MESSAGE_FORMAT` for a diskless topic and logs a warning. The coordinator then stops waiting for the partition and completes the transaction, and the `transactional.id` is usable again.
+
+The `ABORT` markers on the switched partition don't depend on the coordinator's decision. If the producer commits a transaction that was open at the switch, the commit succeeds and the other partitions of the transaction commit, but the switched partition keeps its `ABORT` marker. A consumer with `isolation.level=read_committed` doesn't get the records of that transaction from the switched partition.
+
+A commit that returns to the producer before the switch isn't enough to avoid this outcome. The coordinator sends the `EndTxn` response to the producer before it sends the markers to the partitions, so the partition can still have an undecided transaction when `commitTransaction()` returns. To keep the transactions on a topic atomic, do these steps before you switch it:
+
+1. Stop the transactional producers that write to the topic.
+2. Wait until the coordinator completes their transactions. For each `transactional.id`, `kafka-transactions.sh describe` reports a `TransactionState` of `CompleteCommit` or `CompleteAbort` and no `TopicPartitions`.
 
 ## Switch phases
 
@@ -183,10 +230,10 @@ A switched partition runs in one of two phases. The `classicPrefixInRemoteStorag
 | Controller behavior | Phase 1 | Phase 2 |
 | --- | --- | --- |
 | Leader election | Classic rules: the leader must be an active replica with an online log directory. | Born-diskless rules: any active replica can lead. |
-| Unclean leader election | Blocked, even if `unclean.leader.election.enable` is `true`. See [Unclean leader election](#unclean-leader-election). | Allowed if `unclean.leader.election.enable` is `true`, as for a born-diskless topic. |
+| Unclean leader election | Blocked, even if `unclean.leader.election.enable` is `true`. See [Unclean leader election](#unclean-leader-election). The last-known-leader election of KIP-966 still runs. See [Last-known-leader election](#last-known-leader-election). | Allowed if `unclean.leader.election.enable` is `true`, as for a born-diskless topic. |
 | ISR expansion when a broker unfences | Skipped. As for a classic partition, only `AlterPartition` expands the ISR. | The controller re-adds the unfenced replica and completes an in-flight reassignment. |
 | Reassignment | The controller stages the move as it does for a classic topic. New replicas are adding and dropped replicas are removing until the adding replicas join the ISR. | The target replicas replace the current replicas in one step. |
-| `AlterDisklessSwitch` | Accepted. See [Operator override](#operator-override-of-the-seal-offset). | Rejected with `INVALID_REQUEST`. |
+| `AlterDisklessSwitch` | Accepted for a seal lower than the committed seal. See [Lower a committed seal](#lower-a-committed-seal). While the switch is pending, accepted only with `-2`. See [Re-arm a pending switch](#re-arm-a-pending-switch). | Rejected with `INVALID_REQUEST`. |
 
 The controller sets the flag when it handles a `SetClassicPrefixInRemoteStorage` request from the current leader. In the same record, the controller sets the ISR, can complete a reassignment, and elects a leader if needed. The leader sends this request after the remote log manager uploads the classic prefix, or after retention or `DeleteRecords` removes it. For more information, see [Step 6](#step-6-request-the-classicprefixinremotestorage-flag).
 
@@ -196,6 +243,7 @@ Brokers also follow different rules in each phase. The consolidation rows apply 
 | --- | --- | --- |
 | Consolidation | Off. The partition runs like a switched partition that doesn't consolidate. | On, from the seal. |
 | Follower at the seal | Leaves the classic fetcher once it's in the ISR, like a follower that doesn't consolidate. | Leaves the classic fetcher and consolidates from the seal. |
+| Replica with a divergent classic prefix | Truncates on the classic fetcher. Only an ISR member can lead. | Deletes and recreates its log before it leads or fetches, and rebuilds it from remote storage. See [Divergent classic tails in phase 2](#divergent-classic-tails-in-phase-2). |
 | Local classic prefix | Kept, and serves reads below the seal. | Deleted. Reads below the seal come from remote storage. |
 | Metadata routing | Clients go to alive ISR members only. | Clients go to any replica, by the managed replica rules. |
 
@@ -210,7 +258,41 @@ In phase 1, only the ISR members store a complete copy of the classic prefix. An
 * It rejects a reassignment cancellation that needs an unclean leader election with `INVALID_REPLICA_ASSIGNMENT`.
 * It skips the unclean election in the other paths that can run one: broker fencing, `AlterPartition`, reassignment cancellation, and the periodic check for leaderless partitions.
 
-These guards also apply if the cluster default enables unclean leader election, which the topic config check doesn't cover. A partition that loses every ISR member has no leader until one of them returns.
+These guards also apply if the cluster default enables unclean leader election, which the topic config check doesn't cover. They don't block the last-known-leader election of eligible leader replicas. For more information, see [Last-known-leader election](#last-known-leader-election).
+
+### Last-known-leader election
+
+The `eligible.leader.replicas.version` feature is on by default at 4.1 and later. With it on, the controller tracks eligible leader replicas (ELR) as described in KIP-966. KIP-966 adds a last-known-leader election, and the phase 1 guards don't block it. The controller runs this election for every election type, not only `UNCLEAN`, and `unclean.leader.election.enable` doesn't control it.
+
+The controller elects the last known leader when all of the following hold:
+
+* The ISR and the ELR are empty.
+* `lastKnownElr` contains one replica: the leader at the time the partition lost its last ISR member.
+* That replica is active.
+
+A replica leaves the ELR when it registers after an unclean shutdown. So the election runs after every ISR and ELR member shuts down uncleanly and the last known leader returns. The controller resets the ISR to that replica and sets the leader recovery state to `RECOVERING`. The other replicas truncate to the new leader's log when they follow it.
+
+If the unclean shutdown cost the last known leader records, the partition loses those records, even though the high watermark covered them. KIP-966 accepts the same loss for a classic topic. The switch changes how the loss shows up:
+
+* If the last known leader holds the whole classic prefix, its log end offset equals the seal. The leader serves the partition, and the switch goes on.
+* If the leader lost records, its log end offset is below the seal, because the local log in phase 1 ends at the seal. The leader marks the partition offline without telling the controller, as described in [Additional Behavior](#additional-behavior). The controller keeps that leader and an ISR of one. No other replica can lead, because none is in the ISR or the ELR and phase 1 blocks unclean leader election. The remote log manager can't upload the prefix, so phase 2 doesn't start.
+
+If the partition is offline, lower the seal to the leader's log end offset. The partition loses the records between that offset and the old seal. To recover the partition, follow these steps:
+
+1. Find the leader's log end offset in the broker log message that marks the partition offline. The message starts with `Leader partition <topic>-<partition> has LEO`.
+2. Lower the seal to that offset:
+
+   ```bash
+   kafka-topic-switch.sh lower-seal --bootstrap-server <broker> --topic <topic> --partition <partition> --offset <offset>
+   ```
+
+   For more information, see [Lower a committed seal](#lower-a-committed-seal).
+
+3. Restart the leader. A broker doesn't apply metadata changes to a partition that it marked offline. The partition doesn't serve requests until the restart. After the restart, the leader's log end offset equals the seal. The other replicas truncate to the seal and rejoin the ISR.
+
+The remote log manager then uploads the prefix, and the partition enters phase 2. A consumer that reads across the lost offsets gets the diskless records from the old seal on. The broker doesn't return an error for the missing offsets.
+
+The same election can run while the switch is pending. The leader then seals at its own log end offset, and the switch goes on. As on a classic topic, the partition loses the records that the leader lost, and you don't need to run any recovery steps.
 
 ### Forced deletion of the local classic prefix
 
@@ -223,7 +305,6 @@ In phase 2, a read of the local prefix never returns local records. This rule ap
 * The broker updates its metadata cache before it applies the delta, so a fetch can see the flag before the deletion runs.
 * The remote log metadata on this broker doesn't cover the prefix yet.
 * A fetch that waited in purgatory since phase 1 completes in phase 2.
-* A follower started consolidating on a release that didn't wait for phase 2. It appended the first diskless records to the segment that ends the prefix.
 
 The broker checks the records that each read returns, not the log offsets before the read. So the rule also holds while the deletion runs and after a log directory move swaps the log. A read that hits the local prefix also queues the deletion again.
 
@@ -231,30 +312,69 @@ A log directory move copies the prefix into the future log, and the deletion on 
 
 A follower below the seal stays on the classic fetcher in phase 2. If the leader already deleted that part of its local log, it returns `OFFSET_MOVED_TO_TIERED_STORAGE`, and the follower rebuilds its log from remote storage. When the follower's local LEO equals the seal, it deletes any part of the prefix it fetched and hands off to consolidation.
 
-Forced deletion skips a segment that starts below the seal and ends past it, like the one in the last case. Consumers read the prefix part of that segment from remote storage. If the replica leads the partition, a follower below the seal can't fetch that part until local retention deletes the segment. A log directory move on the replica waits for the same deletion. If remote storage is off for the topic, or `remote.log.copy.disable` is `true`, the broker keeps the local prefix and logs a warning. Consumer reads succeed only for offsets that this broker already sees in remote storage.
+If remote storage is off for the topic, or `remote.log.copy.disable` is `true`, the broker keeps the local prefix and logs a warning. Consumer reads succeed only for offsets that this broker already sees in remote storage.
 
-## Operator override of the seal offset
+### Divergent classic tails in phase 2
 
-The normal flow above is leader-driven: the broker proposes the seal offset and the controller validates it. For recovery and manual intervention, the `kafka-topic-switch.sh seal` operator command can override the seal state of a single partition directly, without being the partition leader. It is backed by the `AlterDisklessSwitch` controller RPC (admin → controller, authorized as `ALTER` on the cluster), which writes a `PartitionChangeRecord` carrying the requested `classicToDisklessStartOffset`. It is a recovery tool for a topic that is being switched, not a way to start a switch, so the controller rejects it unless the topic already has `diskless.enable=true`.
+Any replica can join the ISR or lead in phase 2, including one whose local log contains records below the seal that the partition doesn't hold. Such a replica led an older leader epoch and wrote records that the next leader didn't have. An unclean leader election before the switch can also discard records below the replica's high watermark, so the high watermark doesn't identify the replica. Forced deletion keeps the leader epoch cache, and the remote log manager uses that cache to pick remote segments. With a divergent cache, a tiered read fails with `OFFSET_OUT_OF_RANGE` and the consumer resets its offset. On an idle topic, the highest offset in remote storage also stays below the seal, so forced deletion never completes.
 
-* **`>= 0`** forces (re-)sealing at that offset. The controller also captures the current leader epoch as the diskless leader epoch, exactly as the leader-driven commit does, so consolidation truncation stays correct. Unlike `InitDisklessLog`, this is accepted even when the partition has already committed a seal offset, so an operator can correct a bad seal — but only *downward*: a re-seal may not exceed the current committed seal, since that is the classic log end offset and offsets beyond it exist only in diskless storage (routing them to the classic log would break consumption). Committed producer states are left unchanged unless `--clear-producer-states` is passed, which writes an explicit empty producer-states tag to reset them.
-* **`-1`** aborts the switch and reverts the partition to classic. The tag is written explicitly (see [How it is stored](#how-it-is-stored)) so that `merge` resets the value rather than treating the record as "unchanged".
-* **`-2`** re-arms the switch as pending and re-sets the leader to bump the leader epoch, forcing the broker to seal again — the same mechanism as the initial switch-pending mark.
+The leader that requests the phase 2 flag records the leader epoch of its record at `seal - 1` as `lastClassicLeaderEpoch`. Each leader epoch has one leader, and a follower truncates to the leader's log before it appends. If a replica's leader epoch cache has `lastClassicLeaderEpoch` at `seal - 1`, its records below the seal match the records in remote storage.
 
-The negative (abort / re-arm) offsets are only accepted while the switch is still pending — i.e. the partition has not yet committed a seal (`classicToDisklessStartOffset < 0`). Once a seal is committed, diskless data may have been written past it, and reverting to classic would strand that data (and can move consumers backward), so the controller rejects `-1`/`-2` in that state.
+If consolidation is on, a replica checks its local log when it first applies the partition and on every new leader epoch. The broker first stops every fetcher of the partition, including the fetcher of a log directory move, so no fetcher changes the logs during the check. They start again after the leadership change. The replica keeps its log only if all of these are true:
 
-The controller rejects every seal offset, including a downward correction, once the partition is in phase 2 (`classicPrefixInRemoteStorage` is `true`). At that point remote storage holds the classic prefix up to the committed seal, so a change would leave the two out of agreement. The request fails with `INVALID_REQUEST`.
+* Its last record below the seal, if it has one, is in `lastClassicLeaderEpoch`.
+* Consolidation wrote all its records past the seal, in the diskless leader epoch. A replica that missed the seal commit can still hold a classic tail past the seal.
+* Its highest offset in remote storage is below its log end offset. That offset only grows, so a replica that uploaded records and then truncated them keeps it. The WAL pruner would then delete diskless batches that consolidation hasn't uploaded yet. The remote log tasks compute that offset without the log lock, and they install it only if the log didn't truncate in the meantime. So a task that read records that a truncation removed, such as the phase 1 truncation to the seal, can't raise the offset after the check.
+* If a log directory move runs, its future log ends in the leader epoch that the current log has at the same offset. The broker replaces the current log with the future log once both logs end at the same offset, and it doesn't compare their leader epoch caches. A future log that ends at or below the log start offset of the current log also passes. Retention or `DeleteRecords` can move that log start while a partly copied move waits behind other moves. The current log then holds none of the records of the future log, and the move fetcher drops them on its next fetch.
 
-Because a negative offset means the partition is not switched, `merge` also drops the dependent switch metadata (producer states + the diskless leader epoch) whenever an explicit negative `classicToDisklessStartOffset` is applied. This prevents stale state from a previous switch attempt surviving an abort or re-arm; the next `InitDisklessLog` flow re-captures both.
+Otherwise, the broker stops the replica as it stops a deleted partition. It deletes the current and future logs and cancels the remote log tasks of the partition. It keeps the remote log metadata subscription, because the partition stays on the broker. The leadership change in the same metadata delta creates an empty log. The replica then rebuilds its log, leader epoch cache, and producer state from remote storage, like a replica that lost its local log. The new log has no remote progress until the remote log manager computes it from the rebuilt log, so the WAL pruner doesn't delete diskless batches before then. A remote log task that still runs updates only the deleted log. The broker never truncates a log that it keeps, so a kept log only grows.
 
-The command validates before committing: for a concrete (`>= 0`) seal it requires the seal offset to fall within the classic log range `[logStartOffset, logEndOffset]` (read via `listOffsets`), so the seal cannot point past the end of the log or below its start — in either case the classic log would be missing offsets it is supposed to own. Note the end offset is the leader's log end offset, not the replication high watermark, so this does not by itself prove every in-sync replica has replicated up to the seal. The `--dry-run` flag performs this validation and reports the action without writing anything.
+A storage error can stop the deletion of one of the logs. A future log that the broker didn't delete would restart the log directory move on the new log. So if the broker can't delete both logs or cancel the remote log tasks, it marks the replica offline, as it does after a storage error in a leadership change. The broker cancels the remote log tasks even if a deletion fails, so no copy task keeps the remote progress of the old log.
 
-The command also reads the partition when you omit `--offset` or pass an offset `>= 0`. If `classicPrefixInRemoteStorage` is `true` in that read, the command fails before it sends a request, including with `--dry-run`. If the partition already has a committed seal, an explicit offset that exceeds it fails the same way. The `-1` and `-2` offsets don't read the partition, which keeps them usable with `--bootstrap-controller`. For those offsets, the controller does all the checking and `--dry-run` doesn't validate them.
+In phase 2, every rebuild from remote storage starts the local log at the seal. Upstream tiered storage looks up the remote segment that holds the record before the local log start of the source. A classic leader or the current log of a log directory move can still hold local records below the seal, and a segment from a discarded epoch can hold that record too. The tier-state machine looks up the segment that holds `seal - 1` in `lastClassicLeaderEpoch` instead, whatever the local log start of the source is. Each leader epoch has one leader, so the records of that segment below the seal are the committed prefix, even if the segment also covers discarded records past the seal:
 
-## Reconciling the control plane
+* The tier-state machine keeps the epochs of that segment that start below the seal.
+* If the segment ends past the seal, the tier-state machine doesn't restore its producer snapshot. The producer state starts empty at the seal. Sealing aborts undecided transactions, and no transaction is open there.
+* A leader then reads the records from the seal on through consolidation. A follower on the classic fetcher ends at the seal and hands off to consolidation. For more information, see [Forced deletion of the local classic prefix](#forced-deletion-of-the-local-classic-prefix).
 
-The seal offset lives in two places: the KRaft metadata (`classicToDisklessStartOffset`) and the diskless control plane (the `diskless_start_offset` column on the control-plane log entry). The normal switch flow keeps them in sync — the broker initializes the control-plane entry from the committed metadata (Step 5). An operator `seal` override, however, only writes KRaft; the control plane is left untouched, so the two can diverge.
+The record that starts phase 2 bumps the leader epoch. Live replicas then become the leader or followers of a new leader epoch, and run the check. A replica that is offline then, or that a reassignment adds later, runs it when it first applies the partition. Changes that keep the leader epoch, such as ISR changes, don't restart the fetchers, and the replica skips the check for them.
 
-The `kafka-topic-switch.sh repair` command reconciles them. It reads the committed seal from KRaft (via `DescribeTopicPartitions`) and, for each switched partition (`classicToDisklessStartOffset >= 0`), sends a `RepairDisklessLog` request to the partition leader (which owns the control-plane connection). The leader updates `diskless_start_offset` on the existing control-plane entry. Repair only reconciles an entry that already exists — it never creates one; initialization always comes from the regular switch flow. Repairing a partition whose control-plane entry is missing fails with `UNKNOWN_TOPIC_OR_PARTITION` (a stuck switch must be unblocked through the switch flow, not force-initialized here). Partitions that are not switched are skipped.
+For a replica whose log ends below the seal, the check compares the epoch of its last record. The broker recreates such a replica if its last record is in an older epoch, even when its records match, which costs only the rebuild. Replicas skip the check if `lastClassicLeaderEpoch` is `-1`, and their rebuilds use the upstream lookup. These partitions keep the behavior from before the check. The value is `-1` in these cases:
 
-`repair` targets a single partition with `--partition`, or all switched partitions of the topic when omitted. Unlike `seal` (an `ALTER`-authorized controller RPC), `RepairDisklessLog` is a broker RPC routed to the partition leader, since the control-plane write happens there.
+* The prefix was empty when the leader requested the flag, or retention had already removed it.
+* A leader or a controller without this field set the flag before or during a rolling upgrade.
+* A controller without this field wrote a metadata snapshot. A node that doesn't know tag `104` drops it from the snapshots that it writes.
+
+The controller sets the flag only once and doesn't record the epoch for these partitions later.
+
+After an unclean leader election before the switch, a remote segment can cross the seal and hold discarded records past it. A tiered read that starts below the seal ends at the seal: the broker returns only the whole batches that end below it, and the consumer reads the diskless records from the seal on.
+
+## Re-arm a pending switch
+
+Every step of the switch runs on the leader. Only the leader knows its log end offset and the producer states that the seal commits, so `rearm` takes no seal offset.
+
+If a switch doesn't leave the pending state, you can restart it without moving the leader. Run `kafka-topic-switch.sh rearm --topic <topic> --partition <partition>` with `--bootstrap-server` or `--bootstrap-controller`. The command sends the `AlterDisklessSwitch` controller RPC with a seal offset of `-2`. The controller authorizes the RPC as `ALTER` on the cluster. The controller writes a `PartitionChangeRecord` that keeps `classicToDisklessStartOffset` at `-2` and re-sets the leader, which bumps the leader epoch. The leader then seals again and re-drives `InitDisklessLog`, as after any leadership change while the switch is pending. A leader election has the same effect.
+
+The controller rejects the request with `INVALID_REQUEST` in these cases:
+
+* The topic doesn't have `diskless.enable=true`.
+* The switch of the partition isn't pending: `classicToDisklessStartOffset` is `-1` or a committed seal.
+
+To see the switch state of each partition, run `kafka-topic-switch.sh state --topic <topic>`.
+
+## Lower a committed seal
+
+A last-known-leader election in phase 1 can elect a leader whose log ends below the committed seal. That leader marks the partition offline, and no other replica can lead it. For more information, see [Last-known-leader election](#last-known-leader-election). To bring the partition back, lower the seal to the leader's log end offset with `kafka-topic-switch.sh lower-seal --topic <topic> --partition <partition> --offset <offset>`, with `--bootstrap-server` or `--bootstrap-controller`. Then restart the leader.
+
+The command sends the `AlterDisklessSwitch` controller RPC with the new seal. The controller authorizes the RPC as `ALTER` on the cluster. The controller writes a `PartitionChangeRecord` with the new `classicToDisklessStartOffset` and the current leader epoch as the diskless leader epoch, as the leader-driven commit does. The record keeps the leader, the leader epoch, and the producer states.
+
+The partition loses the records between the new seal and the old one. Every replica truncates its classic log to the new seal. The control plane keeps the diskless log, which starts at the old seal. A consumer that reads across the lost offsets gets the diskless records from the old seal on, and the broker doesn't return an error for the missing offsets.
+
+The controller rejects the request with `INVALID_REQUEST` in these cases:
+
+* The topic doesn't have `diskless.enable=true`.
+* The partition has no committed seal: `classicToDisklessStartOffset` is `-1` or `-2`. To restart a pending switch, see [Re-arm a pending switch](#re-arm-a-pending-switch).
+* The partition is in phase 2. Remote storage holds the classic prefix up to the committed seal.
+* The new seal isn't lower than the committed seal.
+
+The command rejects a negative offset before it sends the request, because the controller reads `-2` as a re-arm.

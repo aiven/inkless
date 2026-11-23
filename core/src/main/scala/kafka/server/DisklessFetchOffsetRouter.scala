@@ -19,7 +19,7 @@ package kafka.server
 import io.aiven.inkless.consume.FetchOffsetHandler
 import kafka.server.metadata.InklessMetadataView
 import org.apache.kafka.common.TopicPartition
-import org.apache.kafka.common.errors.ApiException
+import org.apache.kafka.common.errors.{ApiException, LeaderNotAvailableException, OffsetNotAvailableException}
 import org.apache.kafka.common.message.ListOffsetsRequestData.ListOffsetsPartition
 import org.apache.kafka.common.message.ListOffsetsResponseData.ListOffsetsPartitionResponse
 import org.apache.kafka.common.protocol.Errors
@@ -48,8 +48,10 @@ import scala.jdk.OptionConverters.RichOptional
  *      (same rationale as sealed switched replicas: clients may be routed to any ISR replica).
  *   3. Partition that is being switched from classic to diskless
  *      (`classicToDisklessStartOffset == CLASSIC_TO_DISKLESS_SWITCH_PENDING` and managed
- *      replicas enabled, and not a consolidating diskless topic): fetch offset only in the
- *      classic path.
+ *      replicas enabled): fetch offset only in the classic path. A consolidating topic takes this
+ *      path too, because the control plane has no entry for the partition until the switch commits
+ *      the seal. The leader and the in-sync followers answer client requests, because the metadata
+ *      transformer sends clients to any in-sync replica while the switch is pending.
  *   4. Follower requests on a switched partition: ListOffsets requests (used by ReplicaFetcher
  *      for truncation / initial offset bootstrap) must never see diskless offsets, otherwise the
  *      follower would try to truncate to or fetch from offsets that live only in object storage:
@@ -63,7 +65,9 @@ class DisklessFetchOffsetRouter(
   inklessMetadataView: InklessMetadataView,
   disklessManagedReplicasEnabled: Boolean,
   disklessConsolidationEnabled: Boolean,
-  delayedRemoteListOffsetsPurgatory: DelayedOperationPurgatory[DelayedRemoteListOffsets]
+  localBrokerId: Int,
+  delayedRemoteListOffsetsPurgatory: DelayedOperationPurgatory[DelayedRemoteListOffsets],
+  recordTimestampLookupDeferral: () => Unit = () => ()
 ) {
   import DisklessFetchOffsetRouter._
 
@@ -81,6 +85,11 @@ class DisklessFetchOffsetRouter(
    *                                      timestamp can be served by the classic path.
    * @param hasCompleteClassicPrefix      returns whether the local UnifiedLog's high watermark has
    *                                      reached the classic-to-diskless switch offset.
+   * @param classicSearchRange            returns the offset range, from the local UnifiedLog's
+   *                                      `logStartOffset`, that a timestamp search of the local
+   *                                      UnifiedLog can answer from. For a client request the range ends
+   *                                      at the last fetchable offset of the isolation level. The router
+   *                                      reads it before the classic lookup.
    * @param classicFetchOffset            runs the standard Kafka classic-path lookup for the
    *                                      given `(topicPartition, partition, allowFromFollower)`.
    */
@@ -93,6 +102,7 @@ class DisklessFetchOffsetRouter(
     version: Short,
     classicLogStartOffsetProvider: TopicPartition => Option[Long],
     hasCompleteClassicPrefix: (TopicPartition, Long) => Boolean,
+    classicSearchRange: TopicPartition => ClassicSearchRange,
     classicFetchOffset: (TopicPartition, ListOffsetsPartition, Boolean) => ListOffsetsPartitionStatus
   ): ListOffsetsPartitionStatus = {
     val classicToDisklessStartOffset = inklessMetadataView.getClassicToDisklessStartOffset(topicPartition)
@@ -116,23 +126,23 @@ class DisklessFetchOffsetRouter(
 
     def classicLookup(): ListOffsetsPartitionStatus = classicFetchOffset(topicPartition, partition, allowFromFollower)
     def disklessLookup: Lookup = disklessLookupOnJob(job, topicPartition, partition)
-    def disklessLookupOnNewJob: Lookup = disklessLookupOnJob(newJob(), topicPartition, partition, startNow = true)
 
-    // Consolidating diskless topics can still carry CLASSIC_TO_DISKLESS_SWITCH_PENDING in
-    // metadata while the leader serves (or is catching up) from object storage; ListOffsets must
-    // not be forced down the classic-only path in that case (see ReplicaManager diskless fetch
-    // routing for the analogous consolidating carve-out).
-    if (switchPending && disklessManagedReplicasEnabled && !isConsolidatingPartition) {
-      // Case 3.
-      classicFetchOffset(topicPartition, partition, false)
+    if (switchPending && disklessManagedReplicasEnabled) {
+      // Case 3. A follower answers client requests only: a replica fetcher sends its request to the leader.
+      val inSyncReplicaAnswers = !isFollowerRequest && inklessMetadataView.isReplicaInIsr(topicPartition, localBrokerId)
+      classicFetchOffset(topicPartition, partition, inSyncReplicaAnswers)
     } else if (isSwitchedWithClassicAccess && isFollowerRequest) {
       // Case 4.
       classicLookup()
     } else if (isSwitchedWithClassicAccess || isConsolidatingPartition) {
       // Case 2: hybrid, route by timestamp.
       partition.timestamp() match {
-        case ListOffsetsRequest.EARLIEST_LOCAL_TIMESTAMP | ListOffsetsRequest.LATEST_TIERED_TIMESTAMP =>
+        case ListOffsetsRequest.EARLIEST_LOCAL_TIMESTAMP |
+             ListOffsetsRequest.LATEST_TIERED_TIMESTAMP |
+             ListOffsetsRequest.EARLIEST_PENDING_UPLOAD_TIMESTAMP =>
           // These timestamps reference the local UnifiedLog / tiered storage; never route to diskless.
+          // A follower with `follower.fetch.last.tiered.offset.enable` asks for the earliest pending
+          // upload offset, which only the local log knows.
           classicLookup()
 
         case ListOffsetsRequest.EARLIEST_TIMESTAMP =>
@@ -152,7 +162,34 @@ class DisklessFetchOffsetRouter(
 
         case t if t >= 0 =>
           // Specific timestamp: classic first, fall back to diskless on a "no match".
-          classicWithDisklessFallbackLookup(topicPartition, version, classicLookup _, disklessLookup _, disklessLookupOnNewJob _)
+          // A "no match" covers only what the local log could answer from. The diskless lookup reads batches from the
+          // first retained one on, so a local range that ends below that batch leaves offsets that neither leg reads: a
+          // switched replica below the seal, or a consolidating replica that the WAL prune passed. A client lookup also
+          // hides a match at or past the last fetchable offset, so a high watermark below that batch leaves the same
+          // gap. Such a replica gets a retriable error until it catches up, as a consumer fetch does in the same state.
+          // The router reads the range before the search, and the search reads no more than that range. A rebuild
+          // or recreation after the read can cut the log back. The guard then treats the range as unknown.
+          val searchRange = classicSearchRange(topicPartition)
+          // In phase 1 of the switch the broker doesn't consolidate, and the pruner can't move the WAL start past the
+          // seal, which the seal check covers. A DeleteRecords past the seal moves the WAL start over deleted offsets, and
+          // the WAL start check would fail every local miss until phase 2.
+          val consolidationActive =
+            isConsolidatingPartition && !inklessMetadataView.isClassicPrefixWaitingForUpload(topicPartition)
+          def searchableEnd(): Long = if (searchRange.isCurrent()) searchRange.end else ClassicSearchRange.UnknownEnd
+          def checkedDisklessLookup(onJob: () => FetchOffsetHandler.Job, startNow: Boolean): Lookup = {
+            lazy val endBelowSeal = Some(searchableEnd()).filter(_ < classicToDisklessStartOffset)
+            if (hasCommittedSwitchOffset && endBelowSeal.isDefined) {
+              recordTimestampLookupDeferral()
+              failedLookup(prefixNotSearchable(topicPartition, endBelowSeal.get, classicToDisklessStartOffset, version))
+            } else if (consolidationActive)
+              disklessLookupCheckingWalStart(onJob(), topicPartition, partition, startNow, classicToDisklessStartOffset,
+                () => searchableEnd(), version, recordTimestampLookupDeferral)
+            else
+              disklessLookupOnJob(onJob(), topicPartition, partition, startNow)
+          }
+          classicWithDisklessFallbackLookup(topicPartition, version, classicLookup _,
+            () => checkedDisklessLookup(() => job, startNow = false),
+            () => checkedDisklessLookup(newJob, startNow = true))
 
         case _ =>
           // LATEST_TIMESTAMP / MAX_TIMESTAMP: diskless first, classic fallback on empty.
@@ -236,6 +273,18 @@ class DisklessFetchOffsetRouter(
 private[server] object DisklessFetchOffsetRouter {
 
   /**
+   * The offsets that a timestamp search of the local log can answer from, from its log start up to `end`.
+   *
+   * @param isCurrent checks whether the range still holds: false once the broker replaces or truncates the log.
+   */
+  final case class ClassicSearchRange(end: Long, isCurrent: () => Boolean)
+
+  object ClassicSearchRange {
+    val UnknownEnd: Long = -1L
+    val Unknown: ClassicSearchRange = ClassicSearchRange(UnknownEnd, () => false)
+  }
+
+  /**
    * The shape every code path produces: a result future plus a cancel hook the purgatory can
    * pull on. This is the same record `ListOffsetsPartitionStatus` carries around, which means
    * we don't need a separate intermediate type and `asStatus` doesn't have to convert.
@@ -302,6 +351,59 @@ private[server] object DisklessFetchOffsetRouter {
     val task = job.add(tp, partition)
     if (startNow) job.start()
     new AsyncOffsetReadFutureHolder(job.cancelHandler(), task)
+  }
+
+  /**
+   * Diskless timestamp lookup that also reads the WAL start, for a partition whose local log the WAL prune can
+   * pass. The diskless log starts at the WAL start or, on a switched partition, at the seal if that is later.
+   * Fails with [[prefixNotSearchable]] if the searchable end of the local log is before that start.
+   */
+  private def disklessLookupCheckingWalStart(job: FetchOffsetHandler.Job,
+                                             tp: TopicPartition,
+                                             partition: ListOffsetsPartition,
+                                             startNow: Boolean,
+                                             classicToDisklessStartOffset: Long,
+                                             searchableEnd: () => Long,
+                                             version: Short,
+                                             recordDeferral: () => Unit): Lookup = {
+    val task = job.add(tp, partition)
+    val walStart = job.addWalStart(tp)
+    if (startNow) job.start()
+    val checked = task.thenCombine[FileRecordsOrError, FileRecordsOrError](walStart, (result, walStartResult) =>
+      if (result.hasException) result
+      else if (walStartResult.hasException) walStartResult
+      else {
+        // A missing or negative WAL start fails the check: the local log might end before the diskless log.
+        val disklessStart = walStartResult.timestampAndOffset.toScala.map(_.offset).filter(_ >= 0L)
+          .fold(Long.MaxValue)(walStartOffset => math.max(walStartOffset, classicToDisklessStartOffset))
+        val end = searchableEnd()
+        if (end < disklessStart) {
+          recordDeferral()
+          prefixNotSearchable(tp, end, disklessStart, version)
+        } else result
+      })
+    new AsyncOffsetReadFutureHolder(job.cancelHandler(), checked)
+  }
+
+  private def failedLookup(result: FileRecordsOrError): Lookup =
+    new AsyncOffsetReadFutureHolder(NoOpCancel, CompletableFuture.completedFuture(result))
+
+  /**
+   * Returns the retriable error for a timestamp lookup on a replica whose local log ends below the diskless log.
+   * Versions before 5 get `LEADER_NOT_AVAILABLE`, as for the lagging high watermark in `Partition`.
+   */
+  private def prefixNotSearchable(tp: TopicPartition,
+                                  searchableEnd: Long,
+                                  disklessStart: Long,
+                                  version: Short): FileRecordsOrError = {
+    val searchable =
+      if (searchableEnd == ClassicSearchRange.UnknownEnd) "the local log changed during the lookup"
+      else s"the local log can search up to offset $searchableEnd"
+    val message = s"Failed to fetch offsets by timestamp for partition $tp: $searchable, below the start of the " +
+      s"diskless log ($disklessStart), until it rebuilds from the remote tier."
+    val error: ApiException =
+      if (version >= 5) new OffsetNotAvailableException(message) else new LeaderNotAvailableException(message)
+    new FileRecordsOrError(Optional.of(error), Optional.empty())
   }
 
   /**

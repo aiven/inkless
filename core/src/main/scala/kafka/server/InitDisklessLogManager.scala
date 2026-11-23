@@ -22,6 +22,7 @@ import kafka.server.InitDisklessLogManager._
 import kafka.utils.Logging
 import org.apache.kafka.common.{TopicPartition, Uuid}
 import org.apache.kafka.common.utils.Time
+import org.apache.kafka.metadata.InitDisklessLogFields
 import org.apache.kafka.server.common.NodeToControllerChannelManager
 import org.apache.kafka.server.metrics.KafkaMetricsGroup
 import org.apache.kafka.server.util.Scheduler
@@ -38,7 +39,8 @@ class InitDisklessLogManager(
   scheduler: Scheduler,
   brokerId: Int,
   brokerEpochSupplier: () => Long,
-  time: Time = Time.SYSTEM
+  time: Time = Time.SYSTEM,
+  maxProducerStateEntries: Int = InitDisklessLogFields.MAX_PRODUCER_STATE_ENTRIES
 ) extends Logging {
 
   this.logIdent = s"[InitDisklessLogManager broker=$brokerId] "
@@ -72,7 +74,8 @@ class InitDisklessLogManager(
     lingerMs = lingerMs,
     retryPeriodMs = retryPeriodMs,
     maxRetryTimeMs = maxRetryTimeMs,
-    onRetry = () => metrics.markRetried()
+    onRetry = () => metrics.markRetried(),
+    maxProducerStateEntries = maxProducerStateEntries
   )
   private val awaitingMetadataQueue = new AwaitingMetadataBatchQueue(
     controlPlane = controlPlane,
@@ -150,6 +153,11 @@ class InitDisklessLogManager(
     })
 
     val tp = partition.topicPartition
+    // An entry with another topic ID belongs to a deleted topic that had the same name. Keeping it
+    // would skip the init of this topic.
+    if (Option(tracked.get(tp)).exists(_.topicId != topicId)) {
+      removePartition(tp)
+    }
     val inserted = tracked.putIfAbsent(tp, waitingState) == null
 
     // Evaluate immediately for both new and already tracked entries:
@@ -201,29 +209,42 @@ class InitDisklessLogManager(
 
   private def enqueueSendingToController(tp: TopicPartition, state: SendingToController): Unit = {
     sendingToControllerQueue.enqueue(tp, state).foreach { accepted =>
-      if (accepted) {
-        tracked.computeIfPresent(tp, (_, initDisklessLogState) =>
-          initDisklessLogState match {
-            case sendingToController: SendingToController => sendingToController.onSuccess
-            case _ => initDisklessLogState
-          }
-        )
-      } else {
-        // PermanentFailure on controller call (e.g. FENCED_LEADER_EPOCH /
-        // INVALID_REQUEST) or local pre-flight rejection (leader/log lost):
-        // the init diskless log operation won't progress.
-        // Only count a failure when this callback observed `tp` as still
-        // tracked. `removePartition` completes the queue promise with `false`
-        // (via `queue.remove`) AFTER clearing `tracked`, so a cancellation
-        // finds nothing to remove and must not increment the failed meter.
-        // A stale rejection after a seal commit must not remove the state that
-        // replaced this one.
-        if (removeIfStillTracked(tp, state)) {
-          metrics.markFailed()
-        }
-      }
-      refreshMetrics(tp)
+      onSendingToControllerCompleted(tp, state, accepted)
     }(ExecutionContext.parasitic)
+  }
+
+  // Handles the outcome of the InitDisklessLog request that `state` queued. Visible for testing.
+  private[server] def onSendingToControllerCompleted(
+    tp: TopicPartition,
+    state: SendingToController,
+    accepted: Boolean
+  ): Unit = {
+    if (accepted) {
+      // Advance only the state that queued this request, compared by reference as in
+      // `enqueueAwaitingMetadata`. The queue completes a detached promise outside its lock. A late
+      // response for a replaced state must leave the replacement to wait for its own request.
+      tracked.computeIfPresent(tp, (_, initDisklessLogState) =>
+        initDisklessLogState match {
+          case sendingToController: SendingToController if sendingToController eq state =>
+            sendingToController.onSuccess
+          case _ => initDisklessLogState
+        }
+      )
+    } else {
+      // PermanentFailure on controller call (such as `FENCED_LEADER_EPOCH` or
+      // `INVALID_REQUEST`) or local pre-flight rejection (leader/log lost):
+      // the init diskless log operation won't progress.
+      // Only count a failure when this callback observed `tp` as still
+      // tracked. `removePartition` completes the queue promise with `false`
+      // (via `queue.remove`) AFTER clearing `tracked`, so a cancellation
+      // finds nothing to remove and must not increment the failed meter.
+      // A stale rejection after a seal commit must not remove the state that
+      // replaced this one.
+      if (removeIfStillTracked(tp, state)) {
+        metrics.markFailed()
+      }
+    }
+    refreshMetrics(tp)
   }
 
   // Removes `tp` only while it still holds `state`, compared by reference as in `enqueueAwaitingMetadata`.
