@@ -14,13 +14,15 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+import json
 import os
 import re
 import shlex
+import time
 import uuid
 
 from ducktape.cluster.remoteaccount import RemoteCommandError
-from ducktape.mark import matrix
+from ducktape.mark import matrix, parametrize
 from ducktape.mark.resource import cluster
 from ducktape.tests.test import Test, TestContext
 from ducktape.utils.util import wait_until
@@ -67,7 +69,8 @@ class InklessClassicToDisklessSwitchTest(Test):
     Each test belongs to one of these categories:
 
     - Category A covers post-switch data availability.
-    - Category B covers mid-switch fault tolerance, with faults injected during the switch.
+    - Category B covers mid-switch fault tolerance. The test injects each fault while
+      it keeps the switch in one step, or the fault itself stalls the switch.
     - Category C covers operational scenarios, such as a concurrent switch.
     - Category D covers faults between the seal commit and phase 2.
 
@@ -173,13 +176,15 @@ class InklessClassicToDisklessSwitchTest(Test):
     SWITCH_JMX_ATTRIBUTES = ["Value"]
 
     def _create_kafka(self, num_nodes=None, controller_num_nodes=1,
-                      scrape_switch_state_jmx=False, consolidation=True):
+                      scrape_switch_state_jmx=False, consolidation=True, server_props=None):
         """Create the switch test cluster.
 
         With ``consolidation``, brokers upload the classic prefix of a switched
         partition to tiered storage on MinIO. The controller then sets
         ``classicPrefixInRemoteStorage``, which starts phase 2. Production
         brokers consolidate, so this is the default.
+
+        ``server_props`` lists extra ``[name, value]`` broker config overrides.
         """
         if num_nodes is None:
             num_nodes = self.num_brokers
@@ -199,6 +204,7 @@ class InklessClassicToDisklessSwitchTest(Test):
             # The consolidation template makes new topics diskless by default. The switch
             # tests create classic topics, so keep the classic default.
             server_prop_overrides.append(["log.diskless.enable", "false"])
+        server_prop_overrides.extend(server_props or [])
         self.kafka = KafkaService(
             self.test_context,
             num_nodes=num_nodes,
@@ -657,7 +663,13 @@ class InklessClassicToDisklessSwitchTest(Test):
     # -----------------------------------------------------------------------
 
     def _start_producer(self, topic=None, num_nodes=1, max_messages=-1, enable_idempotence=True,
-                        throughput=10000):
+                        throughput=10000, retries=None):
+        """Start a producer.
+
+        With idempotence, ``retries`` caps the attempts of each record and sets
+        ``delivery.timeout.ms`` to ``retries`` request timeouts of 30 s.
+        Without it, a record expires after the 120 s default.
+        """
         if topic is None:
             topic = self.topic
         producer = VerifiableProducer(
@@ -670,6 +682,7 @@ class InklessClassicToDisklessSwitchTest(Test):
             message_validator=is_int_with_prefix,
             enable_idempotence=enable_idempotence,
             repeating_keys=max_messages if max_messages > 0 else 10000,
+            retries=retries,
         )
         producer.start()
         return producer
@@ -694,12 +707,24 @@ class InklessClassicToDisklessSwitchTest(Test):
         producer.stop()
         assert not producer.worker_errors, "Unexpected producer errors: %s" % producer.worker_errors
         assert producer.num_not_acked == 0, \
-            "Producer failed to send %d records to %s, for example %s" % \
-            (producer.num_not_acked, producer.topic, producer.not_acked[:5])
+            "Producer failed to send %d records to %s, for example %s. Send errors: %s" % \
+            (producer.num_not_acked, producer.topic, producer.not_acked[:5], self._send_errors(producer))
         self._record_acked(producer)
         acked = producer.num_acked
         producer.free()
         return acked
+
+    def _send_errors(self, producer, limit=3):
+        """Returns the exception and message of the first ``limit`` failed sends of ``producer``."""
+        errors = []
+        for node in producer.nodes:
+            cmd = "grep -m %d producer_send_error %s" % (limit, VerifiableProducer.STDOUT_CAPTURE)
+            for line in node.account.ssh_capture(cmd, allow_fail=True):
+                line = line.decode("utf-8") if isinstance(line, bytes) else line
+                data = producer.try_parse_json(line.strip())
+                if data is not None:
+                    errors.append("%s: %s" % (data.get("exception"), data.get("message")))
+        return errors[:limit]
 
     def _record_acked(self, producer):
         """Add every record that ``producer`` saw acknowledged to the ledger of its topic.
@@ -1872,217 +1897,259 @@ class InklessClassicToDisklessSwitchTest(Test):
             "Data loss: produced %d but consumed only %d" % (total_produced, total_consumed)
         self._assert_all_acked_records_readable(context="after a switch under a degraded network")
 
-    @cluster(num_nodes=6)
-    @matrix(metadata_quorum=[quorum.isolated_kraft])
-    def test_switch_leader_restart(self, metadata_quorum) -> None:
-        """Restart the leader broker during switch. Verify switch
-        completes and all data is readable via fresh consumer.
+    # Category B holds the switch in one step, injects the fault, and only then
+    # releases the hold. The fault can't land before or after that step:
+    #
+    # - ``replication`` holds step 3 in ``WaitingForReplication``. A network
+    #   partition cuts a follower of partition 0 off from the other brokers while
+    #   a producer writes, so no leader's high watermark reaches its log end
+    #   offset. The partition leaves the follower connected to the controller, and
+    #   the raised ``replica.lag.time.max.ms`` keeps it in the ISR.
+    # - ``control_plane`` holds step 5 in ``AwaitingMetadata``. The test blocks
+    #   Postgres during the ``replication`` hold and then heals the network
+    #   partition. The controller commits the seal, and control-plane init retries
+    #   until Postgres is back.
+    HOLD_STATES = {"replication": "WaitingForReplication", "control_plane": "AwaitingMetadata"}
+    HOLD_REPLICA_LAG_TIME_MAX_MS = 300_000
+    HOLD_MIN_AGE_MS = 5_000
+    HOLD_PAUSE_MS = 30_000
+    # A follower crash ends the replication hold: the controller fences the follower
+    # and drops it from the ISR. The controller failover heals the network partition
+    # while the quorum has no leader. The leaders then send `InitDisklessLog` to that
+    # quorum. The other faults leave the hold in place.
+    FAULTS_THAT_END_THE_HOLD = ("follower_sigkill", "controller_failover")
 
-        Runs under a degraded broker network (200 ms latency, 2 Mbit/s) and
-        with 30 partitions so the restart reliably overlaps a partition still
-        in SendingToController or AwaitingMetadata; the JMX assertion at the
-        end fails the test if that overlap never happened."""
-        self.num_partitions = 30
-        self._create_kafka(scrape_switch_state_jmx=True)
-        self.kafka.start()
-        self._create_classic_topic()
+    def _wait_for_broker_in_state(self, node, state, min_oldest_age_ms, timeout_sec=120):
+        """Wait until a fresh JMX sample of ``node`` shows a partition in ``state`` for ``min_oldest_age_ms``.
 
-        self._start_trogdor()
-        degrade = self._degrade_network()
-
-        producer = self._start_producer(max_messages=-1)
-        self._wait_for_steady_production(producer, min_acked=5000)
-
-        self._switch_topic_to_diskless()
-
-        leader_node = self._get_leader_node(partition=0)
-        self._restart_broker(leader_node)
-
-        self._wait_for_switch_complete()
-        self._wait_for_steady_production(producer, min_acked=producer.num_acked + 5000, timeout_sec=180)
-
-        self._stop_producer(producer)
-
-        self._assert_mid_switch_observed()
-
-        degrade.stop()
-        degrade.wait_for_done(timeout_sec=60)
-        self._stop_trogdor()
-
-        self._assert_all_acked_records_readable(context="after a leader restart during the switch")
-
-    @cluster(num_nodes=6)
-    @matrix(
-        metadata_quorum=[quorum.isolated_kraft],
-        leader_failure_mode=["sigkill", "sigstop"],
-    )
-    def test_switch_leader_crash(self, metadata_quorum, leader_failure_mode) -> None:
-        """Take down the leader during switch via either SIGKILL or SIGSTOP
-        and verify switch completes plus all data is recoverable.
-
-        ``sigkill`` exercises hard-loss-of-in-memory-state recovery: the broker
-        is killed, restarted, and must rebuild its InitDisklessLogManager state
-        from disk and incoming metadata.
-
-        ``sigstop`` (Trogdor ProcessStopFaultSpec) freezes the broker process
-        while keeping in-memory state intact: the controller and other brokers
-        observe it as unresponsive, leadership/switch progress on partitions
-        led by it must continue, and after SIGCONT the broker should rejoin and
-        catch up without re-issuing duplicate InitDisklessLog requests."""
-        self.num_partitions = 30
-        self._create_kafka(scrape_switch_state_jmx=True)
-        self.kafka.start()
-        self._create_classic_topic()
-
-        self._start_trogdor()
-        degrade = self._degrade_network()
-
-        producer = self._start_producer(max_messages=-1)
-        self._wait_for_steady_production(producer, min_acked=5000)
-
-        self._switch_topic_to_diskless()
-
-        leader_node = self._get_leader_node(partition=0)
-        pause_duration_ms = 30_000
-        if leader_failure_mode == "sigkill":
-            self._stop_broker(leader_node, clean_shutdown=False)
-            self._start_broker(leader_node)
-        elif leader_failure_mode == "sigstop":
-            leader_pid = self._broker_pid(leader_node)
-            pause = self._pause_broker_process(leader_node, duration_ms=pause_duration_ms)
-            # Confirm the fault actually took effect: a silent no-op here would
-            # let the whole scenario pass without ever freezing the leader.
-            self._wait_for_broker_stopped(leader_node, leader_pid)
-            pause.wait_for_done(timeout_sec=pause_duration_ms // 1000 + 60)
-            self._wait_for_broker_running(leader_node, leader_pid)
-        else:
-            raise AssertionError("Unknown leader_failure_mode: %s" % leader_failure_mode)
-
-        self._wait_for_switch_complete()
-
-        self._wait_for_steady_production(
-            producer,
-            min_acked=producer.num_acked + 5000,
-            timeout_sec=240,
-            err_msg="Producer did not recover after leader %s" % leader_failure_mode,
-            worker_err_msg="Producer errors after leader %s during switch: %%s" % leader_failure_mode,
-        )
-        self._stop_producer(producer)
-
-        self._assert_mid_switch_observed()
-
-        degrade.stop()
-        degrade.wait_for_done(timeout_sec=60)
-        self._stop_trogdor()
-
-        self._assert_all_acked_records_readable(context="after a leader %s during the switch" % leader_failure_mode)
-
-    @cluster(num_nodes=6)
-    @matrix(metadata_quorum=[quorum.isolated_kraft])
-    def test_switch_follower_crash_with_lagged_hw(self, metadata_quorum) -> None:
-        """SIGKILL a follower mid-switch while the leader's HW still lags
-        its LEO, then verify a fresh consumer reads every produced record
-        even after leadership moves back to the restarted broker.
+        Only samples taken after the wait starts count. The cluster-wide waits
+        can pass on another broker's history while ``node`` is in an earlier
+        state.
         """
-        self.num_partitions = 30
-        self._create_kafka(scrape_switch_state_jmx=True)
+        idx = self.kafka.idx(node)
+        count_key, age_key = ("%s:Value" % obj for obj in self.SWITCH_STATE_GAUGES[state])
+        start_sec = int(time.time())
+        last = {}
+
+        def check():
+            try:
+                self.kafka.read_jmx_output(idx, node)
+            except Exception as e:
+                self.logger.debug("Failed to read JMX from broker %d: %s", idx, e)
+                return False
+            samples = self.kafka.jmx_stats[idx - 1]
+            fresh = [t for t in samples if t >= start_sec]
+            if not fresh:
+                return False
+            sample = samples[max(fresh)]
+            last["count"] = sample.get(count_key, 0)
+            last["oldest_age_ms"] = sample.get(age_key, 0)
+            return last["count"] > 0 and last["oldest_age_ms"] >= min_oldest_age_ms
+
+        wait_until(check, timeout_sec=timeout_sec, backoff_sec=2,
+                   err_msg=lambda: "Broker %d didn't keep a partition in %s for %d ms within %ds (last sample: %s)" %
+                           (idx, state, min_oldest_age_ms, timeout_sec, last))
+
+    def _wait_for_network_partition_active(self, task, nodes, timeout_sec=60):
+        """Wait until the Trogdor agent on each of ``nodes`` reports the iptables rules of ``task`` in place.
+
+        ``create_task`` returns before the agents install the rules.
+        """
+        expected = "created network partition %s" % task.id
+        last = {}
+
+        def check():
+            status = self.trogdor.tasks()["tasks"][task.id].get("status")
+            last.clear()
+            last.update(status if isinstance(status, dict) else {"status": status})
+            return all(last.get(node.name) == expected for node in nodes)
+
+        wait_until(check, timeout_sec=timeout_sec, backoff_sec=1,
+                   err_msg=lambda: "Trogdor didn't report %s active on every node within %ds (status: %s)" %
+                           (task.id, timeout_sec, last))
+
+    def _wait_for_acks_to_stop(self, producer, partition=0, window_sec=3, timeout_sec=60):
+        """Wait until ``producer`` doesn't get an ack for ``partition`` over ``window_sec``.
+
+        With ``acks=all``, the acks stop once a follower in the ISR stops
+        fetching. The leader's log end offset then runs ahead of its high
+        watermark.
+        """
+        def acked():
+            return sum(len(values) for tp, values in producer.acked_by_partition.items()
+                       if tp.partition == partition)
+
+        def check():
+            before = acked()
+            time.sleep(window_sec)
+            return acked() == before
+
+        wait_until(check, timeout_sec=timeout_sec, backoff_sec=0,
+                   err_msg="The producer kept getting acks for partition %d after %ds" % (partition, timeout_sec))
+
+    def _assert_switch_state_held(self, state, timeout_sec=60):
+        """Assert that a live broker tracks a partition in ``state`` in a sample taken after the call starts.
+
+        Every live broker must report a fresh sample. After a restart or a
+        pause, the newest sample in memory can predate the fault.
+        """
+        count_key = "%s:Value" % self.SWITCH_STATE_GAUGES[state][0]
+        start_sec = int(time.time())
+        counts = {}
+
+        def check():
+            counts.clear()
+            for node in self.kafka.nodes:
+                if not self.kafka.pids(node):
+                    continue
+                idx = self.kafka.idx(node)
+                try:
+                    self.kafka.read_jmx_output(idx, node)
+                except Exception as e:
+                    self.logger.debug("Failed to read JMX from broker %d: %s", idx, e)
+                    return False
+                samples = self.kafka.jmx_stats[idx - 1]
+                fresh = [t for t in samples if t >= start_sec and count_key in samples[t]]
+                if not fresh:
+                    return False
+                counts[idx] = samples[max(fresh)][count_key]
+            return bool(counts)
+
+        wait_until(check, timeout_sec=timeout_sec, backoff_sec=2,
+                   err_msg="Live brokers didn't report a fresh %s sample within %ds" % (state, timeout_sec))
+        assert sum(counts.values()) > 0, \
+            "The fault released the %s hold before the test did (fresh counts by broker: %s)" % (state, counts)
+
+    @cluster(num_nodes=8)
+    @parametrize(metadata_quorum=quorum.isolated_kraft, hold="replication", fault="follower_sigkill")
+    @parametrize(metadata_quorum=quorum.isolated_kraft, hold="replication", fault="leader_sigkill")
+    @parametrize(metadata_quorum=quorum.isolated_kraft, hold="replication", fault="controller_failover")
+    @parametrize(metadata_quorum=quorum.isolated_kraft, hold="control_plane", fault="leader_sigstop")
+    @parametrize(metadata_quorum=quorum.isolated_kraft, hold="control_plane", fault="rolling_restart")
+    def test_fault_before_control_plane_init(self, metadata_quorum, hold, fault) -> None:
+        """Inject ``fault`` while ``hold`` keeps the switch before control-plane init.
+
+        A producer writes for the whole test. The faults:
+
+        - ``follower_sigkill`` kills the cut-off follower while the leaders'
+          high watermarks lag their log end offsets. After the switch, a
+          preferred leader election makes that follower lead the partitions it
+          prefers, so consumers read from its log.
+        - ``leader_sigkill`` kills the leader of partition 0. The new leader
+          seals again and re-drives ``InitDisklessLog``.
+        - ``controller_failover`` runs 3 controllers. It stops the active
+          controller and one more, then heals the network partition. The
+          leaders send ``InitDisklessLog`` to a quorum without a leader. Once a
+          request has been pending for 10 s, the test starts the second
+          controller, and the requests retry until the 2 live controllers
+          elect a leader.
+        - ``leader_sigstop`` freezes the leader of partition 0 for 30 s. The
+          controller fences it, and the new leader initializes the control
+          plane from metadata.
+        - ``rolling_restart`` restarts every broker while Postgres is down.
+
+        After the fault, the test asserts that the hold is still in place,
+        unless the fault ends it. After the release, the test waits for phase
+        2 on every partition and checks every record across the seal.
+        """
+        self.num_partitions = 6
+        self._create_kafka(
+            controller_num_nodes=3 if fault == "controller_failover" else 1,
+            scrape_switch_state_jmx=True,
+            server_props=[["replica.lag.time.max.ms", str(self.HOLD_REPLICA_LAG_TIME_MAX_MS)]],
+        )
         self.kafka.start()
         self._create_classic_topic()
-
+        self.verifier = ConsolidationVerifier(self.kafka)
         self._start_trogdor()
-        degrade = self._degrade_network()
 
-        producer = self._start_producer(max_messages=-1)
+        # The holds stall produce requests. A broker that is down or sealed rejects a
+        # send within a second, and the retry backoff stays at 1 s. The retries keep a
+        # record alive for 1,000 attempts and 8 hours, longer than any hold.
+        producer = self._start_producer(throughput=2000, retries=1000)
         self._wait_for_steady_production(producer, min_acked=5000)
 
-        self._switch_topic_to_diskless()
+        follower = self._get_follower_nodes(partition=0)[0]
+        others = [n for n in self.kafka.nodes if n != follower]
+        network_partition = self.trogdor.create_task(
+            "follower_partition",
+            NetworkPartitionFaultSpec(0, 10 * 60 * 1000, [[follower], others]),
+        )
+        self._wait_for_network_partition_active(network_partition, self.kafka.nodes)
+        # The follower stays in the ISR, so partition 0 stops acking once the leader runs ahead.
+        self._wait_for_acks_to_stop(producer)
+        self._switch_topic_to_diskless(node=others[0])
+        self._wait_for_mid_switch_state("WaitingForReplication", min_oldest_age_ms=self.HOLD_MIN_AGE_MS)
 
-        target_follower = self._get_follower_nodes(partition=0)[0]
-        self.logger.info("Killing follower %s mid-switch", target_follower.account.hostname)
-        self._stop_broker(target_follower, clean_shutdown=False)
-        self._start_broker(target_follower)
+        if hold == "control_plane":
+            self.verifier.block_dependency("control_plane")
+            network_partition.stop()
+            network_partition.wait_for_done(timeout_sec=120)
+            network_partition = None
+            self._wait_for_mid_switch_state("AwaitingMetadata", min_oldest_age_ms=self.HOLD_MIN_AGE_MS)
+
+        leader = self._get_leader_node(partition=0)
+        if fault in ("leader_sigkill", "leader_sigstop"):
+            self._wait_for_broker_in_state(leader, self.HOLD_STATES[hold], self.HOLD_MIN_AGE_MS)
+        stopped_controller = None
+        if fault == "follower_sigkill":
+            self._stop_broker(follower, clean_shutdown=False)
+            self._start_broker(follower)
+        elif fault == "leader_sigkill":
+            self._stop_broker(leader, clean_shutdown=False)
+            self._start_broker(leader)
+        elif fault == "controller_failover":
+            controllers = self.kafka.isolated_controller_quorum
+            stopped_controller = self._active_controller_node()
+            old_leader_id = controllers.node_id_as_isolated_controller(stopped_controller)
+            standby = [n for n in controllers.nodes if n != stopped_controller][0]
+            controllers.stop_node(stopped_controller, clean_shutdown=False)
+            controllers.stop_node(standby, clean_shutdown=False)
+            network_partition.stop()
+            network_partition.wait_for_done(timeout_sec=120)
+            network_partition = None
+            self._wait_for_mid_switch_state("SendingToController", min_oldest_age_ms=10_000)
+            controllers.start_node(standby)
+            self._wait_for_new_active_controller(old_leader_id)
+        elif fault == "leader_sigstop":
+            leader_pid = self._broker_pid(leader)
+            pause = self._pause_broker_process(leader, duration_ms=self.HOLD_PAUSE_MS)
+            self._wait_for_broker_stopped(leader, leader_pid)
+            pause.wait_for_done(timeout_sec=self.HOLD_PAUSE_MS // 1000 + 60)
+            self._wait_for_broker_running(leader, leader_pid)
+        elif fault == "rolling_restart":
+            self._rolling_restart()
+        else:
+            raise AssertionError("Unknown fault: %s" % fault)
+
+        if fault not in self.FAULTS_THAT_END_THE_HOLD:
+            self._assert_switch_state_held(self.HOLD_STATES[hold])
+
+        if network_partition is not None:
+            network_partition.stop()
+            network_partition.wait_for_done(timeout_sec=120)
+        if hold == "control_plane":
+            self.verifier.heal_dependency("control_plane")
 
         self._wait_for_switch_complete()
+        if stopped_controller is not None:
+            self.kafka.isolated_controller_quorum.start_node(stopped_controller)
 
         self._wait_for_steady_production(
             producer,
-            min_acked=producer.num_acked + 5000,
+            min_acked=producer.num_acked + 3000,
             timeout_sec=240,
-            err_msg="Producer did not recover after follower SIGKILL",
-            worker_err_msg="Producer errors after follower SIGKILL during switch: %s",
+            err_msg="Producer did not recover after %s in the %s hold" % (fault, hold),
+            worker_err_msg="Producer errors after %s in the %s hold: %%s" % (fault, hold),
         )
         self._stop_producer(producer)
-
-        self._assert_mid_switch_observed()
-
-        degrade.stop()
-        degrade.wait_for_done(timeout_sec=60)
         self._stop_trogdor()
 
-        # Heal ISR on every partition so preferred-replica election can
-        # actually move leadership (a replica out of ISR cannot take over).
-        self._wait_for_all_partitions_isr_full()
-
-        # Force the previously-killed broker back into a leader role for
-        # the partitions where it is the preferred replica. Its local log
-        # contains the pre-crash classic data with a possibly-stale HW;
-        # only the fixed code path arms a replica fetcher to advance that
-        # HW to the seal so reads below the seal are not clamped.
-        self._run_preferred_leader_election()
-
-        self._assert_all_acked_records_readable(context="after a follower SIGKILL during the switch")
-
-    @cluster(num_nodes=6)
-    @matrix(metadata_quorum=[quorum.isolated_kraft])
-    def test_switch_rolling_restart(self, metadata_quorum) -> None:
-        """Rolling restart all brokers during switch. Verify switch
-        completes and data is fully readable.
-
-        With a degraded broker network and 30 partitions, every broker bounce
-        in the rolling sequence lands while at least one other broker still
-        has partitions mid-switch. The JMX assertion at the end fails the
-        test if no partition was ever observed in the RPC-bounded states."""
-        self.num_partitions = 30
-        self._create_kafka(scrape_switch_state_jmx=True)
-        self.kafka.start()
-        self._create_classic_topic()
-
-        self._start_trogdor()
-        degrade = self._degrade_network()
-
-        # Lower throughput than the default 10k/s: under the degraded network
-        # (200ms latency, 2 Mbps cap) the cluster can only drain ~4.5k/s, so a
-        # higher target makes the producer accumulator grow unbounded across
-        # the rolling restart and OOMs the VerifiableProducer JVM.
-        producer = self._start_producer(max_messages=-1, throughput=3000)
-        self._wait_for_steady_production(producer, min_acked=5000)
-
-        self._switch_topic_to_diskless()
-
-        self._rolling_restart()
-
-        # After the final bounce, wait for cluster-wide ISR recovery before
-        # using switch-complete JMX. This avoids racing leaders that still
-        # cannot finish init work because their replicas have not caught up.
         self._wait_for_all_partitions_isr_full(timeout_sec=240)
-        self._wait_for_switch_complete()
+        if fault == "follower_sigkill":
+            self._run_preferred_leader_election()
 
-        self._wait_for_steady_production(
-            producer,
-            min_acked=producer.num_acked + 5000,
-            timeout_sec=240,
-            err_msg="Producer did not recover after rolling restart",
-            worker_err_msg="Producer errors after rolling restart during switch: %s",
-        )
-        self._stop_producer(producer)
-
-        self._assert_mid_switch_observed()
-
-        degrade.stop()
-        degrade.wait_for_done(timeout_sec=60)
-        self._stop_trogdor()
-
-        self._assert_all_acked_records_readable(context="after a rolling restart during the switch")
+        self._assert_all_acked_records_readable(context="after %s in the %s hold" % (fault, hold))
 
     @cluster(num_nodes=6)
     @matrix(metadata_quorum=[quorum.isolated_kraft])
@@ -2371,36 +2438,72 @@ class InklessClassicToDisklessSwitchTest(Test):
             err_msg="No controller replaced controller %d within %ds" % (old_leader_id, timeout_sec),
         )
 
-    def _reassignment_for_partition_0(self):
-        """Returns a reassignment that moves one follower of partition 0 to the broker outside its replicas."""
-        replicas = [self.kafka.idx(n) for n in self.kafka.replicas(self.topic, partition=0)]
-        leader = self.kafka.idx(self._get_leader_node(partition=0))
+    def _reassignment_for_partition(self, partition=0):
+        """Returns a reassignment that moves one follower of ``partition`` to a broker outside its replicas."""
+        replicas = [self.kafka.idx(n) for n in self.kafka.replicas(self.topic, partition=partition)]
+        leader = self.kafka.idx(self._get_leader_node(partition=partition))
         spare = [self.kafka.idx(n) for n in self.kafka.nodes if self.kafka.idx(n) not in replicas]
-        assert spare, "Partition 0 of %s already uses every broker: %s" % (self.topic, replicas)
+        assert spare, "Partition %d of %s already uses every broker: %s" % (partition, self.topic, replicas)
         follower = [r for r in replicas if r != leader][0]
         target = [spare[0] if r == follower else r for r in replicas]
         return {
             "version": 1,
-            "partitions": [{"topic": self.topic, "partition": 0, "replicas": target}],
+            "partitions": [{"topic": self.topic, "partition": partition, "replicas": target}],
         }
 
     def _wait_for_reassignment(self, reassignment, timeout_sec=None):
         if timeout_sec is None:
             timeout_sec = self.PHASE_2_TIMEOUT_SEC
+        partition = reassignment["partitions"][0]["partition"]
         target = reassignment["partitions"][0]["replicas"]
 
         def done():
             try:
                 if not self.kafka.verify_reassign_partitions(reassignment):
                     return False
-                replicas = [self.kafka.idx(n) for n in self.kafka.replicas(self.topic, partition=0)]
+                replicas = [self.kafka.idx(n) for n in self.kafka.replicas(self.topic, partition=partition)]
                 return sorted(replicas) == sorted(target)
             except (Exception, RemoteCommandError) as e:
-                self.logger.debug("Failed to verify the reassignment of %s-0: %s", self.topic, e)
+                self.logger.debug("Failed to verify the reassignment of %s-%d: %s", self.topic, partition, e)
                 return False
 
         wait_until(done, timeout_sec=timeout_sec, backoff_sec=5,
-                   err_msg="Reassignment of %s-0 to %s didn't finish within %ds" % (self.topic, target, timeout_sec))
+                   err_msg="Reassignment of %s-%d to %s didn't finish within %ds" %
+                           (self.topic, partition, target, timeout_sec))
+
+    def _reassign_in_phase_2_under_load(self, partition=1):
+        """Move a follower of ``partition`` in phase 2 while a producer writes, then read through the new replica.
+
+        The new replica has no local copy of the classic prefix. The test stops
+        the other replicas of ``partition``. The new replica then leads it and
+        serves the prefix from remote storage. Afterwards the test starts the
+        other replicas again.
+        """
+        before = set(self.kafka.idx(n) for n in self.kafka.replicas(self.topic, partition=partition))
+        reassignment = self._reassignment_for_partition(partition)
+        producer = self._start_producer(throughput=2000)
+        self._wait_for_steady_production(producer, min_acked=2000)
+        self.logger.info("Reassigning %s-%d in phase 2: %s", self.topic, partition, reassignment)
+        self.kafka.execute_reassign_partitions(reassignment)
+        self._wait_for_reassignment(reassignment)
+        self._wait_for_steady_production(
+            producer,
+            min_acked=producer.num_acked + 3000,
+            timeout_sec=120,
+            err_msg="Producer stalled after a phase 2 reassignment of %s-%d" % (self.topic, partition),
+            worker_err_msg="Producer errors during a phase 2 reassignment: %s",
+        )
+        self._stop_producer(producer)
+
+        target = reassignment["partitions"][0]["replicas"]
+        old_replicas = [n for n in self.kafka.nodes if self.kafka.idx(n) in target and self.kafka.idx(n) in before]
+        for node in old_replicas:
+            self._stop_broker(node)
+        self._wait_for_all_partitions_have_leaders()
+        self._assert_all_acked_records_readable(
+            context="through the replica that a phase 2 reassignment added to partition %d" % partition)
+        for node in old_replicas:
+            self._start_broker(node)
 
     def _wait_for_flags_accepted(self, timeout_sec=None):
         """Wait until no live broker tracks a partition in ``WaitingForUpload`` or ``SendingFlagToController``.
@@ -2436,6 +2539,190 @@ class InklessClassicToDisklessSwitchTest(Test):
         wait_until(check, timeout_sec=timeout_sec, backoff_sec=2,
                    err_msg="Brokers still waited for the upload of a deleted topic after %ds" % timeout_sec)
 
+    def _single_broker_bootstrap(self, node):
+        port = self.kafka.port_mappings[self.kafka.security_protocol].port_number
+        return "%s:%d" % (node.account.hostname, port)
+
+    def _list_offsets(self, time_spec, node=None, topic=None):
+        """Returns the offset of each partition for ``kafka-get-offsets.sh --time time_spec``.
+
+        With ``node``, the tool bootstraps from that broker alone. In phase 2
+        the metadata response of each broker specifies the replica that serves
+        each partition, and two brokers can specify different replicas. A
+        partition that the tool reports without an offset maps to ``None``.
+        """
+        if topic is None:
+            topic = self.topic
+        client = self._live_broker()
+        bootstrap = self._single_broker_bootstrap(node) if node is not None else self.kafka.bootstrap_servers()
+        cmd = "%s --bootstrap-server %s --topic %s --time %s" % (
+            self.kafka.path.script("kafka-get-offsets.sh", client), bootstrap, topic, time_spec)
+        offsets = {}
+        for line in client.account.ssh_capture(cmd, combine_stderr=False):
+            line = line.decode("utf-8") if isinstance(line, bytes) else line
+            parts = line.strip().split(":")
+            if len(parts) == 3 and parts[0] == topic:
+                offsets[int(parts[1])] = int(parts[2]) if parts[2] else None
+        return offsets
+
+    def _wait_for_list_offsets(self, time_spec, expected, node=None, timeout_sec=60):
+        """Wait until ``kafka-get-offsets.sh --time time_spec`` returns ``expected``.
+
+        ``expected`` maps each partition to an offset. The wait retries
+        because a retriable error or a stale metadata cache can fail one call.
+        """
+        last = {}
+
+        def check():
+            try:
+                offsets = self._list_offsets(time_spec, node=node)
+            except (Exception, RemoteCommandError) as e:
+                self.logger.debug("ListOffsets(%s) failed: %s", time_spec, e)
+                return False
+            last.clear()
+            last.update(offsets)
+            return all(offsets.get(partition) == offset for partition, offset in expected.items())
+
+        through = node.account.hostname if node is not None else "the cluster"
+        wait_until(check, timeout_sec=timeout_sec, backoff_sec=2,
+                   err_msg=lambda: "ListOffsets(%s) through %s returned %s, expected %s" %
+                           (time_spec, through, last, expected))
+        return dict(last)
+
+    def _consume_with_group(self, group, num_records, auto_commit=False, timeout_sec=None):
+        """Process exactly ``num_records`` with ``group`` from its committed offsets, and commit them.
+
+        ``VerifiableConsumer`` fails if the offsets of one partition skip or go
+        back within a run. It stops after it processes ``num_records``, but its
+        consumed count includes the whole last poll. The caller checks the
+        committed offsets instead. A consumer that resets its position commits
+        other offsets.
+
+        A manual commit doesn't include a leader epoch. With ``auto_commit``, the
+        consumer commits its position when it closes, with the epoch of the
+        last record it fetched. Use it only when the last poll can't fetch
+        past the last processed record.
+        """
+        if timeout_sec is None:
+            timeout_sec = self.CONSUME_TIMEOUT_SEC
+        consumer = VerifiableConsumer(self.test_context, 1, self.kafka, self.topic, group,
+                                      max_messages=num_records, enable_autocommit=auto_commit)
+        consumer.start()
+        wait_until(lambda: len(consumer.shutdown_complete_nodes()) == 1,
+                   timeout_sec=timeout_sec, backoff_sec=2,
+                   err_msg=lambda: "Group %s fetched %d records and didn't finish %d within %ds" %
+                           (group, consumer.total_consumed(), num_records, timeout_sec))
+        consumer.stop()
+        consumer.free()
+
+    def _committed_offsets_with_epochs(self, group, timeout_ms=15000):
+        """Returns ``{partition: (offset, leader epoch)}`` from the last commits of ``group`` in ``__consumer_offsets``.
+
+        ``kafka-consumer-groups.sh`` doesn't print the leader epoch of a commit.
+        """
+        node = self._live_broker()
+        cmd = ("%s --bootstrap-server %s --topic __consumer_offsets --from-beginning "
+               "--formatter org.apache.kafka.tools.consumer.OffsetsMessageFormatter "
+               "--command-property exclude.internal.topics=false --timeout-ms %d") % (
+            self.kafka.path.script("kafka-console-consumer.sh", node), self.kafka.bootstrap_servers(), timeout_ms)
+        # The formatter writes the records without a separator, so the output is a run of JSON objects.
+        output = "".join(line.decode("utf-8") if isinstance(line, bytes) else line
+                         for line in node.account.ssh_capture(cmd, allow_fail=True, combine_stderr=False))
+        records = []
+        decoder = json.JSONDecoder()
+        position = output.find("{")
+        while position >= 0:
+            try:
+                record, end = decoder.raw_decode(output, position)
+            except ValueError:
+                position = output.find("{", position + 1)
+                continue
+            records.append(record)
+            position = output.find("{", end)
+        commits = {}
+        for record in records:
+            key = (record.get("key") or {}).get("data") or {}
+            if key.get("group") != group or key.get("topic") != self.topic:
+                continue
+            value = (record.get("value") or {}).get("data")
+            if value is None:
+                commits.pop(int(key["partition"]), None)
+            else:
+                commits[int(key["partition"])] = (value.get("offset"), value.get("leaderEpoch", -1))
+        return commits
+
+    def _group_offsets(self, group):
+        """Returns ``{partition: (committed offset, log end offset)}`` from ``kafka-consumer-groups.sh --describe``."""
+        output = self.kafka.describe_consumer_group(group, node=self._live_broker())
+        offsets = {}
+        for line in output.splitlines():
+            fields = line.split()
+            if len(fields) >= 5 and fields[0] == group and fields[1] == self.topic:
+                offsets[int(fields[2])] = tuple(None if f == "-" else int(f) for f in fields[3:5])
+        return offsets
+
+    def _wait_for_group_offsets(self, group, committed, log_end=None, timeout_sec=60):
+        """Wait until ``group`` reports ``committed`` offsets and, if set, ``log_end`` offsets.
+
+        ``committed`` maps each partition to an offset, or is the expected sum
+        over all partitions.
+        """
+        last = {}
+
+        def check():
+            try:
+                offsets = self._group_offsets(group)
+            except (Exception, RemoteCommandError) as e:
+                self.logger.debug("Failed to describe group %s: %s", group, e)
+                return False
+            last.clear()
+            last.update(offsets)
+            if isinstance(committed, dict):
+                if any(offsets.get(p, (None, None))[0] != offset for p, offset in committed.items()):
+                    return False
+            elif sum(offset or 0 for offset, _ in offsets.values()) != committed:
+                return False
+            return log_end is None or all(offsets.get(p, (None, None))[1] == offset for p, offset in log_end.items())
+
+        wait_until(check, timeout_sec=timeout_sec, backoff_sec=2,
+                   err_msg=lambda: "Group %s reported (committed, log end) %s, expected committed %s and log end %s" %
+                           (group, last, committed, log_end))
+        return {p: offset for p, (offset, _) in last.items()}
+
+    def _check_group_and_list_offsets_in_phase_2(self, group, seals, tail_start_ms):
+        """Resume ``group`` in phase 2 and check ``ListOffsets`` through each broker.
+
+        The group committed at the seal in phase 1, with the epoch of the last
+        classic record. Phase 2 deleted the local classic prefix, so the epoch
+        check of the resumed position runs without it. Records at or after
+        ``tail_start_ms`` start at the seal, so a lookup at that time has to
+        search the remote classic prefix and then the diskless tail.
+        """
+        ledger = self._acked_records[self.topic]
+        latest = {p: max(o for q, o in ledger if q == p) + 1 for p in seals}
+        self._consume_with_group(group, sum(latest[p] - seals[p] for p in seals))
+        self._wait_for_group_offsets(group, latest, log_end=latest)
+
+        earliest = {p: 0 for p in seals}
+        for node in self.kafka.nodes:
+            self._wait_for_list_offsets(-1, latest, node=node)
+            self._wait_for_list_offsets(-2, earliest, node=node)
+            self._wait_for_list_offsets(tail_start_ms, seals, node=node)
+        # The record with the highest timestamp is in the diskless tail.
+        max_timestamp = {}
+
+        def max_timestamp_in_tail():
+            try:
+                max_timestamp.update(self._list_offsets(-3))
+            except (Exception, RemoteCommandError) as e:
+                self.logger.debug("ListOffsets(MAX_TIMESTAMP) failed: %s", e)
+                return False
+            return all(max_timestamp.get(p) is not None and max_timestamp[p] >= seals[p] for p in seals)
+
+        wait_until(max_timestamp_in_tail, timeout_sec=60, backoff_sec=2,
+                   err_msg=lambda: "ListOffsets(MAX_TIMESTAMP) returned %s, expected offsets at or above the seals %s" %
+                           (max_timestamp, seals))
+
     @cluster(num_nodes=9)
     @matrix(metadata_quorum=[quorum.isolated_kraft], fault=PHASE_1_FAULTS)
     def test_fault_between_seal_commit_and_phase_2(self, metadata_quorum, fault) -> None:
@@ -2454,9 +2741,11 @@ class InklessClassicToDisklessSwitchTest(Test):
         request and the phase 2 transition:
 
         - ``controller_failover_at_phase_2`` stops the active controller and
-          one more of three. The test waits until a flag request has been
-          pending for 10 s, then starts the second controller. The flag
-          requests retry until the two live controllers elect a new leader.
+          one more of three. The test waits until the leader of partition 0
+          has had a flag request pending for 10 s, then kills that leader and
+          starts the second controller. The flag requests retry until the two live
+          controllers elect a new leader. The new leaders of the killed
+          broker's partitions request the flag again.
         - ``postgres_outage_at_phase_2`` keeps the control plane unreachable
           until no broker tracks a partition in ``WaitingForUpload`` or
           ``SendingFlagToController``. The upload and the flag requests then
@@ -2465,6 +2754,16 @@ class InklessClassicToDisklessSwitchTest(Test):
           the hold ends and keeps it down until every partition is in phase 2.
           The leader then rejoins in phase 2, and the other brokers restart
           one at a time.
+
+        After phase 2, the ``reassignment`` fault also moves a follower of
+        partition 1 while a producer writes. The test then reads the topic
+        with only the new replica of partition 1 running.
+
+        The ``object_storage_outage`` fault also runs the client checks. A
+        consumer group commits in the classic prefix before the switch,
+        resumes up to the seal in phase 1, and resumes again in phase 2. Each
+        time, the test reads the committed offsets back. ``ListOffsets`` runs
+        in phase 1 and again in phase 2 through each broker.
 
         After the hold, the test requires phase 2 on every partition, produces
         a diskless tail, and checks every record across the seal.
@@ -2478,10 +2777,23 @@ class InklessClassicToDisklessSwitchTest(Test):
 
         self._produce_messages(num_messages=10000)
 
+        group = None
+        if fault == "object_storage_outage":
+            # The group commits in the middle of the classic prefix before the switch. It
+            # reads fewer records than the smallest partition holds, so the phase 1 resume
+            # fetches from every partition and commits each one with a leader epoch.
+            group = "switch-resume-%s" % uuid.uuid4().hex[:8]
+            per_partition = {}
+            for partition, _ in self._acked_records[self.topic]:
+                per_partition[partition] = per_partition.get(partition, 0) + 1
+            records_before_switch = min(per_partition.values()) // 2
+            self._consume_with_group(group, records_before_switch)
+            committed = self._wait_for_group_offsets(group, records_before_switch)
+
         self.verifier.block_dependency("object_storage")
         self._switch_topic_to_diskless()
         self._wait_for_phase_1_complete()
-        self._assert_in_phase_1()
+        seals = self._assert_in_phase_1()
         self._wait_for_mid_switch_state("WaitingForUpload")
 
         stopped_controller = None
@@ -2492,6 +2804,20 @@ class InklessClassicToDisklessSwitchTest(Test):
             self._start_trogdor()
 
         if fault == "object_storage_outage":
+            # The control plane stores the seal and no diskless record yet.
+            self._wait_for_list_offsets(-1, seals)
+            self._wait_for_list_offsets(-2, {p: 0 for p in seals})
+            # The group resumes in phase 1 and reads the rest of the classic prefix. No record
+            # exists at the seal yet, so the commit at close stops at the seal, with the epoch
+            # of the last classic record.
+            self._consume_with_group(group, sum(seals[p] - (committed.get(p) or 0) for p in seals),
+                                     auto_commit=True)
+            self._wait_for_group_offsets(group, seals, log_end=seals)
+            commits = self._committed_offsets_with_epochs(group)
+            without_epoch = sorted(p for p in seals if commits.get(p, (None, -1))[1] < 0)
+            assert not without_epoch and all(commits[p][0] == seals[p] for p in seals), \
+                "Expected commits at the seals %s with leader epochs, but __consumer_offsets has %s" % \
+                (seals, commits)
             # Hold the outage across several upload retries of the remote log manager.
             self._wait_for_mid_switch_state(
                 "WaitingForUpload", min_oldest_age_ms=self.PHASE_1_FAULT_DURATION_MS)
@@ -2521,7 +2847,7 @@ class InklessClassicToDisklessSwitchTest(Test):
             )
             partition_fault.wait_for_done(timeout_sec=self.PHASE_1_FAULT_DURATION_MS // 1000 + 60)
         elif fault == "reassignment":
-            reassignment = self._reassignment_for_partition_0()
+            reassignment = self._reassignment_for_partition(0)
             self.logger.info("Reassigning %s-0 in phase 1: %s", self.topic, reassignment)
             self.kafka.execute_reassign_partitions(reassignment)
         elif fault == "topic_deletion":
@@ -2553,11 +2879,16 @@ class InklessClassicToDisklessSwitchTest(Test):
             controllers.stop_node(stopped_controller, clean_shutdown=False)
             controllers.stop_node(standby, clean_shutdown=False)
             self.verifier.heal_dependency("object_storage")
-            self._wait_for_mid_switch_state(
-                "SendingFlagToController", min_oldest_age_ms=self.FLAG_REQUEST_FAULT_DURATION_MS,
+            # The leader of partition 0 must have its own flag request pending when the test kills it.
+            self._wait_for_broker_in_state(
+                leader_node, "SendingFlagToController", self.FLAG_REQUEST_FAULT_DURATION_MS,
                 timeout_sec=self.PHASE_2_TIMEOUT_SEC)
+            # A broker can't start without a quorum. The leader starts again after the failover.
+            self.logger.info("Killing broker %d while its flag requests are pending", self.kafka.idx(leader_node))
+            self.kafka.stop_node(leader_node, clean_shutdown=False)
             controllers.start_node(standby)
             self._wait_for_new_active_controller(old_leader_id)
+            self._start_broker(leader_node)
         elif fault == "postgres_outage_at_phase_2":
             self.verifier.block_dependency("control_plane")
             self.verifier.heal_dependency("object_storage")
@@ -2592,8 +2923,17 @@ class InklessClassicToDisklessSwitchTest(Test):
             self.kafka.isolated_controller_quorum.start_node(stopped_controller)
         if reassignment is not None:
             self._wait_for_reassignment(reassignment)
+            self._reassign_in_phase_2_under_load()
         self._stop_trogdor()
 
         self._wait_for_all_partitions_isr_full(timeout_sec=240)
+        if group is not None:
+            # A second on each side keeps every record of the tail at or after `tail_start_ms`,
+            # and every classic record before it.
+            time.sleep(1)
+            tail_start_ms = int(time.time() * 1000)
+            time.sleep(1)
         self._produce_messages(num_messages=5000)
+        if group is not None:
+            self._check_group_and_list_offsets_in_phase_2(group, seals, tail_start_ms)
         self._assert_all_acked_records_readable(context="after %s between the seal commit and phase 2" % fault)
