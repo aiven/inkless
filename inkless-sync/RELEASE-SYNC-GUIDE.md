@@ -135,6 +135,36 @@ git fetch apache --tags
    # Create PR to merge into inkless-4.0
    ```
 
+10. **Land the sync**. After CI is green and a reviewer approves the PR, follow [Land the sync](#land-the-sync).
+
+## Land the sync
+
+Land a sync PR with **Create a merge commit**. Don't use **Squash and merge** or **Rebase and merge**.
+
+### Why only the merge commit
+
+The next sync finds its starting point with `git merge-base` between the base branch and the upstream tag. That search needs the upstream commits to keep their SHAs.
+
+- **Squash and merge** replaces the upstream commits with one new commit. The next sync can't see which upstream commits are already merged.
+- **Rebase and merge** gives each upstream commit a new SHA. The merge base moves back, and the same commits conflict again.
+- **Create a merge commit** adds one commit and leaves every existing commit unchanged.
+
+### The extra merge commit
+
+The branch already holds a `Merge upstream <tag>` commit. The button adds a second commit, `Merge pull request #<n> from ...`, on top of it. This extra commit is harmless:
+
+- The `Merge upstream <tag>` commit stays on the second-parent side. Its upstream parents keep their SHAs, so `git merge-base` and `sync-status.sh` give the same result as with one merge.
+- The extra commit doesn't change any file. It only records the PR number.
+- Don't avoid it with a direct push. A direct push doesn't link the PR and needs a manual check that the base branch didn't move.
+
+The team merged PRs #657 (4.2.1) and #771 (main sync) with the button and pushed 4.3.1 and 4.2.2 directly. Both ways keep the merge base. New syncs use the button, so the process is the same every time.
+
+### Steps
+
+1. Check that the PR shows the text `This branch has no conflicts with the base branch`. If the base branch moved, merge it into the sync branch and wait for CI.
+2. Choose **Create a merge commit** in the merge dropdown.
+3. Fetch the base branch. Tag the new head with `inkless-<upstream version>-<inkless release>`. The tag for upstream 4.3.2 and Inkless 0.51 is `inkless-4.3.2-0.51`. Push the tag. Check `docs/inkless/RELEASES.md` for what the tag builds.
+
 ## Handling Conflicts
 
 Common conflict areas when syncing release branches:
@@ -310,6 +340,58 @@ make test
 ./gradlew :metadata:test --tests "org.apache.kafka.controller.*"
 ./gradlew :core:test --tests "*Inkless*"
 ```
+
+## Release the sync under the current Inkless version
+
+Use this procedure when the upstream sync is the only change on the release branch. The branch has no new Inkless commits. The Inkless version stays the same. Example: `inkless-4.3` synced to Kafka 4.3.2 after release 0.51 included Kafka 4.3.1.
+
+Keep the Inkless version for an upstream-only change. See [VERSIONING-STRATEGY.md](../docs/inkless/VERSIONING-STRATEGY.md) for the version rules.
+
+If a new Inkless release follows soon, skip these steps. The next release tags the synced branch head.
+
+Sync the upstream Kafka patch release first. Then sync the Inkless commits. Open one pull request for each sync.
+
+The first case was `inkless-4.2.2-0.49`. The team tagged it after release 0.49, and the release page doesn't list it. The 4.3.2 sync is the first one added to the published release.
+
+### Steps
+
+1. Merge the sync PR into the release branch. Check that `gradle.properties` shows the new Kafka version.
+2. Create the Kafka-base tag on the merge commit, with the existing tag message format:
+
+   ```bash
+   git fetch origin
+   git tag -a inkless-4.3.2-0.51 origin/inkless-4.3 -m "Inkless release 0.51 on Kafka 4.3.2"
+   ```
+
+3. Check the tag target with `git show inkless-4.3.2-0.51`. A pushed tag starts a public build and publishes a Docker image.
+
+   ```bash
+   git push origin inkless-4.3.2-0.51
+   ```
+
+4. Wait for the `Inkless Publish` run that the tag push starts. It builds the `4.3.2-0.51` image and moves the `4.3-latest` alias. The run leaves the GitHub Release unchanged.
+5. Run the `Inkless Release` workflow with `inkless_version` set to `0.51` and `resume` set to `true`. The workflow skips tagging. It rebuilds the images and binaries. Then it regenerates the release notes and uploads the binaries to `inkless-release-0.51`.
+
+The `CHANGELOG.md` heading of the release keeps the old Kafka version. The entry of the next release lists the new version.
+
+### What the `resume` run does
+
+- For each active branch, the workflow builds the highest-patch tag for the version. For `inkless-4.3` it builds `inkless-4.3.2-0.51` and not `inkless-4.3.1-0.51`.
+- The release notes list every `inkless-<kafka-version>-0.51` tag, so they name Kafka 4.3.1 and Kafka 4.3.2. The workflow replaces any manual edit of the notes.
+- The upload uses `--clobber`, so the old `kafka_2.13-4.3.1-inkless.tgz` asset stays on the release. Keep it. Users can still download the earlier Kafka patch version.
+- The workflow rebuilds the `0.51` and `latest` Docker images from `inkless-release-0.51` on `main`, with the same content.
+- The branches `inkless-4.1` and `inkless-4.2` are rebuilt from their existing tags.
+
+### Verify
+
+```bash
+gh release view inkless-release-0.51 --json body,assets --jq '.assets[].name'
+docker buildx imagetools inspect ghcr.io/aiven/inkless:4.3.2-0.51
+```
+
+The asset list must include `kafka_2.13-4.3.2-inkless.tgz`. The release notes must link `inkless-4.3.2-0.51`.
+
+> The first run of this procedure, for Kafka 4.3.2 on release 0.51, matched these effects.
 
 ## AI-Assisted Sync
 

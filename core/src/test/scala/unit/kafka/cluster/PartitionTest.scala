@@ -42,7 +42,7 @@ import org.mockito.invocation.InvocationOnMock
 
 import java.lang.{Long => JLong}
 import java.nio.ByteBuffer
-import java.util.Optional
+import java.util.{Optional, OptionalInt}
 import java.util.concurrent.{ConcurrentHashMap, CountDownLatch, Semaphore}
 import kafka.server.metadata.KRaftMetadataCache
 import kafka.server.share.DelayedShareFetch
@@ -1576,6 +1576,43 @@ class PartitionTest extends AbstractPartitionTest {
     assertEquals(alterPartitionListener.expands.get, 1)
     assertEquals(alterPartitionListener.shrinks.get, 0)
     assertEquals(alterPartitionListener.failures.get, 0)
+  }
+
+  @Test
+  def testIsrNotExpandedWhileLeaderLogEndsBelowSeal(): Unit = {
+    val log = logManager.getOrCreateLog(topicPartition, topicId = topicId.toJava)
+    seedLogData(log, numRecords = 10, leaderEpoch = 4)
+
+    val remoteBrokerId = brokerId + 1
+    val replicas = Array(brokerId, remoteBrokerId)
+    addBrokerEpochToMockMetadataCache(metadataCache, replicas.toList)
+
+    partition.createLogIfNotExists(isNew = false, isFutureReplica = false, offsetCheckpoints, None)
+    val partitionState = new LeaderAndIsrRequest.PartitionState()
+      .setControllerEpoch(0)
+      .setLeader(brokerId)
+      .setLeaderEpoch(5)
+      .setIsr(java.util.List.of(Int.box(brokerId)))
+      .setPartitionEpoch(1)
+      .setReplicas(replicas.map(Int.box).toList.asJava)
+      .setLeaderRecoveryState(LeaderRecoveryState.RECOVERING.value)
+      .setIsNew(true)
+    assertTrue(partition.makeLeader(partitionState, offsetCheckpoints, None))
+
+    // The committed seal is past the leader's log end offset, as after a last-known-leader election that lost records.
+    // The partition isn't sealed yet, as on a restarted leader between `makeLeader` and `seal`.
+    partition.replicationStopOffset = () => Some(log.logEndOffset + 5)
+    assertFalse(partition.isSealed)
+
+    fetchFollower(partition, replicaId = remoteBrokerId, fetchOffset = log.logEndOffset)
+    assertEquals(0, alterPartitionManager.isrUpdates.size)
+    assertEquals(Set(brokerId), partition.partitionState.maximalIsr)
+
+    // Once the seal sits at the leader's log end offset, the same fetch expands the ISR.
+    partition.replicationStopOffset = () => Some(log.logEndOffset)
+    fetchFollower(partition, replicaId = remoteBrokerId, fetchOffset = log.logEndOffset)
+    assertEquals(1, alterPartitionManager.isrUpdates.size)
+    assertEquals(Set(brokerId, remoteBrokerId), partition.partitionState.maximalIsr)
   }
 
   @Test
@@ -3635,6 +3672,15 @@ class PartitionTest extends AbstractPartitionTest {
 
   private def makeLeader(
     topicId: Option[Uuid],
+    leaderEpoch: Int,
+    isr: Seq[Int],
+    replicas: Seq[Int],
+    partitionEpoch: Int,
+    isNew: Boolean
+  ): Boolean = makeLeader(topicId, 0, leaderEpoch, isr, replicas, partitionEpoch, isNew)
+
+  private def makeLeader(
+    topicId: Option[Uuid],
     controllerEpoch: Int,
     leaderEpoch: Int,
     isr: Seq[Int],
@@ -4284,10 +4330,11 @@ class PartitionTest extends AbstractPartitionTest {
     assertTrue(log.firstUnstableOffset().isPresent)
 
     partition.seal()
+    partition.abortOngoingTransactionsAsSealedLeader()
 
     assertTrue(partition.isSealed)
     assertFalse(log.hasOngoingTransaction(producerId, producerEpoch),
-      "Ongoing transaction should have been aborted by seal")
+      "The sealed leader should have aborted the ongoing transaction")
     assertTrue(log.producerStateManager().firstUndecidedOffset().isEmpty,
       "There should be no undecided transactions after aborting")
   }
@@ -4314,6 +4361,7 @@ class PartitionTest extends AbstractPartitionTest {
     assertTrue(log.hasOngoingTransaction(pid2, epoch))
 
     partition.seal()
+    partition.abortOngoingTransactionsAsSealedLeader()
 
     assertTrue(partition.isSealed)
     assertFalse(log.hasOngoingTransaction(pid1, epoch))
@@ -4356,8 +4404,198 @@ class PartitionTest extends AbstractPartitionTest {
     val leoBeforeSeal = log.logEndOffset
 
     partition.seal()
+    partition.abortOngoingTransactionsAsSealedLeader()
 
     assertTrue(log.logEndOffset > leoBeforeSeal,
-      "LEO should have increased due to the ABORT marker appended during seal")
+      "LEO should have increased due to the ABORT marker that the sealed leader appended")
+  }
+
+  @Test
+  def testSealOnFollowerDoesNotAppendAbortMarkers(): Unit = {
+    val leaderEpoch = 1
+    partition = setupPartitionWithMocks(leaderEpoch, isLeader = false)
+    val log = partition.localLogOrException
+
+    val producerId = 137L
+    val producerEpoch: Short = 5
+
+    appendTransactionalRecords(log, leaderEpoch, producerId, producerEpoch, 0,
+      new SimpleRecord("k1".getBytes, "v1".getBytes)
+    )
+    val leoBeforeSeal = log.logEndOffset
+
+    partition.seal()
+    partition.abortOngoingTransactionsAsSealedLeader()
+
+    assertTrue(partition.isSealed)
+    assertEquals(leoBeforeSeal, log.logEndOffset,
+      "A follower must not append an ABORT marker: it replicates the leader's markers")
+    assertTrue(log.hasOngoingTransaction(producerId, producerEpoch))
+  }
+
+  @Test
+  def testSealedFollowerAbortsInNewLeaderEpochWhenItBecomesLeader(): Unit = {
+    val followerEpoch = 1
+    val newLeaderEpoch = followerEpoch + 1
+    partition = setupPartitionWithMocks(followerEpoch, isLeader = false)
+    val log = partition.localLogOrException
+
+    val producerId = 137L
+    val producerEpoch: Short = 5
+
+    appendTransactionalRecords(log, followerEpoch, producerId, producerEpoch, 0,
+      new SimpleRecord("k1".getBytes, "v1".getBytes)
+    )
+    val markerOffset = log.logEndOffset
+
+    partition.seal()
+    val replicas = Array(brokerId, remoteReplicaId)
+    makeLeader(None, newLeaderEpoch, replicas, replicas, partition.getPartitionEpoch + 1, isNew = false)
+    partition.abortOngoingTransactionsAsSealedLeader()
+
+    assertFalse(log.hasOngoingTransaction(producerId, producerEpoch))
+    assertEquals(markerOffset + 1, log.logEndOffset)
+    assertEquals(OptionalInt.of(newLeaderEpoch), log.leaderEpochCache.epochForOffset(markerOffset),
+      "The ABORT marker must carry the leader epoch in which this broker leads")
+    assertEquals(0, log.activeSegment.size, "The marker must be in a closed segment")
+  }
+
+  @Test
+  def testSealedLeaderAbortAdvancesHighWatermarkWhenLeaderIsTheOnlyIsrMember(): Unit = {
+    val leaderEpoch = 1
+    partition = setupPartitionWithMocks(leaderEpoch, isLeader = true)
+    val log = partition.localLogOrException
+
+    appendTransactionalRecords(log, leaderEpoch, 137L, 5.toShort, 0,
+      new SimpleRecord("k1".getBytes, "v1".getBytes)
+    )
+
+    partition.seal()
+    makeLeader(None, leaderEpoch + 1, Array(brokerId), Array(brokerId, remoteReplicaId),
+      partition.getPartitionEpoch + 1, isNew = false)
+    assertEquals(log.logEndOffset, log.highWatermark)
+
+    partition.abortOngoingTransactionsAsSealedLeader()
+
+    assertEquals(log.logEndOffset, log.highWatermark,
+      "No follower fetch advances the high watermark past the ABORT marker when the leader is the only ISR member")
+  }
+
+  @Test
+  def testAbortOngoingTransactionsAsSealedLeaderRequiresSeal(): Unit = {
+    partition = setupPartitionWithMocks(leaderEpoch = 1, isLeader = true)
+
+    assertThrows(classOf[IllegalStateException], () => partition.abortOngoingTransactionsAsSealedLeader())
+  }
+
+  @Test
+  def testMakeLeaderKeepsDisklessLeaderEpochAfterLeaderChange(): Unit = {
+    val lastClassicEpoch = 2
+    val disklessLeaderEpoch = 4
+    val seal = 2L
+    val log = logManager.getOrCreateLog(topicPartition, topicId = Optional.empty)
+    log.appendAsLeader(MemoryRecords.withRecords(0L, Compression.NONE, lastClassicEpoch,
+      new SimpleRecord("k1".getBytes, "v1".getBytes),
+      new SimpleRecord("k2".getBytes, "v2".getBytes)
+    ), lastClassicEpoch)
+
+    setupPartitionWithMocks(leaderEpoch = disklessLeaderEpoch, isLeader = true)
+    partition.consolidationLeaderEpoch = () => Some(disklessLeaderEpoch)
+    appendConsolidatedRecords(baseOffset = seal, disklessLeaderEpoch)
+
+    val replicas = Array(brokerId, remoteReplicaId)
+    makeLeader(None, disklessLeaderEpoch + 1, replicas, replicas, partition.getPartitionEpoch + 1, isNew = false)
+    appendConsolidatedRecords(baseOffset = seal + 2, disklessLeaderEpoch)
+
+    val leaderEpochCache = partition.localLogOrException.leaderEpochCache
+    assertEquals(java.util.List.of(new EpochEntry(lastClassicEpoch, 0L), new EpochEntry(disklessLeaderEpoch, seal)),
+      leaderEpochCache.epochEntries)
+    assertEquals(java.util.OptionalInt.of(disklessLeaderEpoch), leaderEpochCache.epochForOffset(seal + 1))
+    assertEquals(java.util.OptionalInt.of(disklessLeaderEpoch), leaderEpochCache.epochForOffset(seal + 2))
+    assertEquals(java.util.List.of(new EpochEntry(disklessLeaderEpoch, seal + 2)),
+      leaderEpochCache.epochEntriesInRange(seal + 2, seal + 4))
+  }
+
+  @Test
+  def testMakeLeaderAtSealAssignsEpochWhenDisklessEpochIsMissing(): Unit = {
+    val lastClassicEpoch = 2
+    val disklessLeaderEpoch = 4
+    val seal = 2L
+    val log = logManager.getOrCreateLog(topicPartition, topicId = Optional.empty)
+    log.appendAsLeader(MemoryRecords.withRecords(0L, Compression.NONE, lastClassicEpoch,
+      new SimpleRecord("k1".getBytes, "v1".getBytes),
+      new SimpleRecord("k2".getBytes, "v2".getBytes)
+    ), lastClassicEpoch)
+    setupPartitionWithMocks(leaderEpoch = disklessLeaderEpoch, isLeader = false)
+    partition.consolidationLeaderEpoch = () => Some(disklessLeaderEpoch)
+
+    val replicas = Array(brokerId, remoteReplicaId)
+    makeLeader(None, disklessLeaderEpoch + 1, replicas, replicas, partition.getPartitionEpoch + 1, isNew = false)
+
+    val leaderEpochCache = partition.localLogOrException.leaderEpochCache
+    assertEquals(java.util.List.of(new EpochEntry(lastClassicEpoch, 0L), new EpochEntry(disklessLeaderEpoch + 1, seal)),
+      leaderEpochCache.epochEntries)
+    assertEquals(seal, leaderEpochCache.endOffsetFor(lastClassicEpoch + 1, seal).getValue)
+
+    appendConsolidatedRecords(baseOffset = seal, disklessLeaderEpoch)
+    assertEquals(java.util.List.of(new EpochEntry(lastClassicEpoch, 0L), new EpochEntry(disklessLeaderEpoch, seal)),
+      leaderEpochCache.epochEntries)
+  }
+
+  @Test
+  def testMakeLeaderKeepsBornDisklessEpochAfterLeaderChange(): Unit = {
+    val consolidationEpoch = 0
+    setupPartitionWithMocks(leaderEpoch = consolidationEpoch, isLeader = true)
+    partition.consolidationLeaderEpoch = () => Some(consolidationEpoch)
+    appendConsolidatedRecords(baseOffset = 0L, consolidationEpoch)
+
+    val replicas = Array(brokerId, remoteReplicaId)
+    makeLeader(None, consolidationEpoch + 1, replicas, replicas, partition.getPartitionEpoch + 1, isNew = false)
+    appendConsolidatedRecords(baseOffset = 2L, consolidationEpoch)
+
+    val leaderEpochCache = partition.localLogOrException.leaderEpochCache
+    assertEquals(java.util.List.of(new EpochEntry(consolidationEpoch, 0L)), leaderEpochCache.epochEntries)
+    assertEquals(java.util.OptionalInt.of(consolidationEpoch), leaderEpochCache.epochForOffset(1L))
+  }
+
+  @Test
+  def testMakeLeaderKeepsBornDisklessEpochAfterRestart(): Unit = {
+    val consolidationEpoch = 0
+    val leaderEpoch = 3
+    setupPartitionWithMocks(leaderEpoch = leaderEpoch, isLeader = true)
+    partition.consolidationLeaderEpoch = () => Some(consolidationEpoch)
+    appendConsolidatedRecords(baseOffset = 0L, consolidationEpoch)
+    assertEquals(java.util.List.of(new EpochEntry(consolidationEpoch, 0L)),
+      partition.localLogOrException.leaderEpochCache.epochEntries)
+
+    partition = new Partition(
+      topicPartition,
+      replicaLagTimeMaxMs = ReplicationConfigs.REPLICA_LAG_TIME_MAX_MS_DEFAULT,
+      localBrokerId = brokerId,
+      () => defaultBrokerEpoch(brokerId),
+      time,
+      alterPartitionListener,
+      delayedOperations,
+      metadataCache,
+      logManager,
+      alterPartitionManager)
+    partition.consolidationLeaderEpoch = () => Some(consolidationEpoch)
+    assertEquals(-1, partition.getLeaderEpoch)
+
+    val replicas = Array(brokerId, remoteReplicaId)
+    makeLeader(None, leaderEpoch, replicas, replicas, 1, isNew = true)
+    appendConsolidatedRecords(baseOffset = 2L, consolidationEpoch)
+
+    val leaderEpochCache = partition.localLogOrException.leaderEpochCache
+    assertEquals(java.util.List.of(new EpochEntry(consolidationEpoch, 0L)), leaderEpochCache.epochEntries)
+    assertEquals(java.util.OptionalInt.of(consolidationEpoch), leaderEpochCache.epochForOffset(1L))
+  }
+
+  private def appendConsolidatedRecords(baseOffset: Long, epoch: Int): Unit = {
+    val records = createRecords(List(
+      new SimpleRecord("k".getBytes, "v".getBytes),
+      new SimpleRecord("k".getBytes, "v".getBytes)
+    ), baseOffset, epoch)
+    partition.appendRecordsToFollowerOrFutureReplica(records, isFuture = false, partition.getLeaderEpoch)
   }
 }

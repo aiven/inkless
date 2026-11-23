@@ -16,7 +16,7 @@
  */
 package kafka.server
 
-import io.aiven.inkless.control_plane.{ControlPlane, InitDisklessLogProducerState => CpProducerState, InitDisklessLogResponse => CpInitResponse}
+import io.aiven.inkless.control_plane.{ControlPlane, InitDisklessLogProducerState => CpProducerState, InitDisklessLogRequest => CpInitRequest, InitDisklessLogResponse => CpInitResponse}
 import kafka.cluster.{Partition, PartitionListener}
 import org.apache.kafka.clients.ClientResponse
 import org.apache.kafka.common.{TopicPartition, Uuid}
@@ -24,21 +24,24 @@ import org.apache.kafka.common.message.{InitDisklessLogRequestData, InitDiskless
 import org.apache.kafka.common.protocol.Errors
 import org.apache.kafka.common.requests.{AbstractRequest, InitDisklessLogRequest, InitDisklessLogResponse, RequestHeader, SetClassicPrefixInRemoteStorageRequest, SetClassicPrefixInRemoteStorageResponse}
 import org.apache.kafka.common.protocol.ApiKeys
+import org.apache.kafka.metadata.PartitionRegistration
 import org.apache.kafka.server.metrics.KafkaYammerMetrics
 import org.apache.kafka.server.common.{ControllerRequestCompletionHandler, NodeToControllerChannelManager}
 import org.apache.kafka.server.util.MockScheduler
 import org.apache.kafka.common.utils.MockTime
+import org.apache.kafka.storage.internals.epoch.LeaderEpochFileCache
 import org.apache.kafka.storage.internals.log.{BatchMetadata, ProducerStateEntry, ProducerStateManager, UnifiedLog}
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.{AfterEach, BeforeEach, Test}
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
-import org.mockito.ArgumentMatchers.any
+import org.mockito.ArgumentCaptor
+import org.mockito.ArgumentMatchers.{any, anyLong}
 import org.mockito.Mockito._
 import org.mockito.invocation.InvocationOnMock
 
 import java.util
-import java.util.Optional
+import java.util.{Optional, OptionalInt}
 import java.util.concurrent.ConcurrentLinkedQueue
 import scala.collection.mutable
 import scala.jdk.CollectionConverters._
@@ -147,6 +150,7 @@ class InitDisklessLogManagerTest {
     val partition = mock(classOf[Partition])
     val log = mock(classOf[UnifiedLog])
     val producerStateManager = mock(classOf[ProducerStateManager])
+    val leaderEpochCache = mock(classOf[LeaderEpochFileCache])
 
     when(partition.topicPartition).thenReturn(tp)
     when(partition.isSealed).thenReturn(true)
@@ -165,6 +169,8 @@ class InitDisklessLogManagerTest {
     when(log.highestOffsetInRemoteStorage).thenReturn(-1L)
     when(log.producerStateManager()).thenReturn(producerStateManager)
     when(producerStateManager.activeProducers()).thenReturn(new util.HashMap())
+    when(log.leaderEpochCache).thenReturn(leaderEpochCache)
+    when(leaderEpochCache.epochForOffset(anyLong())).thenReturn(OptionalInt.of(leaderEpoch - 1))
 
     partition
   }
@@ -356,6 +362,267 @@ class InitDisklessLogManagerTest {
     ), statesFor(otherProducerEntry.producerId()))
 
     captured.complete(makeSuccessResponse(topicId, 0))
+  }
+
+  // Replaces the manager with one that allows `maxEntries` producer state entries per request.
+  private def useProducerStateLimit(maxEntries: Int): Unit = {
+    manager.shutdown()
+    manager = new InitDisklessLogManager(
+      controllerChannelManager = channelManager,
+      controlPlane = controlPlane,
+      scheduler = scheduler,
+      brokerId = brokerId,
+      brokerEpochSupplier = () => brokerEpoch,
+      time = mockTime,
+      maxProducerStateEntries = maxEntries
+    )
+  }
+
+  // ProducerStateEntry's constructor and addBatch method are package-private to
+  // org.apache.kafka.storage.internals.log, so cross-package tests mock the entry instead
+  // of building one via addBatch.
+  private def mockProducerEntry(producerId: Long, producerEpoch: Short, batches: BatchMetadata*): ProducerStateEntry = {
+    val entry = mock(classOf[ProducerStateEntry])
+    when(entry.producerId()).thenReturn(producerId)
+    when(entry.producerEpoch()).thenReturn(producerEpoch)
+    when(entry.batchMetadata()).thenReturn(util.List.of(batches: _*))
+    entry
+  }
+
+  private def setActiveProducers(partition: Partition, entries: ProducerStateEntry*): Unit = {
+    val producers = new util.LinkedHashMap[java.lang.Long, ProducerStateEntry]()
+    entries.foreach(entry => producers.put(entry.producerId(), entry))
+    when(partition.log.get.producerStateManager().activeProducers()).thenReturn(producers)
+  }
+
+  private def partitionIdsOf(request: InitDisklessLogRequestData): Seq[Int] =
+    request.topics().asScala.flatMap(_.partitions().asScala.map(_.partitionId())).toSeq
+
+  // Accepts every InitDisklessLog request until the queue is empty, and returns the requests in send order.
+  // MockScheduler doesn't cancel a rescheduled task, so the test can't tell whether the queue sends a deferred
+  // partition before or after the response to the request in flight. The order of the requests is the same.
+  private def acceptRequestsUntilIdle(): Seq[InitDisklessLogRequestData] = {
+    val sent = mutable.ArrayBuffer[InitDisklessLogRequestData]()
+    fireLinger()
+    while (!channelManager.requests.isEmpty) {
+      while (!channelManager.requests.isEmpty) {
+        val captured = channelManager.requests.poll()
+        sent += captured.requestData
+        captured.complete(makeBatchSuccessResponse(topicId, partitionIdsOf(captured.requestData)))
+      }
+      fireLinger()
+    }
+    sent.toSeq
+  }
+
+  @Test
+  def testRequestsAreSplitByProducerStateEntries(): Unit = {
+    // Given three ready partitions with two producer state entries each, and room for four per request
+    useProducerStateLimit(4)
+    val tp1 = new TopicPartition("test-topic", 1)
+    val tp2 = new TopicPartition("test-topic", 2)
+    Seq(tp0, tp1, tp2).foreach { tp =>
+      val partition = mockPartition(tp = tp, hw = 100, leo = 100)
+      setActiveProducers(partition, mockProducerEntry(7L, 0.toShort,
+        new BatchMetadata(4, 54, 4, 1000L),
+        new BatchMetadata(9, 59, 4, 2000L)))
+      manager.registerPartition(partition, topicId)
+    }
+    val retriedBefore = meterCount(InitDisklessLogManager.InitRetriedPerSecMetricName)
+
+    // When the controller accepts every request
+    val requests = acceptRequestsUntilIdle()
+
+    // Then the first request has the two partitions that fit and the next one has the third,
+    // without counting a retry
+    assertEquals(Seq(Seq(0, 1), Seq(2)), requests.map(partitionIdsOf))
+    requests.foreach { request =>
+      assertTrue(request.topics().asScala.flatMap(_.partitions().asScala).map(_.producerStates().size()).sum <= 4)
+    }
+    assertState[AwaitingMetadata](tp0)
+    assertState[AwaitingMetadata](tp1)
+    assertState[AwaitingMetadata](tp2)
+    assertEquals(retriedBefore, meterCount(InitDisklessLogManager.InitRetriedPerSecMetricName))
+  }
+
+  @Test
+  def testPartitionOverTheLimitKeepsTheNewestBatchOfEachProducer(): Unit = {
+    // Given a partition with six producer state entries, room for four, and a second small partition
+    useProducerStateLimit(4)
+    val tp1 = new TopicPartition("test-topic", 1)
+    val large = mockPartition(tp = tp0, hw = 100, leo = 100)
+    setActiveProducers(large,
+      mockProducerEntry(1L, 0.toShort, new BatchMetadata(4, 14, 4, 1000L), new BatchMetadata(9, 19, 4, 2000L)),
+      mockProducerEntry(2L, 3.toShort, new BatchMetadata(2, 32, 2, 3000L), new BatchMetadata(5, 35, 2, 4000L)),
+      mockProducerEntry(3L, 1.toShort, new BatchMetadata(0, 50, 0, 5000L), new BatchMetadata(1, 51, 0, 6000L)))
+    val small = mockPartition(tp = tp1, hw = 100, leo = 100)
+    setActiveProducers(small, mockProducerEntry(9L, 0.toShort, new BatchMetadata(0, 70, 0, 7000L)))
+    manager.registerPartition(large, topicId)
+    manager.registerPartition(small, topicId)
+
+    // When the controller accepts every request
+    val requests = acceptRequestsUntilIdle()
+
+    // Then the large partition goes alone, with the newest batch of every producer
+    assertEquals(Seq(Seq(0), Seq(1)), requests.map(partitionIdsOf))
+    val producerStates = requests.head.topics().get(0).partitions().get(0).producerStates().asScala
+      .map(ps => (ps.producerId(), ps.producerEpoch(), ps.baseSequence(), ps.lastSequence(), ps.assignedOffset(), ps.batchMaxTimestamp()))
+      .toSet
+    assertEquals(Set(
+      (1L, 0.toShort, 5, 9, 15L, 2000L),
+      (2L, 3.toShort, 3, 5, 33L, 4000L),
+      (3L, 1.toShort, 1, 1, 51L, 6000L)
+    ), producerStates)
+
+    // And the small partition follows in its own request, with all its producer state
+    assertEquals(1, requests(1).topics().get(0).partitions().get(0).producerStates().size())
+    assertState[AwaitingMetadata](tp0)
+    assertState[AwaitingMetadata](tp1)
+  }
+
+  @Test
+  def testPartitionOverTheLimitKeepsTheProducersThatWroteLast(): Unit = {
+    // Given a partition with three producers and room for two entries
+    useProducerStateLimit(2)
+    val partition = mockPartition(hw = 400, leo = 400)
+    setActiveProducers(partition,
+      mockProducerEntry(1L, 0.toShort, new BatchMetadata(4, 104, 4, 1000L)),
+      mockProducerEntry(2L, 0.toShort, new BatchMetadata(4, 304, 4, 3000L)),
+      mockProducerEntry(3L, 0.toShort, new BatchMetadata(1, 201, 1, 2000L), new BatchMetadata(3, 203, 1, 2500L)))
+    manager.registerPartition(partition, topicId)
+
+    // When the batch fires
+    fireLinger()
+
+    // Then the request carries the newest batch of the two producers with the highest offsets
+    val request = channelManager.requests.poll()
+    val producerStates = request.requestData.topics().get(0).partitions().get(0).producerStates().asScala
+      .map(ps => (ps.producerId(), ps.baseSequence(), ps.lastSequence(), ps.assignedOffset()))
+      .toSet
+    assertEquals(Set((2L, 0, 4, 300L), (3L, 2, 3, 202L)), producerStates)
+    request.complete(makeSuccessResponse(topicId, 0))
+    assertState[AwaitingMetadata](tp0)
+  }
+
+  @Test
+  def testControllerSizeRejectionIsRetried(): Unit = {
+    // Given two partitions in one request
+    val tp1 = new TopicPartition("test-topic", 1)
+    manager.registerPartition(mockPartition(tp = tp0, hw = 100, leo = 100), topicId)
+    manager.registerPartition(mockPartition(tp = tp1, hw = 100, leo = 100), topicId)
+    fireLinger()
+
+    // When the controller accepts the first one and has no room in the metadata batch for the second
+    val response = new InitDisklessLogResponseData().setTopics(util.List.of(
+      new InitDisklessLogResponseData.TopicResponse()
+        .setTopicId(topicId)
+        .setPartitions(util.List.of(
+          new InitDisklessLogResponseData.PartitionResponse().setPartitionId(0).setErrorCode(Errors.NONE.code()),
+          new InitDisklessLogResponseData.PartitionResponse().setPartitionId(1).setErrorCode(Errors.RECORD_LIST_TOO_LARGE.code())
+        ))
+    ))
+    pollAndComplete(response)
+
+    // Then the second one stays queued and the retry sends it alone
+    assertState[AwaitingMetadata](tp0)
+    assertState[SendingToController](tp1)
+    fireRetry()
+    assertEquals(1, channelManager.requests.size())
+    val retry = channelManager.requests.poll()
+    assertEquals(Seq(1), partitionIdsOf(retry.requestData))
+    retry.complete(makeSuccessResponse(topicId, 1))
+    assertState[AwaitingMetadata](tp1)
+  }
+
+  @Test
+  def testRequestEntryBuildFailureRetriesOnlyThatPartition(): Unit = {
+    // Given a partition whose producer state can't be read and a healthy partition
+    val tp1 = new TopicPartition("test-topic", 1)
+    val broken = mockPartition(tp = tp0, hw = 100, leo = 100)
+    val producerStateManager = broken.log.get.producerStateManager()
+    when(producerStateManager.activeProducers()).thenThrow(new RuntimeException("producer state read failed"))
+    val healthy = mockPartition(tp = tp1, hw = 100, leo = 100)
+    manager.registerPartition(broken, topicId)
+    manager.registerPartition(healthy, topicId)
+
+    // When the batch fires
+    fireLinger()
+
+    // Then the request carries only the healthy partition
+    assertEquals(1, channelManager.requests.size())
+    val first = channelManager.requests.poll()
+    assertEquals(Seq(1), partitionIdsOf(first.requestData))
+    first.complete(makeSuccessResponse(topicId, 1))
+    assertState[AwaitingMetadata](tp1)
+    assertState[SendingToController](tp0)
+
+    // And the other partition goes out once its producer state can be read
+    doReturn(new util.HashMap[java.lang.Long, ProducerStateEntry]()).when(producerStateManager).activeProducers()
+    fireRetry()
+    assertEquals(1, channelManager.requests.size())
+    val retry = channelManager.requests.poll()
+    assertEquals(Seq(0), partitionIdsOf(retry.requestData))
+    retry.complete(makeSuccessResponse(topicId, 0))
+    assertState[AwaitingMetadata](tp0)
+  }
+
+  // Registers two ready partitions that each fill a request with room for two producer state entries.
+  // `whileQueueChecksFirstPartition` runs on the queue task, after it took both states from the queue.
+  private def sendTwoPartitionsThatEachFillARequest(whileQueueChecksFirstPartition: () => Unit): Unit = {
+    useProducerStateLimit(2)
+    val tp1 = new TopicPartition("test-topic", 1)
+    val partitions = Seq(tp0, tp1).map { tp =>
+      val partition = mockPartition(tp = tp, hw = 100, leo = 100)
+      setActiveProducers(partition, mockProducerEntry(7L, 0.toShort,
+        new BatchMetadata(4, 54, 4, 1000L),
+        new BatchMetadata(9, 59, 4, 2000L)))
+      manager.registerPartition(partition, topicId)
+      partition
+    }
+    var ran = false
+    when(partitions.head.isLeader).thenAnswer { _ =>
+      if (!ran) {
+        ran = true
+        whileQueueChecksFirstPartition()
+      }
+      true
+    }
+  }
+
+  @Test
+  def testStateQueuedWhileTheBatchDefersAPartitionIsStillSent(): Unit = {
+    // Given a third partition that becomes ready while the queue task defers the second one
+    val tp1 = new TopicPartition("test-topic", 1)
+    val tp2 = new TopicPartition("test-topic", 2)
+    sendTwoPartitionsThatEachFillARequest { () =>
+      val third = mockPartition(tp = tp2, hw = 100, leo = 100)
+      setActiveProducers(third, mockProducerEntry(7L, 0.toShort,
+        new BatchMetadata(4, 54, 4, 1000L),
+        new BatchMetadata(9, 59, 4, 2000L)))
+      manager.registerPartition(third, topicId)
+    }
+
+    // When the controller accepts every request
+    val requests = acceptRequestsUntilIdle()
+
+    // Then each partition goes in its own request, the deferred one before the later arrival
+    assertEquals(Seq(Seq(0), Seq(1), Seq(2)), requests.map(partitionIdsOf))
+    Seq(tp0, tp1, tp2).foreach(tp => assertState[AwaitingMetadata](tp))
+  }
+
+  @Test
+  def testDeferredPartitionRemovedWhileTheBatchDefersItIsNotSent(): Unit = {
+    // Given the second partition is removed while the queue task defers it
+    val tp1 = new TopicPartition("test-topic", 1)
+    sendTwoPartitionsThatEachFillARequest { () => manager.removePartition(tp1) }
+
+    // When the controller accepts every request
+    val requests = acceptRequestsUntilIdle()
+
+    // Then only the first partition is sent
+    assertEquals(Seq(Seq(0)), requests.map(partitionIdsOf))
+    assertState[AwaitingMetadata](tp0)
+    assertEquals(Set(tp0), manager.getTrackedPartitions)
   }
 
   @Test
@@ -759,6 +1026,108 @@ class InitDisklessLogManagerTest {
 
     // Then the partition is removed from tracking
     assertTrue(manager.getTrackedPartitions.isEmpty)
+  }
+
+  @Test
+  def testDeletedPartitionInAwaitingMetadataStopsRetrying(): Unit = {
+    // Given a partition whose control-plane init keeps failing with a retriable error
+    val partition = mockPartition(hw = 100, leo = 100)
+    when(controlPlane.initDisklessLog(any())).thenReturn(util.List.of(new CpInitResponse(Errors.NOT_CONTROLLER)))
+    manager.initOnControlPlane(
+      partition = partition,
+      topicId = topicId,
+      topicName = tp0.topic(),
+      classicToDisklessStartOffset = 100L,
+      producerStates = util.List.of(),
+      classicPrefixInRemoteStorage = true
+    )
+    fireLinger()
+    assertState[AwaitingMetadata](tp0)
+    verify(controlPlane, times(1)).initDisklessLog(any())
+    assertEquals(1L, gaugeValue(InitDisklessLogManager.InFlightPartitionsMetricName))
+
+    // When the broker deletes the partition, as ReplicaManager.applyDelta does
+    when(partition.log).thenReturn(None)
+    manager.removePartition(tp0)
+
+    // Then the partition leaves the tracking and the retries stop
+    assertTrue(manager.getTrackedPartitions.isEmpty)
+    assertEquals(0L, gaugeValue(InitDisklessLogManager.InFlightPartitionsMetricName))
+    fireRetry()
+    mockTime.sleep(manager.maxRetryTimeMs)
+    scheduler.tick()
+    verify(controlPlane, times(1)).initDisklessLog(any())
+  }
+
+  @Test
+  def testRegisterPartitionReplacesEntryOfDeletedTopicWithSameName(): Unit = {
+    // Given a tracked entry in AwaitingMetadata for a topic that no longer exists
+    val deletedPartition = mockPartition(hw = 100, leo = 100)
+    when(controlPlane.initDisklessLog(any())).thenReturn(util.List.of(new CpInitResponse(Errors.NOT_CONTROLLER)))
+    manager.initOnControlPlane(
+      partition = deletedPartition,
+      topicId = topicId,
+      topicName = tp0.topic(),
+      classicToDisklessStartOffset = 100L,
+      producerStates = util.List.of(),
+      classicPrefixInRemoteStorage = true
+    )
+    fireLinger()
+    assertState[AwaitingMetadata](tp0)
+    verify(controlPlane, times(1)).initDisklessLog(any())
+
+    // When a topic with the same name and another topic ID starts its switch
+    val newTopicId = Uuid.randomUuid()
+    val newPartition = mockPartition(hw = 20, leo = 20)
+    manager.registerPartition(newPartition, newTopicId)
+
+    // Then the new topic replaces the old entry and sends its own InitDisklessLog request
+    assertState[SendingToController](tp0)
+    assertEquals(Some(newTopicId), manager.getInitState(tp0).map(_.topicId))
+    fireLinger()
+    assertEquals(1, channelManager.requests.size())
+    val request = channelManager.requests.poll()
+    assertEquals(newTopicId, request.requestData.topics().get(0).topicId())
+    assertEquals(20L, request.requestData.topics().get(0).partitions().get(0).disklessStartOffset())
+    request.complete(makeSuccessResponse(newTopicId, 0))
+    assertState[AwaitingMetadata](tp0)
+
+    // And the old entry's control-plane retries stop
+    mockTime.sleep(manager.maxRetryTimeMs)
+    scheduler.tick()
+    verify(controlPlane, times(1)).initDisklessLog(any())
+  }
+
+  @Test
+  def testLateControllerCompletionOfReplacedStateLeavesTheReplacementAlone(): Unit = {
+    // Given a partition of a deleted topic whose InitDisklessLog request is in flight
+    manager.registerPartition(mockPartition(hw = 100, leo = 100), topicId)
+    val replaced = manager.getInitState(tp0).get.asInstanceOf[SendingToController]
+    fireLinger()
+    assertEquals(1, channelManager.requests.size())
+
+    // And a topic with the same name that replaces it
+    val newTopicId = Uuid.randomUuid()
+    manager.registerPartition(mockPartition(hw = 20, leo = 20), newTopicId)
+    val replacement = manager.getInitState(tp0).get
+    assertEquals(newTopicId, replacement.topicId)
+
+    // When the success of the old request arrives after the replacement. The queue completes a promise
+    // outside its lock, so the response thread can run this after the metadata thread replaced the state.
+    manager.onSendingToControllerCompleted(tp0, replaced, accepted = true)
+
+    // Then the replacement still waits for its own request
+    assertSame(replacement, manager.getInitState(tp0).get)
+
+    // And only the response to that request advances it
+    channelManager.requests.poll().complete(makeSuccessResponse(topicId, 0))
+    assertSame(replacement, manager.getInitState(tp0).get)
+    fireLinger()
+    assertEquals(1, channelManager.requests.size())
+    val request = channelManager.requests.poll()
+    assertEquals(newTopicId, request.requestData.topics().get(0).topicId())
+    request.complete(makeSuccessResponse(newTopicId, 0))
+    assertState[AwaitingMetadata](tp0)
   }
 
   @Test
@@ -1366,6 +1735,79 @@ class InitDisklessLogManagerTest {
     assertTrue(manager.getTrackedPartitions.isEmpty)
   }
 
+  // Starts the control-plane init of a partition whose seal is committed and whose flag is set.
+  private def startInitOnControlPlane(partition: Partition, seal: Long): Unit = {
+    manager.initOnControlPlane(
+      partition = partition,
+      topicId = topicId,
+      topicName = partition.topicPartition.topic(),
+      classicToDisklessStartOffset = seal,
+      producerStates = util.List.of(),
+      classicPrefixInRemoteStorage = true
+    )
+  }
+
+  @Test
+  def testLogStartOffsetPastSealDoesNotBlockOtherPartitionsInTheBatch(): Unit = {
+    // Given a partition whose log start is past the seal and a healthy partition in the same batch
+    val tp1 = new TopicPartition("test-topic", 1)
+    val pastSeal = mockPartition(tp = tp0, hw = 300, leo = 300)
+    when(pastSeal.log.get.logStartOffset).thenReturn(150L)
+    val healthy = mockPartition(tp = tp1, hw = 100, leo = 100)
+    val requests = ArgumentCaptor.forClass(classOf[util.List[CpInitRequest]])
+    // The control plane already has the first partition, as in phase 2, and creates the second one.
+    when(controlPlane.initDisklessLog(requests.capture()))
+      .thenReturn(util.List.of(CpInitResponse.alreadyInitialized(), CpInitResponse.success()))
+
+    // When both reach the control-plane init
+    startInitOnControlPlane(pastSeal, seal = 100L)
+    startInitOnControlPlane(healthy, seal = 100L)
+    fireLinger()
+
+    // Then one call carries both partitions, and the log start of the first one is the seal
+    verify(controlPlane, times(1)).initDisklessLog(any())
+    val sent = requests.getValue.asScala.map(r => r.partition() -> r).toMap
+    assertEquals(Set(0, 1), sent.keySet)
+    assertEquals(100L, sent(0).logStartOffset())
+    assertEquals(100L, sent(0).disklessStartOffset())
+    assertEquals(0L, sent(1).logStartOffset())
+
+    // And both partitions leave the tracking
+    assertTrue(manager.getTrackedPartitions.isEmpty)
+  }
+
+  @Test
+  def testRequestBuildFailureRetriesOnlyThatPartition(): Unit = {
+    // Given a partition whose request can't be built and a healthy partition in the same batch
+    val tp1 = new TopicPartition("test-topic", 1)
+    val broken = mockPartition(tp = tp0, hw = 100, leo = 100)
+    val brokenLog = broken.log.get
+    when(brokenLog.logStartOffset).thenThrow(new RuntimeException("log read failed"))
+    val healthy = mockPartition(tp = tp1, hw = 100, leo = 100)
+    val requests = ArgumentCaptor.forClass(classOf[util.List[CpInitRequest]])
+    when(controlPlane.initDisklessLog(requests.capture())).thenReturn(util.List.of(CpInitResponse.success()))
+
+    // When both reach the control-plane init
+    startInitOnControlPlane(broken, seal = 100L)
+    startInitOnControlPlane(healthy, seal = 100L)
+    fireLinger()
+
+    // Then the healthy partition reaches the control plane and the other one stays tracked
+    verify(controlPlane, times(1)).initDisklessLog(any())
+    assertEquals(Seq(1), requests.getValue.asScala.map(_.partition()).toSeq)
+    assertEquals(Set(tp0), manager.getTrackedPartitions)
+    assertState[AwaitingMetadata](tp0)
+
+    // When the request can be built again
+    doReturn(0L).when(brokenLog).logStartOffset
+    fireRetry()
+
+    // Then the retry sends only that partition
+    verify(controlPlane, times(2)).initDisklessLog(any())
+    assertEquals(Seq(0), requests.getValue.asScala.map(_.partition()).toSeq)
+    assertTrue(manager.getTrackedPartitions.isEmpty)
+  }
+
   private val classicSeal = 100L
 
   // Makes the control plane accept every request in a batch.
@@ -1491,6 +1933,11 @@ class InitDisklessLogManagerTest {
 
     // Then the first evaluation advances the partition with no poll period and no upload
     assertState[SendingFlagToController](tp0)
+
+    // And the flag request records no classic epoch, because the log holds no record below the seal
+    fireLinger()
+    val sent = pollFlagRequest().setFlagRequestData.topics().get(0).partitions().get(0)
+    assertEquals(PartitionRegistration.NO_LAST_CLASSIC_LEADER_EPOCH, sent.lastClassicLeaderEpoch())
   }
 
   @Test
@@ -1524,12 +1971,15 @@ class InitDisklessLogManagerTest {
     val sameTopic = partitionsByTopic(topicId).sortBy(_.partitionId())
     assertEquals(List(0, 1), sameTopic.map(_.partitionId()))
     assertEquals(List(3, 4), sameTopic.map(_.leaderEpoch()))
+    assertEquals(List(2, 3), sameTopic.map(_.lastClassicLeaderEpoch()))
     assertEquals(List(classicSeal, classicSeal), sameTopic.map(_.classicToDisklessStartOffset()))
 
     val other = partitionsByTopic(otherTopicId).head
     assertEquals(0, other.partitionId())
     assertEquals(5, other.leaderEpoch())
+    assertEquals(4, other.lastClassicLeaderEpoch())
     assertEquals(classicSeal, other.classicToDisklessStartOffset())
+    verify(p0.log.get.leaderEpochCache).epochForOffset(classicSeal - 1)
   }
 
   @Test
