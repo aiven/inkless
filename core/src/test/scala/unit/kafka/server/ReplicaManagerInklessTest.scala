@@ -1704,6 +1704,143 @@ class ReplicaManagerInklessTest {
     }
   }
 
+  private val partitionRateWindowMs = 60000L
+
+  private def partitionRateGauge(name: String, tags: String): Number = {
+    val mbeanName = s"kafka.server:type=ReplicaManager,name=$name" + (if (tags.isEmpty) "" else s",$tags")
+    KafkaYammerMetrics.defaultRegistry.allMetrics.asScala
+      .collectFirst { case (n, g: com.yammer.metrics.core.Gauge[_]) if n.getMBeanName == mbeanName => g.value().asInstanceOf[Number] }
+      .getOrElse(fail(s"Gauge $mbeanName is not registered"))
+  }
+
+  private def snapshotPartitionRatesOverOneWindow(replicaManager: ReplicaManager)(traffic: => Unit): Unit = {
+    traffic
+    time.sleep(partitionRateWindowMs)
+    replicaManager.partitionRateTracker.snapshot()
+  }
+
+  private def stubHostedDisklessPartitions(replicaManager: ReplicaManager, tps: TopicIdPartition*): Unit =
+    when(replicaManager.inklessMetadataView().getDisklessReplicaCount(replicaManager.config.brokerId)).thenReturn(tps.size)
+
+  @ParameterizedTest(name = "testRecordClientBytesInByTopicType with diskless: {0}")
+  @ValueSource(booleans = Array(true, false))
+  def testRecordClientBytesInByTopicType(diskless: Boolean): Unit = {
+    val replicaManager = createReplicaManager(List(disklessTopicPartition.topic()))
+    try {
+      stubHostedDisklessPartitions(replicaManager, disklessTopicPartition)
+      addLeaderOrFollowerPartition(replicaManager, classicTopicPartition.topicPartition, isLeader = true)
+      val tp = if (diskless) disklessTopicPartition else classicTopicPartition
+      snapshotPartitionRatesOverOneWindow(replicaManager) {
+        replicaManager.recordClientBytesIn(tp.topicPartition, RECORDS.sizeInBytes)
+      }
+
+      val tags = if (diskless) "topicType=diskless" else "topicType=classic"
+      assertEquals(1L, partitionRateGauge("ActivePartitionsBytesIn", tags).longValue)
+      assertEquals(RECORDS.sizeInBytes * 1000.0 / partitionRateWindowMs, partitionRateGauge("PartitionBytesInRateSum", tags).doubleValue, 1e-9)
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testRecordClientBytesOutDisklessHasNoRole(): Unit = {
+    val replicaManager = createReplicaManager(List(disklessTopicPartition.topic()))
+    try {
+      stubHostedDisklessPartitions(replicaManager, disklessTopicPartition)
+      snapshotPartitionRatesOverOneWindow(replicaManager) {
+        replicaManager.recordClientBytesOut(disklessTopicPartition.topicPartition, RECORDS.sizeInBytes)
+      }
+
+      val tags = "topicType=diskless"
+      assertEquals(1L, partitionRateGauge("ActivePartitionsBytesOut", tags).longValue)
+      assertEquals(RECORDS.sizeInBytes * 1000.0 / partitionRateWindowMs, partitionRateGauge("PartitionBytesOutRateSum", tags).doubleValue, 1e-9)
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  private def addLeaderOrFollowerPartition(replicaManager: ReplicaManager, tp: TopicPartition, isLeader: Boolean): Partition = {
+    val partition = mock(classOf[Partition])
+    when(partition.topicPartition).thenReturn(tp)
+    when(partition.topic).thenReturn(tp.topic)
+    when(partition.isLeader).thenReturn(isLeader)
+    when(partition.leaderLogIfLocal).thenReturn(if (isLeader) Some(mock(classOf[UnifiedLog])) else None)
+    replicaManager.addOnlinePartition(tp, partition)
+    partition
+  }
+
+  @ParameterizedTest(name = "testRecordClientBytesOutClassicRole with isLeader: {0}")
+  @ValueSource(booleans = Array(true, false))
+  def testRecordClientBytesOutClassicRole(isLeader: Boolean): Unit = {
+    val replicaManager = createReplicaManager(List(disklessTopicPartition.topic()))
+    try {
+      addLeaderOrFollowerPartition(replicaManager, classicTopicPartition.topicPartition, isLeader)
+      snapshotPartitionRatesOverOneWindow(replicaManager) {
+        replicaManager.recordClientBytesOut(classicTopicPartition.topicPartition, RECORDS.sizeInBytes)
+      }
+
+      val tags = "topicType=classic"
+      assertEquals(if (isLeader) 1L else 0L, partitionRateGauge("ActivePartitionsBytesOut", s"$tags,role=leader").longValue)
+      assertEquals(if (isLeader) 0L else 1L, partitionRateGauge("ActivePartitionsBytesOut", s"$tags,role=follower").longValue)
+      assertEquals(RECORDS.sizeInBytes * 1000.0 / partitionRateWindowMs, partitionRateGauge("PartitionBytesOutRateSum", tags).doubleValue, 1e-9)
+      assertEquals(if (isLeader) 1 else 0, partitionRateGauge("HostedPartitions", "topicType=classic").intValue)
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testRecordClientBytesSkipsInternalTopicsAndPartitionsNotHosted(): Unit = {
+    val replicaManager = createReplicaManager(List(disklessTopicPartition.topic()))
+    try {
+      val internal = new TopicPartition("__consumer_offsets", 0)
+      addLeaderOrFollowerPartition(replicaManager, internal, isLeader = true)
+      snapshotPartitionRatesOverOneWindow(replicaManager) {
+        replicaManager.recordClientBytesIn(internal, RECORDS.sizeInBytes)
+        replicaManager.recordClientBytesOut(internal, RECORDS.sizeInBytes)
+        // This broker doesn't host the classic partition.
+        replicaManager.recordClientBytesOut(classicTopicPartition.topicPartition, RECORDS.sizeInBytes)
+      }
+
+      val tags = "topicType=classic"
+      assertEquals(0L, partitionRateGauge("ActivePartitionsBytesIn", tags).longValue)
+      assertEquals(0L, partitionRateGauge("ActivePartitionsBytesOut", s"$tags,role=leader").longValue)
+      assertEquals(0L, partitionRateGauge("ActivePartitionsBytesOut", s"$tags,role=follower").longValue)
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testPartitionRateHostedPartitionsExcludeInternalAndDisklessTopics(): Unit = {
+    val replicaManager = createReplicaManager(List(disklessTopicPartition.topic()))
+    try {
+      addLeaderOrFollowerPartition(replicaManager, new TopicPartition("classic", 0), isLeader = true)
+      addLeaderOrFollowerPartition(replicaManager, new TopicPartition("classic", 1), isLeader = false)
+      addLeaderOrFollowerPartition(replicaManager, new TopicPartition("__consumer_offsets", 0), isLeader = true)
+      addLeaderOrFollowerPartition(replicaManager, disklessTopicPartition.topicPartition, isLeader = true)
+      stubHostedDisklessPartitions(replicaManager, disklessTopicPartition)
+
+      replicaManager.partitionRateTracker.snapshot()
+
+      assertEquals(1, partitionRateGauge("HostedPartitions", "topicType=classic").intValue)
+      assertEquals(1, partitionRateGauge("HostedPartitions", "topicType=diskless").intValue)
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testShutdownRemovesPartitionRateMetrics(): Unit = {
+    val replicaManager = createReplicaManager(List(disklessTopicPartition.topic()))
+    assertNotNull(partitionRateGauge("HostedPartitions", "topicType=classic"))
+    replicaManager.shutdown(checkpointHW = false)
+
+    val registered = KafkaYammerMetrics.defaultRegistry.allMetrics.keySet.asScala
+      .exists(n => n.getMBeanName.matches("kafka\\.server:type=ReplicaManager,name=(PartitionBytes|PartitionsByBytes|ActivePartitionsBytes|HostedPartitions).*"))
+    assertFalse(registered)
+  }
+
   private def stubConsolidatingPartitionWithLocalLeo(replicaManager: ReplicaManager,
                                                      localLeo: Long,
                                                      localHighWatermark: Option[Long] = None,
@@ -6961,6 +7098,157 @@ class ReplicaManagerInklessTest {
   }
 
   @Test
+  def testFirstDeltaAsPendingLeaderOfConsolidatingTopicSealsAndRegisters(): Unit = {
+    val ctorInit: MockedConstruction.MockInitializer[ConsolidationFetcherManager] = {
+      case (mock, _) =>
+        when(mock.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    }
+    val consolidationCtor = mockConstruction(classOf[ConsolidationFetcherManager], ctorInit)
+    try {
+      assertFirstDeltaAsPendingLeaderSealsAndRegisters(consolidating = true,
+        verifyNoConsolidationFetcher = () =>
+          verify(consolidationCtor.constructed().get(0), never()).addFetcherForPartitions(any()))
+    } finally {
+      consolidationCtor.close()
+    }
+  }
+
+  @Test
+  def testFirstDeltaAsPendingLeaderOfNonConsolidatingTopicSealsAndRegisters(): Unit = {
+    assertFirstDeltaAsPendingLeaderSealsAndRegisters(consolidating = false, verifyNoConsolidationFetcher = () => ())
+  }
+
+  // A broker that restarts while the switch is pending has its local log on disk but no Partition. If its
+  // first image makes it the leader, it must drive the switch without waiting for another leader epoch.
+  private def assertFirstDeltaAsPendingLeaderSealsAndRegisters(consolidating: Boolean,
+                                                               verifyNoConsolidationFetcher: () => Unit): Unit = {
+    val topicName = disklessTopicPartition.topic()
+    val topicId = disklessTopicPartition.topicId
+    val tp = disklessTopicPartition.topicPartition()
+    val brokerId = 1
+    val restartLeaderEpoch = 1
+    val producerId = 137L
+    val producerEpoch: Short = 5
+
+    val mockIdlm = mock(classOf[InitDisklessLogManager])
+    val replicaManager = createReplicaManager(
+      List(topicName),
+      disklessRemoteStorageConsolidationEnabled = consolidating,
+      consolidatingDisklessTopics = if (consolidating) Set(topicName) else Set.empty,
+      initDisklessLogManager = Some(mockIdlm)
+    )
+    try {
+      // The previous leader epoch left a transaction open in the local log.
+      val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+      log.appendAsFollower(MemoryRecords.withTransactionalRecords(0L, Compression.NONE, producerId, producerEpoch, 0, 0,
+        new SimpleRecord("k1".getBytes, "v1".getBytes), new SimpleRecord("k2".getBytes, "v2".getBytes)), 0)
+      assertTrue(log.hasOngoingTransaction(producerId, producerEpoch))
+      assertEquals(new HostedPartition.None[Partition], replicaManager.getPartition(tp))
+
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp))
+        .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
+
+      val delta = new TopicsDelta(TopicsImage.EMPTY)
+      delta.replay(new TopicRecord().setName(topicName).setTopicId(topicId))
+      val partitionRecord = new PartitionRecord()
+        .setPartitionId(0)
+        .setTopicId(topicId)
+        .setReplicas(util.Arrays.asList(brokerId, brokerId + 1))
+        .setIsr(util.Arrays.asList(brokerId, brokerId + 1))
+        .setLeader(brokerId)
+        .setLeaderEpoch(restartLeaderEpoch)
+        .setPartitionEpoch(0)
+      partitionRecord.unknownTaggedFields().add(
+        InitDisklessLogFields.encodeClassicToDisklessStartOffset(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING))
+      delta.replay(partitionRecord)
+      replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))
+
+      assertTrue(replicaManager.getPartition(tp).isInstanceOf[HostedPartition.Online[Partition]])
+      val partition = replicaManager.getPartition(tp).asInstanceOf[HostedPartition.Online[Partition]].partition
+      assertTrue(partition.isLeader)
+      assertTrue(partition.isSealed)
+      verify(mockIdlm, times(1)).registerPartition(ArgumentMatchers.same(partition), ArgumentMatchers.eq(topicId))
+      verifyNoConsolidationFetcher()
+
+      // The restarted leader aborts the open transaction in its own leader epoch.
+      val localLog = partition.localLogOrException
+      assertFalse(localLog.hasOngoingTransaction(producerId, producerEpoch))
+      val lastBatch = localLog.logSegments().asScala.flatMap(_.log().batches().asScala).last
+      assertTrue(lastBatch.isControlBatch)
+      assertEquals(restartLeaderEpoch, lastBatch.partitionLeaderEpoch())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testFirstDeltaAsPendingLeaderOfConsolidatingTopicWithoutLocalLogSkipsThePartition(): Unit = {
+    val ctorInit: MockedConstruction.MockInitializer[ConsolidationFetcherManager] = {
+      case (mock, _) =>
+        when(mock.removeFetcherForPartitions(any())).thenReturn(Map.empty[TopicPartition, PartitionFetchState])
+    }
+    val consolidationCtor = mockConstruction(classOf[ConsolidationFetcherManager], ctorInit)
+    try {
+      assertFirstDeltaAsPendingLeaderWithoutLocalLogSkipsThePartition(consolidating = true,
+        verifyNoConsolidationFetcher = () =>
+          verify(consolidationCtor.constructed().get(0), never()).addFetcherForPartitions(any()))
+    } finally {
+      consolidationCtor.close()
+    }
+  }
+
+  @Test
+  def testFirstDeltaAsPendingLeaderOfNonConsolidatingTopicWithoutLocalLogSkipsThePartition(): Unit = {
+    assertFirstDeltaAsPendingLeaderWithoutLocalLogSkipsThePartition(consolidating = false,
+      verifyNoConsolidationFetcher = () => ())
+  }
+
+  // A leader without a local log, such as after a disk replacement, has an empty log once makeLeader creates
+  // one. Registering it would propose a seal of 0 and drop the classic prefix that the followers hold.
+  private def assertFirstDeltaAsPendingLeaderWithoutLocalLogSkipsThePartition(consolidating: Boolean,
+                                                                             verifyNoConsolidationFetcher: () => Unit): Unit = {
+    val topicName = disklessTopicPartition.topic()
+    val topicId = disklessTopicPartition.topicId
+    val tp = disklessTopicPartition.topicPartition()
+    val brokerId = 1
+
+    val mockIdlm = mock(classOf[InitDisklessLogManager])
+    val replicaManager = createReplicaManager(
+      List(topicName),
+      disklessRemoteStorageConsolidationEnabled = consolidating,
+      consolidatingDisklessTopics = if (consolidating) Set(topicName) else Set.empty,
+      initDisklessLogManager = Some(mockIdlm)
+    )
+    try {
+      assertTrue(replicaManager.logManager.getLog(tp).isEmpty)
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp))
+        .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
+
+      val delta = new TopicsDelta(TopicsImage.EMPTY)
+      delta.replay(new TopicRecord().setName(topicName).setTopicId(topicId))
+      val partitionRecord = new PartitionRecord()
+        .setPartitionId(0)
+        .setTopicId(topicId)
+        .setReplicas(util.Arrays.asList(brokerId, brokerId + 1))
+        .setIsr(util.Arrays.asList(brokerId, brokerId + 1))
+        .setLeader(brokerId)
+        .setLeaderEpoch(1)
+        .setPartitionEpoch(0)
+      partitionRecord.unknownTaggedFields().add(
+        InitDisklessLogFields.encodeClassicToDisklessStartOffset(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING))
+      delta.replay(partitionRecord)
+      replicaManager.applyDelta(delta, imageFromTopics(delta.apply()))
+
+      assertTrue(replicaManager.logManager.getLog(tp).isEmpty, "The leader must not create an empty log")
+      assertEquals(new HostedPartition.None[Partition], replicaManager.getPartition(tp))
+      verify(mockIdlm, never()).registerPartition(any(classOf[Partition]), any(classOf[Uuid]))
+      verifyNoConsolidationFetcher()
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
   def testApplyDeltaAdvancesHwmToSealOffsetForSealedLeaderWithStaleCheckpoint(): Unit = {
     // After restart, makeLeader reloads HW from the on-disk checkpoint file.
     // If the checkpoint is stale (e.g. unclean shutdown, or checkpoint interval
@@ -7905,20 +8193,21 @@ class ReplicaManagerInklessTest {
       try {
         val pendingImage = applyPendingSwitchDelta(replicaManager, topicName, topicId, tp, brokerId, otherReplica, localLeo)
         val log = replicaManager.localLogOrException(tp)
+        // The pending leader seals when it creates the partition, and the seal rolls the active segment.
+        assertTrue(replicaManager.getPartition(tp).asInstanceOf[HostedPartition.Online[Partition]].partition.isSealed)
+        assertEquals(0, log.activeSegment().size())
         val segmentsBefore = log.numberOfSegments
-        assertTrue(log.activeSegment().size() > 0)
 
         commitSealDelta(replicaManager, pendingImage, topicId, tp, brokerId, sealOffset)
 
         // Nothing rebuilds the prefix in phase 1 of the classic-to-diskless switch, so the broker fences
         // the leader as on a topic that doesn't consolidate. The leader takes the classic switch branch,
-        // so only seal() rolls the active segment. This test creates the partition while the switch is
-        // pending, so the seal commit is the first seal().
+        // where seal() is a no-op for a sealed partition, so the fence doesn't roll another segment.
         val partition = replicaManager.getPartition(tp)
         assertTrue(partition.isInstanceOf[HostedPartition.Offline[Partition]],
           s"Consolidating leader below the seal must be fenced in phase 1, but was $partition")
         assertEquals(localLeo, log.logEndOffset)
-        assertEquals(segmentsBefore + 1, log.numberOfSegments)
+        assertEquals(segmentsBefore, log.numberOfSegments)
       } finally {
         replicaManager.shutdown(checkpointHW = false)
       }
@@ -12961,7 +13250,8 @@ class ReplicaManagerInklessTest {
   @Test
   def testConsolidatingSwitchSealsRegistersThenStartsConsolidationOnClassicPrefixFlagCommit(): Unit = {
     // Drives a consolidating classic-to-diskless switch on the *leader* across four deltas:
-    //   delta 1: bring the partition online so delta 2 sees an existing online partition.
+    //   delta 1: bring the partition online as the leader of a pending switch. Like the first delta
+    //     after a restart, no Partition exists yet, and the partition must still seal+register.
     //   delta 2: pending switch (epoch bumped) on an already-consolidating topic must seal+register,
     //     NOT take the consolidating become-leader branch (which would skip the seal and strand the
     //     switch in CLASSIC_TO_DISKLESS_SWITCH_PENDING). No consolidation fetcher starts yet.
@@ -13024,6 +13314,8 @@ class ReplicaManagerInklessTest {
         replicaManager.applyDelta(onlineDelta, onlineImage)
         assertTrue(replicaManager.getPartition(tp).isInstanceOf[HostedPartition.Online[Partition]],
           "Partition should be online after the first delta")
+        verify(mockIdlm, times(1)).registerPartition(any(classOf[Partition]), ArgumentMatchers.eq(topicId))
+        verify(mockCfm, never()).addFetcherForPartitions(any())
 
         // --- delta 2: pending switch with a leader-epoch bump -> seal + register ---
         clearInvocations(mockCfm)
@@ -13043,7 +13335,7 @@ class ReplicaManagerInklessTest {
 
         // Seal+register ran (not the consolidating become-leader branch), and no consolidation
         // fetcher was started for the partition while the seal is still pending.
-        verify(mockIdlm).registerPartition(any(classOf[Partition]), ArgumentMatchers.eq(topicId))
+        verify(mockIdlm, times(2)).registerPartition(any(classOf[Partition]), ArgumentMatchers.eq(topicId))
         val leaderEpochAfterSeal = replicaManager.getPartition(tp)
           .asInstanceOf[HostedPartition.Online[Partition]].partition.getLeaderEpoch
         verify(mockCfm, never()).addFetcherForPartitions(any())
@@ -13164,6 +13456,8 @@ class ReplicaManagerInklessTest {
         onlineDelta.replay(onlineRecord)
         val onlineImage = imageFromTopics(onlineDelta.apply())
         replicaManager.applyDelta(onlineDelta, onlineImage)
+        // The first delta already shows this broker as the pending leader, so it seals and registers.
+        verify(mockIdlm, times(1)).registerPartition(any(classOf[Partition]), ArgumentMatchers.eq(topicId))
 
         def partition: Partition =
           replicaManager.getPartition(tp).asInstanceOf[HostedPartition.Online[Partition]].partition
@@ -13176,12 +13470,12 @@ class ReplicaManagerInklessTest {
           record
         }
 
-        // The pending switch seals and registers, but the high watermark stays below the log end offset.
+        // The pending switch seals and registers again, but the high watermark stays below the log end offset.
         val pendingDelta = new TopicsDelta(onlineImage.topics())
         pendingDelta.replay(rearmRecord())
         val pendingImage = imageFromTopics(pendingDelta.apply())
         replicaManager.applyDelta(pendingDelta, pendingImage)
-        verify(mockIdlm, times(1)).registerPartition(any(classOf[Partition]), ArgumentMatchers.eq(topicId))
+        verify(mockIdlm, times(2)).registerPartition(any(classOf[Partition]), ArgumentMatchers.eq(topicId))
         assertTrue(partition.isUnderMinIsr)
         assertEquals(staleHw, partition.localLogOrException.highWatermark)
         assertEquals(leo, partition.localLogOrException.logEndOffset)
@@ -13199,7 +13493,7 @@ class ReplicaManagerInklessTest {
         val rearmDelta = new TopicsDelta(pendingImage.topics())
         rearmDelta.replay(rearmRecord())
         replicaManager.applyDelta(rearmDelta, imageFromTopics(rearmDelta.apply()))
-        verify(mockIdlm, times(2)).registerPartition(any(classOf[Partition]), ArgumentMatchers.eq(topicId))
+        verify(mockIdlm, times(3)).registerPartition(any(classOf[Partition]), ArgumentMatchers.eq(topicId))
         assertEquals(leo, partition.localLogOrException.highWatermark)
         assertEquals(leo, partition.localLogOrException.logEndOffset)
       } finally {

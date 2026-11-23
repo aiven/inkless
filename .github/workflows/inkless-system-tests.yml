@@ -10,9 +10,9 @@ on:
   workflow_dispatch:
     inputs:
       test-target:
-        description: "Ducktape test target"
-        required: true
-        default: "tests/kafkatest/tests/inkless/"
+        description: "Ducktape test target. If empty, the full suite runs split across parallel jobs."
+        required: false
+        default: ""
         type: string
 
 concurrency:
@@ -26,13 +26,23 @@ permissions:
 
 jobs:
   inkless-system-tests:
-    name: Inkless system tests
+    name: Inkless system tests (${{ matrix.shard }})
     runs-on: ubuntu-latest
     # Stays above the 300m ducker run so the inner `timeout` fires first, yielding exit 124
     # and leaving the archive and cleanup steps to run. Also 10 minutes off GitHub's 360m
-    # ceiling for hosted runners, so there is no room for another bump: if the suite outgrows
-    # this, split the ducktape target across jobs.
+    # ceiling for hosted runners, so there is no room for another bump. Both limits apply per
+    # shard: if a shard outgrows them, move tests to another shard or add one.
     timeout-minutes: 350
+    strategy:
+      # A failing shard doesn't cancel the others, so one nightly reports every failure.
+      fail-fast: false
+      matrix:
+        # Each shard gets its own runner, ducker cluster, Postgres, and MinIO. Together the
+        # shards cover every test under `tests/kafkatest/tests/inkless/`, and the run step
+        # maps each shard to its ducktape target. The split balances the shards by runtime: on
+        # the 2026-11-19 nightly they took about 72, 88, and 80 minutes. A custom `test-target`
+        # runs as the single `custom` shard.
+        shard: ${{ fromJSON(inputs.test-target && '["custom"]' || '["switch-category-d", "switch-other", "other"]') }}
 
     steps:
       - name: Checkout code
@@ -82,12 +92,28 @@ jobs:
       - name: Run inkless system tests
         id: system-tests
         env:
-          DEFAULT_TEST_TARGET: tests/kafkatest/tests/inkless/
-          REQUESTED_TEST_TARGET: ${{ github.event.inputs['test-target'] }}
+          SHARD: ${{ matrix.shard }}
+          REQUESTED_TEST_TARGET: ${{ inputs.test-target }}
         run: |
           set +e
-          test_target="${REQUESTED_TEST_TARGET:-${DEFAULT_TEST_TARGET}}"
-          timeout 300m bash tests/docker/ducker-ak test "$test_target" -- --test-runner-timeout 7200000
+          suite=tests/kafkatest/tests/inkless/
+          switch_test="${suite}inkless_topic_switch_test.py"
+          switch_category_d="${switch_test}::InklessClassicToDisklessSwitchTest.test_fault_between_seal_commit_and_phase_2"
+          # Ducktape exits non-zero when a target matches no tests, so a renamed test or file
+          # fails its shard instead of passing empty.
+          excludes=()
+          case "$SHARD" in
+            custom) targets=("$REQUESTED_TEST_TARGET") ;;
+            switch-category-d) targets=("$switch_category_d") ;;
+            switch-other) targets=("$switch_test"); excludes=("$switch_category_d") ;;
+            other) targets=("$suite"); excludes=("$switch_test") ;;
+            *) echo "Unknown shard: $SHARD"; exit 1 ;;
+          esac
+          ducktape_args=(--test-runner-timeout 7200000)
+          if [ "${#excludes[@]}" -gt 0 ]; then
+            ducktape_args+=(--exclude "${excludes[@]}")
+          fi
+          timeout 300m bash tests/docker/ducker-ak test "${targets[@]}" -- "${ducktape_args[@]}"
           exitcode="$?"
           echo "exitcode=$exitcode" >> "$GITHUB_OUTPUT"
 
@@ -95,7 +121,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: inkless-system-tests-results
+          name: inkless-system-tests-results-${{ matrix.shard }}
           path: |
             results/**
             tests/results/**
