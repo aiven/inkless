@@ -152,7 +152,7 @@ docker_push_multiarch: docker_build_multiarch
 
 .PHONY: docs
 docs:
-	./gradlew genInklessConfigDoc genInklessTopicConfigDoc genInklessMetricsDoc
+	./gradlew genInklessConfigDoc genInklessTopicConfigDoc genInklessMetricsDoc -x generateJooqClasses
 
 # Lint inkless-owned prose changes with Vale
 .PHONY: vale
