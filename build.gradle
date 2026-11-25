@@ -1353,8 +1353,14 @@ project(':core') {
     testImplementation libs.testcontainersJunitJupiter
     testImplementation libs.testcontainersLocalstack
     testImplementation libs.testcontainersPostgresql
-    testImplementation libs.tieredStorageForKafkaCore
-    testImplementation libs.tieredStorageForKafkaS3
+    // The plugin's Iceberg support needs io.confluent artifacts, which aren't on Maven Central.
+    // Inkless tests don't use Iceberg.
+    testImplementation(libs.tieredStorageForKafkaCore) {
+      exclude group: 'io.confluent'
+    }
+    testImplementation(libs.tieredStorageForKafkaS3) {
+      exclude group: 'io.confluent'
+    }
     testImplementation libs.awsSdkS3
     testImplementation rootProject.project(':storage:inkless').sourceSets.test.output
 
