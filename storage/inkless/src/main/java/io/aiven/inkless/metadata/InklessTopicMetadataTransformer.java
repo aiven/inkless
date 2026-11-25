@@ -190,7 +190,8 @@ public class InklessTopicMetadataTransformer implements Closeable {
         final Map<Integer, String> brokerRacks
     ) {
         final LeaderSelectionResult result = selectLeaderForManagedReplicas(
-            clientAZ, topicId, partition.partitionIndex(), assignedReplicas, eligibleReplicas, isRemoteStorageEnabled,
+            clientAZ, topicId, partition.partitionIndex(), partition.leaderId(),
+            assignedReplicas, eligibleReplicas, isRemoteStorageEnabled,
             aliveBrokerIds, brokerRacks
         );
 
@@ -222,7 +223,8 @@ public class InklessTopicMetadataTransformer implements Closeable {
         final Map<Integer, String> brokerRacks
     ) {
         final LeaderSelectionResult result = selectLeaderForManagedReplicas(
-            clientAZ, topicId, partition.partitionIndex(), assignedReplicas, eligibleReplicas, isRemoteStorageEnabled,
+            clientAZ, topicId, partition.partitionIndex(), partition.leaderId(),
+            assignedReplicas, eligibleReplicas, isRemoteStorageEnabled,
             aliveBrokerIds, brokerRacks
         );
 
@@ -299,17 +301,20 @@ public class InklessTopicMetadataTransformer implements Closeable {
     }
 
     /**
-     * Select leader for managed replicas.
+     * Selects a leader for managed replicas.
      *
-     * <p>When remote storage is enabled: same-AZ replica > cross-AZ replica > unavailable
-     * <p>When remote storage is disabled: same-AZ replica > same-AZ any broker > cross-AZ replica > cross-AZ any broker
+     * <p>With remote storage on: same-AZ replica > cross-AZ replica > unavailable.
+     * <p>With remote storage off: same-AZ replica > same-AZ any broker > cross-AZ replica > cross-AZ any broker.
      *
      * <p>Only {@code eligibleReplicas}, a subset of {@code assignedReplicas}, count as replicas to route to.
+     * Among the candidate replicas in the chosen tier, selects {@code controllerLeader} when it is in the candidate
+     * list and falls back to {@link #selectByHash} otherwise.
      */
     private LeaderSelectionResult selectLeaderForManagedReplicas(
         final String clientAZ,
         final Uuid topicId,
         final int partitionIndex,
+        final int controllerLeader,
         final List<Integer> assignedReplicas,
         final List<Integer> eligibleReplicas,
         final boolean isRemoteStorageEnabled,
@@ -338,7 +343,7 @@ public class InklessTopicMetadataTransformer implements Closeable {
 
             if (!aliveReplicasInClientAZ.isEmpty()) {
                 // Best: replica in same AZ
-                selectedLeader = selectByHash(topicId, partitionIndex, aliveReplicasInClientAZ);
+                selectedLeader = selectReplicaLeader(controllerLeader, topicId, partitionIndex, aliveReplicasInClientAZ);
                 partitionAvailable = true;
                 metrics.recordClientAz(clientAZ, true);
                 if (hasOfflineReplicas) {
@@ -346,7 +351,7 @@ public class InklessTopicMetadataTransformer implements Closeable {
                 }
             } else if (!aliveReplicas.isEmpty()) {
                 // Fallback: replica in other AZ (cross-AZ)
-                selectedLeader = selectByHash(topicId, partitionIndex, aliveReplicas);
+                selectedLeader = selectReplicaLeader(controllerLeader, topicId, partitionIndex, aliveReplicas);
                 partitionAvailable = true;
                 metrics.recordClientAz(clientAZ, false);
                 recordCrossAzIfConfirmed(clientAZ, selectedLeader, brokerRacks);
@@ -367,7 +372,7 @@ public class InklessTopicMetadataTransformer implements Closeable {
 
             if (!aliveReplicasInClientAZ.isEmpty()) {
                 // Best: assigned replica in same AZ
-                selectedLeader = selectByHash(topicId, partitionIndex, aliveReplicasInClientAZ);
+                selectedLeader = selectReplicaLeader(controllerLeader, topicId, partitionIndex, aliveReplicasInClientAZ);
                 partitionAvailable = true;
                 metrics.recordClientAz(clientAZ, true);
                 if (hasOfflineReplicas) {
@@ -384,7 +389,7 @@ public class InklessTopicMetadataTransformer implements Closeable {
                 }
             } else if (!aliveReplicas.isEmpty()) {
                 // No brokers in client AZ available; use replica in other AZ (cross-AZ)
-                selectedLeader = selectByHash(topicId, partitionIndex, aliveReplicas);
+                selectedLeader = selectReplicaLeader(controllerLeader, topicId, partitionIndex, aliveReplicas);
                 partitionAvailable = true;
                 metrics.recordClientAz(clientAZ, false);
                 recordCrossAzIfConfirmed(clientAZ, selectedLeader, brokerRacks);
@@ -509,6 +514,28 @@ public class InklessTopicMetadataTransformer implements Closeable {
         return brokerIds.stream()
             .filter(id -> Objects.equals(brokerRacks.get(id), az))
             .toList();
+    }
+
+    /**
+     * Selects a leader from candidate replicas, preferring {@code controllerLeader} so clients
+     * follow KRaft leadership (balanced by preferred leader election).
+     *
+     * <p>Falls back to {@link #selectByHash} when {@code controllerLeader} isn't among
+     * {@code candidates}. That happens when an AZ-aware client routes to same-AZ followers while
+     * the controller leader is in another AZ, or when the controller leader is offline,
+     * absent ({@code -1}), or outside the ISR during a local-prefix switch. Hashing picks a
+     * deterministic broker from the remaining candidates for cache locality.
+     */
+    private static int selectReplicaLeader(
+        final int controllerLeader,
+        final Uuid topicId,
+        final int partitionIndex,
+        final List<Integer> candidates
+    ) {
+        if (candidates.contains(controllerLeader)) {
+            return controllerLeader;
+        }
+        return selectByHash(topicId, partitionIndex, candidates);
     }
 
     private static int selectByHash(final Uuid topicId, final int partitionIndex, final List<Integer> candidates) {
