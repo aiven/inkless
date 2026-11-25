@@ -396,6 +396,10 @@ public class ConfigurationControlManager {
                 // In KRaft mode, large config values cannot be created by appending.
                 // If the size exceeds Short.MAX_VALUE, this error will be thrown to notify the user.
                 return DISALLOWED_CONFIG_VALUE_SIZE_ERROR;
+            } else if (isNonCanonicalTopicTypeFlag(configRecord)) {
+                return new ApiError(INVALID_CONFIG, "Invalid value '" + configRecord.value() +
+                    "' for configuration " + configRecord.name() + ": the value must be true or false, " +
+                    "without surrounding whitespace.");
             } else {
                 // Mirror the incremental AlterConfigs SET guard: legacy AlterConfigs must not enable
                 // diskless on an existing classic topic when the allow-from-classic flag is off.
@@ -490,6 +494,21 @@ public class ConfigurationControlManager {
             && Boolean.parseBoolean(requestedValue)
             && !Boolean.parseBoolean(currentValue)
             && !isDisklessAllowFromClassicEnabled();
+    }
+
+    // ConfigDef trims a boolean before it parses it, but the controller and the brokers read the
+    // stored topic type flags as is: " true" passes validation as true, the controller reads it as
+    // false, and the brokers fail on it. Upstream has the same mismatch for
+    // unclean.leader.election.enable, where the controller only skips an unclean election. From
+    // these two keys the controller writes the switch and consolidation markers of the partitions,
+    // so it rejects the value.
+    private static boolean isNonCanonicalTopicTypeFlag(ConfigRecord configRecord) {
+        String name = configRecord.name();
+        String value = configRecord.value();
+        return configRecord.resourceType() == Type.TOPIC.id()
+            && (TopicConfig.DISKLESS_ENABLE_CONFIG.equals(name) || TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG.equals(name))
+            && !"true".equalsIgnoreCase(value)
+            && !"false".equalsIgnoreCase(value);
     }
 
     private boolean isDisklessAllowFromClassicEnabled() {
