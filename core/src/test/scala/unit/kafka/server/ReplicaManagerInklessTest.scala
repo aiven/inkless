@@ -10312,7 +10312,7 @@ class ReplicaManagerInklessTest {
         fetchOffsetHandlerCtor.close()
       }
       try {
-        val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+        val log = replicaManager.logManager.getOrCreateLog(tp, true, false, Optional.of(topicId))
         populateConsolidatedLocalLogAndCheckpointedHwm(
           replicaManager, tp, log, sealOffset, leo, disklessLeaderEpoch, hw = sealOffset, rollAtSeal = true)
         when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(sealOffset)
