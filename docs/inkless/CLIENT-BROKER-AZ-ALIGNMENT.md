@@ -211,21 +211,23 @@ Inkless uses a **local in-memory cache (Caffeine) per broker** combined with **d
 
 #### Broker Selection Algorithm
 
-The broker selection for diskless partitions uses a **deterministic hash-based algorithm**:
+For managed replicas (`RF > 1`) and tiered diskless partitions at any replication factor, the transformer first picks the highest-priority non-empty tier: same-AZ eligible replicas, then same-AZ non-replica brokers (for untiered partitions without a local-only classic prefix), then cross-AZ eligible replicas, and finally any alive broker (for untiered partitions without a local-only classic prefix). Within a replica tier, it selects the controller leader when the controller leader is a candidate. When the controller leader isn't a candidate (such as when it is in another AZ or offline), or when routing to a non-replica tier, the transformer selects a broker with a deterministic hash:
 
-1. A hash is computed from the topic ID and partition index using MurmurHash2
-2. The hash determines which broker (from the eligible set) handles each partition
-3. This ensures consistent routing across metadata requests
+1. The broker computes a MurmurHash2 digest from the topic ID and partition index.
+2. The hash selects a broker from the eligible set for each partition.
+3. Repeated metadata requests resolve to the same broker while the eligible set doesn't change.
 
 ```
 broker_index = abs(murmur2(topicId + "-" + partitionIndex)) % eligible_brokers.size()
 ```
 
+Untiered partitions with replication factor 1, and non-replica fallbacks for untiered managed-replica partitions, always select by hash.
+
 ##### Benefits of Deterministic Selection
 
-- **Consistency**: The same partition always routes to the same broker (within an AZ) across restarts
-- **Cache efficiency**: Clients consistently connect to the same broker, improving cache hit rates
-- **Load distribution**: Partitions are evenly distributed across brokers using the hash
+- **Consistency**: the same partition always routes to the same broker (within an AZ) across restarts.
+- **Cache efficiency**: clients consistently connect to the same broker, improving cache hit rates. Clients without an AZ follow the controller leader, so they share one broker per partition too.
+- **Load distribution**: partitions spread across brokers through preferred leader placement or hashing.
 
 ##### Behavior During Broker Changes
 
@@ -246,7 +248,7 @@ Diskless topics have fundamentally different ISR (In-Sync Replicas) semantics co
 
 **With managed replicas (RF > 1):** KRaft maintains real replica assignments with rack-aware placement. The metadata transformer prefers assigned replicas (same-AZ first) but falls back to any alive broker when all replicas are offline. ISR membership is liveness-gated — when a broker returns after fencing, it rejoins ISR immediately since data is in object storage and no catch-up is needed.
 
-**Implication for client rack awareness:** With managed replicas, the transformer prefers routing to assigned replicas in the client's AZ (improving cache locality and deterministic routing). With legacy RF=1, the transformer hashes to any broker in the client's AZ. In both cases, cross-AZ routing is a last resort.
+**Implication for client rack awareness:** with managed replicas, the transformer routes AZ-aware clients to assigned replicas in the client's AZ. Within that set, it picks the controller leader when present and hashes otherwise. For untiered partitions without a local-only classic prefix, if no replica is alive in the client's AZ, the transformer hashes among alive non-replica brokers in that AZ before falling back cross-AZ. When a client has no AZ, or when routing falls back to cross-AZ replicas, the transformer reports the controller leader if it is alive and eligible, and hashes among the alive eligible replicas otherwise. With legacy RF=1, the transformer hashes to any broker in the client's AZ. In both cases, cross-AZ routing is a last resort.
 
 The legacy RF=1 hashing applies only to untiered topics. A consolidating topic, which has `remote.storage.enable=true`, routes to its replicas at every replication factor, because only a replica stores the local log. For more information, see [DISKLESS_CONSOLIDATION.md](DISKLESS_CONSOLIDATION.md).
 
