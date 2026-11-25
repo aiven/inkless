@@ -4106,8 +4106,11 @@ class ReplicaManager(val config: KafkaConfig,
                 case PartitionRegistration.NO_DISKLESS_LEADER_EPOCH => _inklessMetadataView.getDisklessLeaderEpoch(topicPartition)
                 case epoch => epoch
               }
-              val isDisklessEpoch = firstDisklessLeaderEpoch != PartitionRegistration.NO_DISKLESS_LEADER_EPOCH &&
-                offsetForLeaderPartition.leaderEpoch >= firstDisklessLeaderEpoch
+              val requestedEpoch = offsetForLeaderPartition.leaderEpoch
+              val hasFirstDisklessLeaderEpoch = firstDisklessLeaderEpoch != PartitionRegistration.NO_DISKLESS_LEADER_EPOCH
+              val isDisklessEpoch = hasFirstDisklessLeaderEpoch && requestedEpoch >= firstDisklessLeaderEpoch
+              val isClassicEpoch = hasFirstDisklessLeaderEpoch && requestedEpoch < firstDisklessLeaderEpoch &&
+                requestedEpoch != OffsetsForLeaderEpochResponse.UNDEFINED_EPOCH
               if (localError != Errors.NONE) {
                 () => localResult
               } else if (!isDisklessEpoch &&
@@ -4115,6 +4118,17 @@ class ReplicaManager(val config: KafkaConfig,
                   localResult.endOffset <= classicToDisklessStartOffset) {
                 // The requested epoch ends at or before the switch point, so the classic log answers it completely.
                 () => localResult
+              } else if (isClassicEpoch) {
+                // A classic epoch ends at the seal at the latest. The local log has no end offset
+                // for it if no cached epoch is greater, as on a follower that appended no batch
+                // after the partition lost the records of that epoch. A classic tail past the seal
+                // puts the end offset past the seal. The diskless end offset would tell a consumer
+                // that read lost records to keep its position.
+                () => new EpochEndOffset()
+                  .setPartition(topicPartition.partition)
+                  .setErrorCode(Errors.NONE.code)
+                  .setLeaderEpoch(requestedEpoch)
+                  .setEndOffset(classicToDisklessStartOffset)
               } else {
                 // The classic log maps a diskless epoch to the seal, and a consumer past the seal
                 // would truncate to that offset. A control-plane placeholder row reports an end
