@@ -102,6 +102,27 @@ import scala.util.control.NonFatal
 object ReplicaManager {
   private val log = LoggerFactory.getLogger(classOf[ReplicaManager])
 
+  /**
+   * Splits the partitions of a `DeleteRecords` request by the state of their classic-to-diskless switch.
+   * Returns the `INVALID_REQUEST` results of the partitions whose switch is pending or in phase 1, and the
+   * offsets of the other partitions.
+   */
+  private[server] def rejectDeleteRecordsDuringSwitch(
+    offsetPerPartition: Map[TopicPartition, Long],
+    inklessMetadataView: InklessMetadataView
+  ): (Map[TopicPartition, DeleteRecordsPartitionResult], Map[TopicPartition, Long]) = {
+    val (switching, accepted) = offsetPerPartition.partition { case (topicPartition, _) =>
+      inklessMetadataView.isClassicPrefixOnlyOnLocalDisks(topicPartition.topic, topicPartition.partition)
+    }
+    val rejected = switching.map { case (topicPartition, _) =>
+      topicPartition -> new DeleteRecordsPartitionResult()
+        .setPartitionIndex(topicPartition.partition)
+        .setLowWatermark(DeleteRecordsResponse.INVALID_LOW_WATERMARK)
+        .setErrorCode(Errors.INVALID_REQUEST.code)
+    }
+    (rejected, accepted)
+  }
+
   val HighWatermarkFilename = "replication-offset-checkpoint"
 
   // A faster retry doesn't help: the remote log manager refreshes a follower's view of remote storage
@@ -1733,6 +1754,21 @@ class ReplicaManager(val config: KafkaConfig,
                     offsetPerPartition: Map[TopicPartition, Long],
                     responseCallback: Map[TopicPartition, DeleteRecordsPartitionResult] => Unit,
                     allowInternalTopicDeletion: Boolean = false): Unit = {
+
+    // While the classic-to-diskless switch of a partition is pending or in phase 1, only DeleteRecords can
+    // move its log start offset: remote retention waits for the remote log start in the control plane, which
+    // phase 2 sets. The followers stop fetching at the seal, so they would never learn a new log start
+    // offset, and the metadata routing sends consumers to them. So the broker rejects the request.
+    val (rejected, accepted) = ReplicaManager.rejectDeleteRecordsDuringSwitch(offsetPerPartition, _inklessMetadataView)
+    if (rejected.nonEmpty) {
+      info(s"Rejecting DeleteRecords for ${rejected.keys.mkString(", ")}: the classic-to-diskless switch of these " +
+        "partitions is pending or in phase 1")
+      if (accepted.isEmpty)
+        responseCallback(rejected)
+      else
+        deleteRecords(timeout, accepted, response => responseCallback(response ++ rejected), allowInternalTopicDeletion)
+      return
+    }
 
     val disklessStartOffsetPerPartition = offsetPerPartition.keys.flatMap { topicPartition =>
       if (_inklessMetadataView.isDisklessTopic(topicPartition.topic)) {
