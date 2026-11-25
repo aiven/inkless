@@ -42,6 +42,7 @@ import org.apache.kafka.common.message.ListOffsetsRequestData.{ListOffsetsPartit
 import org.apache.kafka.common.message.ListOffsetsResponseData.{ListOffsetsPartitionResponse, ListOffsetsTopicResponse}
 import org.apache.kafka.common.message.{DeleteRecordsResponseData, FetchResponseData}
 import org.apache.kafka.common.message.OffsetForLeaderEpochRequestData.{OffsetForLeaderPartition, OffsetForLeaderTopic}
+import org.apache.kafka.common.message.OffsetForLeaderEpochResponseData.EpochEndOffset
 import org.apache.kafka.common.metadata.{PartitionChangeRecord, PartitionRecord, RemoveTopicRecord, TopicRecord}
 import org.apache.kafka.common.metrics.Metrics
 import org.apache.kafka.common.protocol.Errors
@@ -5181,6 +5182,86 @@ class ReplicaManagerInklessTest {
       assertEquals(101L, partitionResult.endOffset())
       verify(jobMock, never()).add(any(), any())
       verify(jobMock, never()).start()
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  // The metadata routing sends clients to any alive ISR member while the switch is pending.
+  @Test
+  def testLastOffsetForLeaderEpochSwitchPendingAnswersOnInSyncFollower(): Unit = {
+    val partitionResult = pendingSwitchFollowerOffsetForLeaderEpoch(inIsr = true, requestedEpoch = 0)
+
+    assertEquals(Errors.NONE.code, partitionResult.errorCode())
+    assertEquals(101L, partitionResult.endOffset())
+    assertEquals(0, partitionResult.leaderEpoch())
+  }
+
+  @Test
+  def testLastOffsetForLeaderEpochSwitchPendingRejectsFollowerOutsideIsr(): Unit = {
+    val partitionResult = pendingSwitchFollowerOffsetForLeaderEpoch(inIsr = false, requestedEpoch = 0)
+
+    assertEquals(Errors.NOT_LEADER_OR_FOLLOWER.code, partitionResult.errorCode())
+  }
+
+  // A consumer reads an undefined end offset as a truncation and resets its position.
+  @Test
+  def testLastOffsetForLeaderEpochSwitchPendingRejectsEpochAboveTheLogOfInSyncFollower(): Unit = {
+    val partitionResult = pendingSwitchFollowerOffsetForLeaderEpoch(inIsr = true, requestedEpoch = 1)
+
+    assertEquals(Errors.NOT_LEADER_OR_FOLLOWER.code, partitionResult.errorCode())
+  }
+
+  /**
+   * Returns the answer of a follower of a pending partition. Its log holds offsets 0 to 100 in leader
+   * epoch 0, and it follows a leader in epoch 1 without a record of that epoch.
+   */
+  private def pendingSwitchFollowerOffsetForLeaderEpoch(inIsr: Boolean, requestedEpoch: Int): EpochEndOffset = {
+    val jobMock = Mockito.mock(classOf[FetchOffsetHandler.Job])
+    val fetchOffsetHandlerCtorInit: MockedConstruction.MockInitializer[FetchOffsetHandler] = {
+      case (handlerMock, _) =>
+        when(handlerMock.createJob()).thenReturn(jobMock)
+    }
+    val fetchOffsetHandlerCtor = mockConstruction(classOf[FetchOffsetHandler], fetchOffsetHandlerCtorInit)
+
+    val replicaManager = try {
+      createReplicaManager(List(disklessTopicPartition.topic()), disklessManagedReplicasEnabled = true)
+    } finally {
+      fetchOffsetHandlerCtor.close()
+    }
+    try {
+      val partition = setupHybridLeaderPartition(replicaManager, disklessTopicPartition, localEndOffset = 101L)
+      val localBrokerId = replicaManager.config.brokerId
+      val remoteLeaderId = localBrokerId + 1
+      partition.makeFollower(
+        partitionRegistration(
+          remoteLeaderId,
+          leaderEpoch = 1,
+          isr = if (inIsr) Array(remoteLeaderId, localBrokerId) else Array(remoteLeaderId),
+          partitionEpoch = 1,
+          replicas = Array(localBrokerId, remoteLeaderId)),
+        isNew = false,
+        new LazyOffsetCheckpoints(replicaManager.highWatermarkCheckpoints.asJava),
+        Some(disklessTopicPartition.topicId()))
+      assertFalse(partition.isLeader)
+      assertEquals(util.List.of(new EpochEntry(0, 0L)), partition.localLogOrException.leaderEpochCache.epochEntries)
+      val metadataView = replicaManager.inklessMetadataView()
+      when(metadataView.getClassicToDisklessStartOffset(disklessTopicPartition.topicPartition()))
+        .thenReturn(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
+      when(metadataView.isReplicaInIsr(disklessTopicPartition.topicPartition(), localBrokerId)).thenReturn(inIsr)
+
+      val result = replicaManager.lastOffsetForLeaderEpoch(Seq(
+        new OffsetForLeaderTopic()
+          .setTopic(disklessTopicPartition.topic())
+          .setPartitions(util.List.of(
+            new OffsetForLeaderPartition()
+              .setPartition(disklessTopicPartition.partition())
+              .setLeaderEpoch(requestedEpoch)
+          ))
+      ))
+
+      verify(jobMock, never()).add(any(), any())
+      result.head.partitions().get(0)
     } finally {
       replicaManager.shutdown(checkpointHW = false)
     }

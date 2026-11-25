@@ -33,6 +33,7 @@ import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
+import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.Producer;
 import org.apache.kafka.clients.producer.ProducerConfig;
@@ -54,6 +55,7 @@ import org.apache.kafka.common.test.TestKitNodes;
 import org.apache.kafka.coordinator.group.GroupCoordinatorConfig;
 import org.apache.kafka.metadata.InitDisklessLogFields;
 import org.apache.kafka.metadata.PartitionRegistration;
+import org.apache.kafka.raft.KRaftConfigs;
 import org.apache.kafka.server.IntegrationTestUtils;
 import org.apache.kafka.server.config.ReplicationConfigs;
 import org.apache.kafka.server.config.ServerConfigs;
@@ -83,6 +85,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -139,6 +142,13 @@ public class InklessTopicTypeSwitcherClusterTest {
      */
     private static final String BLOCKS_REMOTE_UPLOADS = "blocks-remote-uploads";
 
+    /**
+     * Tags a test that stops a broker like a crash. For such a test, the setup turns off the controlled
+     * shutdown and sets the broker session timeout to 30 seconds. The stopped broker then stays in the ISR
+     * until its session expires.
+     */
+    private static final String NO_CONTROLLED_SHUTDOWN = "no-controlled-shutdown";
+
     private String tieredStorageBucket;
 
     @BeforeEach
@@ -172,7 +182,7 @@ public class InklessTopicTypeSwitcherClusterTest {
             .setPerServerProperties(perServerProps)
             .build();
 
-        cluster = new KafkaClusterTestKit.Builder(nodes)
+        final KafkaClusterTestKit.Builder clusterBuilder = new KafkaClusterTestKit.Builder(nodes)
             .setConfigProp(GroupCoordinatorConfig.OFFSETS_TOPIC_REPLICATION_FACTOR_CONFIG, "1")
             .setConfigProp(ServerConfigs.DISKLESS_STORAGE_SYSTEM_ENABLE_CONFIG, "true")
             .setConfigProp(ServerConfigs.DISKLESS_MANAGED_REPLICAS_ENABLE_CONFIG, "true")
@@ -211,8 +221,13 @@ public class InklessTopicTypeSwitcherClusterTest {
             .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.S3_ENDPOINT_URL_CONFIG, s3Container.getEndpoint())
             .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.S3_PATH_STYLE_ENABLED_CONFIG, "true")
             .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.AWS_ACCESS_KEY_ID_CONFIG, s3Container.getAccessKey())
-            .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.AWS_SECRET_ACCESS_KEY_CONFIG, s3Container.getSecretKey())
-            .build();
+            .setConfigProp(InklessConfig.PREFIX + InklessConfig.STORAGE_PREFIX + S3StorageConfig.AWS_SECRET_ACCESS_KEY_CONFIG, s3Container.getSecretKey());
+        if (testInfo.getTags().contains(NO_CONTROLLED_SHUTDOWN)) {
+            clusterBuilder
+                .setConfigProp(ServerConfigs.CONTROLLED_SHUTDOWN_ENABLE_CONFIG, "false")
+                .setConfigProp(KRaftConfigs.BROKER_SESSION_TIMEOUT_MS_CONFIG, "30000");
+        }
+        cluster = clusterBuilder.build();
 
         cluster.format();
         cluster.startup();
@@ -522,6 +537,83 @@ public class InklessTopicTypeSwitcherClusterTest {
             .map(entry -> new AlterConfigOp(new ConfigEntry(entry.getKey(), entry.getValue()), AlterConfigOp.OpType.SET))
             .toList();
         admin.incrementalAlterConfigs(Map.of(topicResource, operations)).all().get(20, TimeUnit.SECONDS);
+    }
+
+    // The metadata routing sends a client to an alive ISR member while the switch is pending. A consumer validates
+    // a position that has a leader epoch with OffsetsForLeaderEpoch before it fetches. An in-sync follower must
+    // answer that request.
+    @Test
+    @Tag(NO_CONTROLLED_SHUTDOWN)
+    public void testConsumerRoutedToInSyncFollowerReadsWhileSwitchIsPending() throws Exception {
+        final String topic = "switch-pending-follower-" + UUID.randomUUID().toString().substring(0, 8);
+        final TopicPartition tp = new TopicPartition(topic, 0);
+        final long position = 5;
+
+        try (Admin admin = AdminClient.create(baseClientConfigs())) {
+            admin.createTopics(List.of(new NewTopic(topic, 1, (short) 3)
+                .configs(Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "false")))).all().get(30, TimeUnit.SECONDS);
+            TopicMetadataProbe.awaitVisible(admin, topic);
+            produceRecords(topic, 20);
+
+            final var partition = admin.describeTopics(List.of(topic)).allTopicNames()
+                .get(10, TimeUnit.SECONDS).get(topic).partitions().get(0);
+            final int leader = partition.leader().id();
+            final List<Integer> followers = partition.replicas().stream()
+                .map(node -> node.id()).filter(id -> id != leader).sorted().toList();
+            // Broker 0 also runs the controller. The test stops the follower with the higher ID, which is never broker 0.
+            final int follower = followers.get(0);
+            final int stoppedFollower = followers.get(1);
+            final int classicLeaderEpoch =
+                cluster.brokers().get(leader).replicaManager().onlinePartition(tp).get().getLeaderEpoch();
+
+            // The stopped follower stays in the ISR and never fetches the next record. The leader's high watermark
+            // then stays below its log end offset, and the leader doesn't propose the seal.
+            cluster.brokers().get(stoppedFollower).shutdown();
+            final Map<String, Object> acksOneConfigs = baseClientConfigs();
+            acksOneConfigs.put(ProducerConfig.ACKS_CONFIG, "1");
+            acksOneConfigs.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, "false");
+            try (Producer<byte[], byte[]> producer = new KafkaProducer<>(acksOneConfigs)) {
+                producer.send(new ProducerRecord<>(topic, 0, null, "unreplicated".getBytes(StandardCharsets.UTF_8)))
+                    .get(30, TimeUnit.SECONDS);
+            }
+
+            alterTopicConfigWithIncrementalAlterConfigs(admin, topic, Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true"));
+            final InklessMetadataView followerView = cluster.brokers().get(follower).replicaManager().inklessMetadataView();
+            final long pendingDeadline = System.currentTimeMillis() + Duration.ofSeconds(10).toMillis();
+            while (followerView.getClassicToDisklessStartOffset(tp) != PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING
+                    && System.currentTimeMillis() < pendingDeadline) {
+                Thread.sleep(10);
+            }
+            assertEquals(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING,
+                followerView.getClassicToDisklessStartOffset(tp), "The follower didn't apply the pending switch");
+
+            // Broker N is in zone az(N+1). A client in the follower's zone gets the follower as the leader.
+            final String followerZone = "az" + (follower + 1);
+            final Map<String, Object> zoneAdminConfigs = baseClientConfigs();
+            zoneAdminConfigs.put(CommonClientConfigs.CLIENT_ID_CONFIG, "pending-follower-admin,diskless_az=" + followerZone);
+            try (Admin zoneAdmin = AdminClient.create(zoneAdminConfigs)) {
+                assertEquals(follower, zoneAdmin.describeTopics(List.of(topic)).allTopicNames()
+                    .get(10, TimeUnit.SECONDS).get(topic).partitions().get(0).leader().id());
+            }
+
+            final Map<String, Object> consumerConfigs = baseConsumerConfigs();
+            consumerConfigs.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
+            consumerConfigs.put(ConsumerConfig.CLIENT_ID_CONFIG, "pending-follower-consumer,diskless_az=" + followerZone);
+            try (Consumer<byte[], byte[]> consumer = new KafkaConsumer<>(consumerConfigs)) {
+                consumer.assign(List.of(tp));
+                // A consumer that resumes from a committed offset has the leader epoch of that offset.
+                consumer.seek(tp, new OffsetAndMetadata(position, Optional.of(classicLeaderEpoch), ""));
+                final long deadline = System.currentTimeMillis() + Duration.ofSeconds(15).toMillis();
+                ConsumerRecords<byte[], byte[]> records = ConsumerRecords.empty();
+                while (records.isEmpty() && System.currentTimeMillis() < deadline) {
+                    records = consumer.poll(Duration.ofMillis(250));
+                }
+                assertFalse(records.isEmpty(), "The consumer read no record from the in-sync follower");
+                assertEquals(position, records.iterator().next().offset());
+            }
+            assertEquals(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING,
+                followerView.getClassicToDisklessStartOffset(tp), "The switch didn't stay pending during the read");
+        }
     }
 
     @Test
