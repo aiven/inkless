@@ -123,9 +123,12 @@ class DisklessFetchOffsetRouter(
       isConsolidatingPartition && (!hasCommittedSwitchOffset || hasCompleteClassicPrefix(topicPartition, classicToDisklessStartOffset))
     val allowFromFollower = switchedAllowsFollower || consolidatingAllowsFollower
     val isFollowerRequest = replicaId >= 0
+    val disklessLeaderEpoch = inklessMetadataView.getDisklessLeaderEpoch(topicPartition)
 
     def classicLookup(): ListOffsetsPartitionStatus = classicFetchOffset(topicPartition, partition, allowFromFollower)
-    def disklessLookup: Lookup = disklessLookupOnJob(job, topicPartition, partition)
+    def withLeaderEpoch(lookup: Lookup): Lookup =
+      withDisklessLeaderEpoch(lookup, classicToDisklessStartOffset, disklessLeaderEpoch)
+    def disklessLookup: Lookup = withLeaderEpoch(disklessLookupOnJob(job, topicPartition, partition))
 
     if (switchPending && disklessManagedReplicasEnabled) {
       // Case 3. A follower answers client requests only: a replica fetcher sends its request to the leader.
@@ -182,10 +185,10 @@ class DisklessFetchOffsetRouter(
               recordTimestampLookupDeferral()
               failedLookup(prefixNotSearchable(topicPartition, endBelowSeal.get, classicToDisklessStartOffset, version))
             } else if (consolidationActive)
-              disklessLookupCheckingWalStart(onJob(), topicPartition, partition, startNow, classicToDisklessStartOffset,
-                () => searchableEnd(), version, recordTimestampLookupDeferral)
+              withLeaderEpoch(disklessLookupCheckingWalStart(onJob(), topicPartition, partition, startNow,
+                classicToDisklessStartOffset, () => searchableEnd(), version, recordTimestampLookupDeferral))
             else
-              disklessLookupOnJob(onJob(), topicPartition, partition, startNow)
+              withLeaderEpoch(disklessLookupOnJob(onJob(), topicPartition, partition, startNow))
           }
           classicWithDisklessFallbackLookup(topicPartition, version, classicLookup _,
             () => checkedDisklessLookup(() => job, startNow = false),
@@ -384,6 +387,40 @@ private[server] object DisklessFetchOffsetRouter {
       })
     new AsyncOffsetReadFutureHolder(job.cancelHandler(), checked)
   }
+
+  /**
+   * Replaces the placeholder leader epoch of the control plane on a switched partition.
+   *
+   * A consumer that takes its position from `ListOffsets` validates it with `OffsetsForLeaderEpoch`. The broker
+   * treats an epoch below `initialDisklessLeaderEpoch` as a classic epoch and answers with an end offset at or
+   * below the seal, so the placeholder 0 on an offset past the seal makes the consumer truncate to the seal. An
+   * offset at or past the seal gets `disklessLeaderEpoch`, the epoch that a consumer fetch stamps on the same
+   * offsets. The broker doesn't know the classic epoch of an offset below the seal, so that offset gets no
+   * epoch, and the client skips the validation. The controller records `disklessLeaderEpoch` as a leader epoch
+   * of the partition, so it's never greater than the leader epoch in a metadata response from this broker.
+   */
+  private def disklessResultWithLeaderEpoch(result: FileRecordsOrError,
+                                           classicToDisklessStartOffset: Long,
+                                           disklessLeaderEpoch: Int): FileRecordsOrError = {
+    if (classicToDisklessStartOffset < 0 ||
+        disklessLeaderEpoch == PartitionRegistration.NO_DISKLESS_LEADER_EPOCH ||
+        !result.hasTimestampAndOffset) {
+      result
+    } else {
+      val found = result.timestampAndOffset.get
+      val leaderEpoch =
+        if (found.offset >= classicToDisklessStartOffset) Optional.of[Integer](disklessLeaderEpoch)
+        else Optional.empty[Integer]()
+      new FileRecordsOrError(Optional.empty(),
+        Optional.of(new FileRecords.TimestampAndOffset(found.timestamp, found.offset, leaderEpoch)))
+    }
+  }
+
+  private def withDisklessLeaderEpoch(lookup: Lookup,
+                                      classicToDisklessStartOffset: Long,
+                                      disklessLeaderEpoch: Int): Lookup =
+    new AsyncOffsetReadFutureHolder(lookup.jobFuture, lookup.taskFuture.thenApply[FileRecordsOrError](
+      result => disklessResultWithLeaderEpoch(result, classicToDisklessStartOffset, disklessLeaderEpoch)))
 
   private def failedLookup(result: FileRecordsOrError): Lookup =
     new AsyncOffsetReadFutureHolder(NoOpCancel, CompletableFuture.completedFuture(result))

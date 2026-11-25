@@ -48,7 +48,12 @@ class DisklessFetchOffsetRouterTest {
   private val followerReplicaId = 1
   private val localBrokerId = 0
 
-  private val inklessMetadataView: InklessMetadataView = mock(classOf[InklessMetadataView])
+  private val inklessMetadataView: InklessMetadataView = {
+    val m = mock(classOf[InklessMetadataView])
+    // Mockito answers 0 for an int, which is a valid epoch. A test that needs an epoch sets it.
+    when(m.getDisklessLeaderEpoch(any())).thenReturn(PartitionRegistration.NO_DISKLESS_LEADER_EPOCH)
+    m
+  }
   private val purgatory: DelayedOperationPurgatory[DelayedRemoteListOffsets] =
     mock(classOf[DelayedOperationPurgatory[DelayedRemoteListOffsets]])
 
@@ -990,4 +995,142 @@ class DisklessFetchOffsetRouterTest {
     assertPrefixNotSearchable(status)
   }
 
+  // ---------------------------------------------------------------------------
+  // Leader epoch of a diskless result. The control plane answers with the placeholder epoch 0.
+  // ---------------------------------------------------------------------------
+
+  private val seal = 100L
+  private val disklessLeaderEpoch = 3
+
+  private def switchedPartition(): Unit = {
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(seal)
+    when(inklessMetadataView.getDisklessLeaderEpoch(tp)).thenReturn(disklessLeaderEpoch)
+  }
+
+  private def assertResult(status: ListOffsetsPartitionStatus, offset: Long, leaderEpoch: Optional[Integer]): Unit = {
+    val result = resultOf(status)
+    assertFalse(result.hasException, s"unexpected error in $result")
+    assertEquals(offset, result.timestampAndOffset.get.offset)
+    assertEquals(leaderEpoch, result.timestampAndOffset.get.leaderEpoch)
+  }
+
+  @ParameterizedTest
+  @ValueSource(longs = Array(ListOffsetsRequest.LATEST_TIMESTAMP, ListOffsetsRequest.MAX_TIMESTAMP))
+  def switchedLatestAndMaxTimestampGetTheDisklessLeaderEpoch(timestamp: Long): Unit = {
+    switchedPartition()
+    disklessTaskFuture.complete(offsetResult(offset = 150L, leaderEpoch = 0))
+
+    val status = route(consolidatingRouter(), timestamp = timestamp)
+
+    assertResult(status, 150L, Optional.of(disklessLeaderEpoch))
+    assertTrue(classicCalls.isEmpty)
+  }
+
+  // A switched partition without diskless records answers LATEST with the seal.
+  @Test
+  def switchedLatestAtTheSealGetsTheDisklessLeaderEpoch(): Unit = {
+    switchedPartition()
+    disklessTaskFuture.complete(offsetResult(offset = seal, leaderEpoch = 0))
+
+    val status = route(consolidatingRouter(), timestamp = ListOffsetsRequest.LATEST_TIMESTAMP)
+
+    assertResult(status, seal, Optional.of(disklessLeaderEpoch))
+  }
+
+  // A partition that was empty at the switch has a seal of 0, so every offset is a diskless offset.
+  @Test
+  def switchedAtOffsetZeroLatestGetsTheDisklessLeaderEpoch(): Unit = {
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(0L)
+    when(inklessMetadataView.getDisklessLeaderEpoch(tp)).thenReturn(disklessLeaderEpoch)
+    disklessTaskFuture.complete(offsetResult(offset = 30L, leaderEpoch = 0))
+
+    val status = route(consolidatingRouter(), timestamp = ListOffsetsRequest.LATEST_TIMESTAMP)
+
+    assertResult(status, 30L, Optional.of(disklessLeaderEpoch))
+  }
+
+  @Test
+  def switchedSpecificTimestampPastTheSealGetsTheDisklessLeaderEpoch(): Unit = {
+    switchedPartition()
+    disklessTaskFuture.complete(offsetResult(offset = 150L, timestamp = 10150L, leaderEpoch = 0))
+    walStartFuture.complete(offsetResult(offset = seal))
+
+    val status = route(consolidatingRouter(), timestamp = 10150L, classicResult = syncNoMatch,
+      classicSearchableEnd = _ => seal)
+
+    assertResult(status, 150L, Optional.of(disklessLeaderEpoch))
+    verify(job).addWalStart(tp)
+  }
+
+  @Test
+  def switchedSpecificTimestampPastTheSealGetsTheDisklessLeaderEpochInPhase1(): Unit = {
+    switchedPartition()
+    when(inklessMetadataView.isClassicPrefixWaitingForUpload(tp)).thenReturn(true)
+    disklessTaskFuture.complete(offsetResult(offset = 150L, timestamp = 10150L, leaderEpoch = 0))
+
+    val status = route(consolidatingRouter(), timestamp = 10150L, classicResult = syncNoMatch,
+      classicSearchableEnd = _ => seal)
+
+    assertResult(status, 150L, Optional.of(disklessLeaderEpoch))
+    verify(job, never()).addWalStart(any())
+  }
+
+  // The control plane answers EARLIEST with the start of the remote tier, which can be a classic offset. The broker
+  // doesn't know its classic epoch.
+  @Test
+  def switchedEarliestBelowTheSealGetsNoLeaderEpoch(): Unit = {
+    switchedPartition()
+    disklessTaskFuture.complete(offsetResult(offset = 40L, leaderEpoch = 0))
+
+    val status = route(consolidatingRouter(), timestamp = ListOffsetsRequest.EARLIEST_TIMESTAMP)
+
+    assertResult(status, 40L, Optional.empty())
+  }
+
+  @Test
+  def switchedEarliestPastTheSealGetsTheDisklessLeaderEpoch(): Unit = {
+    switchedPartition()
+    disklessTaskFuture.complete(offsetResult(offset = 130L, leaderEpoch = 0))
+
+    val status = route(consolidatingRouter(), timestamp = ListOffsetsRequest.EARLIEST_TIMESTAMP)
+
+    assertResult(status, 130L, Optional.of(disklessLeaderEpoch))
+  }
+
+  @Test
+  def switchedSpecificTimestampBelowTheSealFromTheControlPlaneGetsNoLeaderEpoch(): Unit = {
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(seal)
+    when(inklessMetadataView.getDisklessLeaderEpoch(tp)).thenReturn(disklessLeaderEpoch)
+    disklessTaskFuture.complete(offsetResult(offset = 40L, timestamp = 123L, leaderEpoch = 0))
+
+    val status = route(newRouter(), timestamp = 123L, classicResult = syncNoMatch)
+
+    assertResult(status, 40L, Optional.empty())
+  }
+
+  @ParameterizedTest
+  @ValueSource(longs = Array(
+    ListOffsetsRequest.LATEST_TIMESTAMP,
+    ListOffsetsRequest.MAX_TIMESTAMP,
+    ListOffsetsRequest.EARLIEST_TIMESTAMP))
+  def bornDisklessResultKeepsTheControlPlaneEpoch(timestamp: Long): Unit = {
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+    val disklessHit = offsetResult(offset = 150L, leaderEpoch = 0)
+    disklessTaskFuture.complete(disklessHit)
+
+    val status = route(consolidatingRouter(), timestamp = timestamp)
+
+    assertSame(disklessHit, resultOf(status))
+  }
+
+  @Test
+  def bornDisklessSpecificTimestampKeepsTheControlPlaneEpoch(): Unit = {
+    when(inklessMetadataView.getClassicToDisklessStartOffset(tp)).thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+    val disklessHit = offsetResult(offset = 150L, timestamp = 10150L, leaderEpoch = 0)
+    disklessTaskFuture.complete(disklessHit)
+
+    val status = route(newRouter(disklessManagedReplicasEnabled = false), timestamp = 10150L)
+
+    assertSame(disklessHit, resultOf(status))
+  }
 }

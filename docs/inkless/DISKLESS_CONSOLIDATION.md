@@ -293,6 +293,15 @@ Consumers get the same epoch. `ReplicaManager.fetchDisklessMessages` sets the di
 - `initialDisklessLeaderEpoch` is the diskless leader epoch of the seal commit. The controller sets `disklessLeaderEpoch` again when phase 2 starts, so the epoch of a consumer position can be an earlier value than the one in the local log. The record that starts phase 2 and a lowered seal keep `initialDisklessLeaderEpoch`.
 - A partition that switched before the registration kept `initialDisklessLeaderEpoch` has no value for it. The broker then compares the queried epoch with `disklessLeaderEpoch`.
 
+`ListOffsets` returns a leader epoch with each offset, and a client can validate a position at that offset and epoch with `OffsetsForLeaderEpoch`. `FetchOffsetHandler` sets a placeholder epoch of 0 on each control-plane result. On a switched partition, `DisklessFetchOffsetRouter` replaces the placeholder:
+
+- An offset at or past the seal gets `disklessLeaderEpoch`, the epoch that a consumer fetch stamps on the same offsets. `OffsetsForLeaderEpoch` answers that epoch with the diskless LEO. The client keeps its position.
+- An offset below the seal doesn't get a leader epoch, because the broker doesn't know its classic epoch. The control plane returns such an offset for `EARLIEST` until retention deletes the classic prefix. Without an epoch, the client skips the validation.
+- A result from the local log keeps the epoch of the local record.
+- Born-diskless partitions keep the placeholder, because `OffsetsForLeaderEpoch` answers every epoch on them with the diskless LEO.
+
+The controller records `disklessLeaderEpoch` as a leader epoch of the partition, so it's never greater than the leader epoch of the metadata response from the same broker. A client that records the epoch from `ListOffsets` as the last seen leader epoch doesn't reject that metadata as stale.
+
 > **Upgrade caveat.** Partitions switched before this change carry a seal but no diskless leader epoch, so they reach the LATEST-LEO branch and keep the pre-divergence-truncation behavior until they are re-switched, a safe fallback that does not change correctness.
 
 ### Cache pollution: cold path
