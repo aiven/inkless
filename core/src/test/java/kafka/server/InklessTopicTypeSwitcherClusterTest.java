@@ -905,8 +905,8 @@ public class InklessTopicTypeSwitcherClusterTest {
             try (var s3Client = s3Container.getS3Client()) {
                 s3Client.createBucket(request -> request.bucket(tieredStorageBucket));
             }
-            // The admin client reads the phase from one broker. The leader rejects the request until its own
-            // metadata shows phase 2, and the client doesn't retry INVALID_REQUEST.
+            // `Admin` reads the phase from one broker. The leader rejects the request until its own
+            // metadata shows phase 2, and the client doesn't retry `INVALID_REQUEST`.
             waitForPhaseTwoOnEveryBroker(tp);
             assertEquals(deleteBefore, admin.deleteRecords(Map.of(tp, RecordsToDelete.beforeOffset(deleteBefore)))
                 .lowWatermarks().get(tp).get(30, TimeUnit.SECONDS).lowWatermark());
