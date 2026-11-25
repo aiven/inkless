@@ -172,7 +172,7 @@ Under ``inkless.``
   * Importance: low
 
 ``cross.tier.log.start.report.interval.ms``
-  The interval with which the leader reports the cross-tier (remote) log start offset of consolidating diskless partitions to the control plane. This is dwarfed by remote.log.manager.task.interval.ms (default 30s), which governs how often the underlying remote-retention observation is even produced, so raising this mainly trades off control-plane call frequency, not the effective staleness window.
+  The interval with which the leader reports the cross-tier (remote) log start offset of consolidating diskless partitions to the control plane. remote.log.manager.task.interval.ms (default 30s) sets how often the remote log manager observes remote retention and dwarfs this interval, so raising this mainly trades off control-plane call frequency, not the effective staleness window. Every broker also reads the cross-tier log start offset of its partitions in phase 1 of the classic-to-diskless switch from the control plane at this interval, so that it refuses consumer reads of deleted records. In phase 1, the leader holds each DeleteRecords response for twice this interval, so that every replica refuses the deleted records when the request succeeds. If the request timeout is shorter, the leader answers REQUEST_TIMED_OUT at the timeout and the records stay deleted. Keep twice this interval below the client and inter-broker request timeouts.
 
   * Type: int
   * Default: 1000 (1 second)

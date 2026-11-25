@@ -22,7 +22,7 @@ import io.aiven.inkless.common.SharedState
 import io.aiven.inkless.config.InklessConfig
 import io.aiven.inkless.consolidation.{ConsolidatedDisklessLogPruner, ConsolidationFetcherManager, DisklessLeaderEndPoint}
 import io.aiven.inkless.consume.{ConcatenatedRecords, FetchHandler, FetchOffsetHandler}
-import io.aiven.inkless.control_plane.{AdvanceCrossTierLogStartOffsetResponse, BatchInfo, BatchMetadata, ControlPlane, ControlPlaneException, FindBatchResponse, PruneDisklessLogsRequest, DeleteRecordsResponse => CpDeleteRecordsResponse, ListOffsetsRequest => CpListOffsetsRequest, ListOffsetsResponse => CpListOffsetsResponse}
+import io.aiven.inkless.control_plane.{AdvanceCrossTierLogStartOffsetRequest, AdvanceCrossTierLogStartOffsetResponse, BatchInfo, BatchMetadata, ControlPlane, ControlPlaneException, FindBatchResponse, PruneDisklessLogsRequest, DeleteRecordsResponse => CpDeleteRecordsResponse, ListOffsetsRequest => CpListOffsetsRequest, ListOffsetsResponse => CpListOffsetsResponse}
 import io.aiven.inkless.delete.ConsolidatedDisklessLogPrunerMetrics
 import io.aiven.inkless.produce.AppendHandler
 import kafka.cluster.Partition
@@ -37,7 +37,7 @@ import org.apache.kafka.common.config.TopicConfig
 import org.apache.kafka.common.{DirectoryId, IsolationLevel, Node, TopicIdPartition, TopicPartition, Uuid}
 import org.apache.kafka.common.network.ListenerName
 import org.apache.kafka.common.compress.Compression
-import org.apache.kafka.common.errors.{KafkaStorageException, NotLeaderOrFollowerException, OffsetOutOfRangeException, UnknownTopicOrPartitionException}
+import org.apache.kafka.common.errors.{KafkaStorageException, NotLeaderOrFollowerException, OffsetOutOfRangeException, RetriableException, UnknownTopicOrPartitionException}
 import org.apache.kafka.common.message.ListOffsetsRequestData.{ListOffsetsPartition, ListOffsetsTopic}
 import org.apache.kafka.common.message.ListOffsetsResponseData.{ListOffsetsPartitionResponse, ListOffsetsTopicResponse}
 import org.apache.kafka.common.message.{DeleteRecordsResponseData, FetchResponseData}
@@ -838,6 +838,91 @@ class ReplicaManagerInklessTest {
       verify(controlPlane, timeout(5000)).advanceCrossTierLogStartOffset(anyList())
       // No WAL data below the classic prefix, so the diskless leg must not run.
       verify(controlPlane, never()).deleteRecords(anyList())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  // In phase 1, the other replicas learn the new cross-tier earliest at their next refresh. The leader answers
+  // DeleteRecords after two refresh intervals, so no in-sync replica serves the deleted records once it succeeds.
+  @Test
+  def testDeleteRecordsInPhaseOneRespondsAfterTwoRefreshIntervals(): Unit = {
+    withPhaseOneDeleteRecords(_ => util.List.of(AdvanceCrossTierLogStartOffsetResponse.success(50L))) {
+        (replicaManager, deleteBelow50) =>
+      val responseData = deleteBelow50(30000L)
+      val holdMs = 2 * new InklessConfig(util.Map.of[String, Object]()).crossTierLogStartReportInterval.toMillis
+      time.sleep(holdMs - 1)
+      assertTrue(responseData().isEmpty, "The leader answered before the hold ended")
+      time.sleep(1)
+      waitUntilTrue(() => responseData().nonEmpty, "The leader didn't answer after the hold")
+      assertEquals(Errors.NONE.code, responseData()(disklessTopicPartition.topicPartition()).errorCode)
+      assertEquals(50L, responseData()(disklessTopicPartition.topicPartition()).lowWatermark)
+    }
+  }
+
+  // The hold can't outlast the request. The leader then answers REQUEST_TIMED_OUT at the timeout, as
+  // DelayedDeleteRecords does, and the records stay deleted.
+  @Test
+  def testDeleteRecordsInPhaseOneTimesOutWhenTheHoldExceedsTheRequestTimeout(): Unit = {
+    withPhaseOneDeleteRecords(_ => util.List.of(AdvanceCrossTierLogStartOffsetResponse.success(50L))) {
+        (replicaManager, deleteBelow50) =>
+      val responseData = deleteBelow50(1000L)
+      time.sleep(999)
+      assertTrue(responseData().isEmpty, "The leader answered before the request timeout")
+      time.sleep(1)
+      waitUntilTrue(() => responseData().nonEmpty, "The leader didn't answer at the request timeout")
+      assertEquals(Errors.REQUEST_TIMED_OUT.code, responseData()(disklessTopicPartition.topicPartition()).errorCode)
+      assertEquals(50L, replicaManager.getPartitionOrException(disklessTopicPartition.topicPartition())
+        .localLogOrException.logStartOffset)
+    }
+  }
+
+  // In phase 1, nothing advances the cross-tier earliest after a failed DeleteRecords, so the followers would keep
+  // serving the deleted records. The leader answers a retriable error instead of success.
+  @Test
+  def testDeleteRecordsInPhaseOneFailsWhenTheCrossTierEarliestDoesNotAdvance(): Unit = {
+    withPhaseOneDeleteRecords(_ => throw new ControlPlaneException("unreachable")) { (_, deleteBelow50) =>
+      val responseData = deleteBelow50(30000L)
+      waitUntilTrue(() => responseData().nonEmpty, "The leader didn't answer")
+      val result = responseData()(disklessTopicPartition.topicPartition())
+      assertEquals(Errors.KAFKA_STORAGE_ERROR.code, result.errorCode)
+      assertTrue(Errors.KAFKA_STORAGE_ERROR.exception().isInstanceOf[RetriableException])
+    }
+  }
+
+  private def withPhaseOneDeleteRecords(advance: util.List[AdvanceCrossTierLogStartOffsetRequest] =>
+                                          util.List[AdvanceCrossTierLogStartOffsetResponse])
+                                       (body: (ReplicaManager, Long => () => Map[TopicPartition,
+                                         DeleteRecordsResponseData.DeleteRecordsPartitionResult]) => Unit): Unit = {
+    val controlPlane = mock(classOf[ControlPlane])
+    when(controlPlane.advanceCrossTierLogStartOffset(anyList())).thenAnswer(invocation =>
+      advance(invocation.getArgument(0, classOf[util.List[AdvanceCrossTierLogStartOffsetRequest]])))
+    val replicaManager = createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      controlPlane = Some(controlPlane),
+      topicIdMapping = Map(disklessTopicPartition.topic() -> disklessTopicPartition.topicId()),
+      disklessManagedReplicasEnabled = true,
+      disklessRemoteStorageConsolidationEnabled = true,
+      consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+    )
+    try {
+      val tp = disklessTopicPartition.topicPartition()
+      val partition = setupHybridLeaderPartition(replicaManager, disklessTopicPartition, localEndOffset = 100L)
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(100L)
+      when(replicaManager.inklessMetadataView().isClassicPrefixWaitingForUpload(tp)).thenReturn(true)
+      val deleteBelow50: Long => () => Map[TopicPartition, DeleteRecordsResponseData.DeleteRecordsPartitionResult] =
+        timeoutMs => {
+          @volatile var responseData: Map[TopicPartition, DeleteRecordsResponseData.DeleteRecordsPartitionResult] = Map.empty
+          replicaManager.deleteRecords(
+            timeout = timeoutMs,
+            offsetPerPartition = Map(tp -> 50L),
+            responseCallback = response => responseData = response,
+          )
+          verify(controlPlane, timeout(5000)).advanceCrossTierLogStartOffset(anyList())
+          assertEquals(50L, partition.localLogOrException.logStartOffset)
+          () => responseData
+        }
+      body(replicaManager, deleteBelow50)
     } finally {
       replicaManager.shutdown(checkpointHW = false)
     }
@@ -2500,6 +2585,118 @@ class ReplicaManagerInklessTest {
       assertEquals(1, responseData.size)
       assertEquals(RECORDS, responseData(disklessTopicPartition).records)
       verify(replicaManager, times(1)).readFromLog(any(), any(), any(), any())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+      fetchHandlerCtor.close()
+    }
+  }
+
+  // In phase 1 of the switch, DeleteRecords moves the leader's local log start and the cross-tier earliest in the
+  // control plane. A follower left the classic fetcher at the seal and keeps its old log start, so its local log
+  // still holds the deleted records. It refuses a consumer read below the cross-tier earliest, as the leader does.
+  @Test
+  def testFetchInPhaseOneRejectsFollowerReadBelowCrossTierEarliest(): Unit = {
+    withPhaseOnePrefixFetch(isLeader = false) { (replicaManager, _, fetchAt) =>
+      replicaManager.refreshPhaseOneCrossTierEarliest()
+      assertEquals(Errors.OFFSET_OUT_OF_RANGE, fetchAt(0L).error)
+      assertEquals(Errors.OFFSET_OUT_OF_RANGE, fetchAt(9L).error)
+      verify(replicaManager, never()).readFromLog(any(), any(), any(), any())
+
+      val retained = fetchAt(10L)
+      assertEquals(Errors.NONE, retained.error)
+      assertEquals(RECORDS, retained.records)
+      verify(replicaManager, times(1)).readFromLog(any(), any(), any(), any())
+    }
+  }
+
+  // A follower that becomes the leader in phase 1 after DeleteRecords keeps its old local log start until the
+  // remote log manager raises it, so the leader checks the cross-tier earliest too.
+  @Test
+  def testFetchInPhaseOneRejectsLeaderReadBelowCrossTierEarliest(): Unit = {
+    withPhaseOnePrefixFetch(isLeader = true) { (replicaManager, _, fetchAt) =>
+      replicaManager.refreshPhaseOneCrossTierEarliest()
+      assertEquals(Errors.OFFSET_OUT_OF_RANGE, fetchAt(0L).error)
+      verify(replicaManager, never()).readFromLog(any(), any(), any(), any())
+
+      assertEquals(RECORDS, fetchAt(19L).records)
+    }
+  }
+
+  // A phase 1 prefix read runs on a request handler thread, so it reads only the value of the last refresh.
+  // Without one, it serves the read and doesn't wait on the control plane.
+  @Test
+  def testFetchInPhaseOneNeverQueriesTheControlPlane(): Unit = {
+    withPhaseOnePrefixFetch(isLeader = false) { (replicaManager, controlPlane, fetchAt) =>
+      assertEquals(RECORDS, fetchAt(0L).records)
+      verify(controlPlane, never()).listOffsets(any())
+      verify(replicaManager, times(1)).readFromLog(any(), any(), any(), any())
+    }
+  }
+
+  // A failed refresh keeps the last values, which can only be too low.
+  @Test
+  def testRefreshPhaseOneCrossTierEarliestKeepsTheLastValueWhenTheControlPlaneFails(): Unit = {
+    withPhaseOnePrefixFetch(isLeader = false) { (replicaManager, controlPlane, fetchAt) =>
+      replicaManager.refreshPhaseOneCrossTierEarliest()
+      when(controlPlane.listOffsets(any())).thenThrow(new ControlPlaneException("unreachable"))
+      replicaManager.refreshPhaseOneCrossTierEarliest()
+      assertEquals(Errors.OFFSET_OUT_OF_RANGE, fetchAt(0L).error)
+      assertEquals(RECORDS, fetchAt(10L).records)
+    }
+  }
+
+  // Seal 20, local log start 0, and a cross-tier earliest of 10 in the control plane after
+  // DeleteRecords(beforeOffset(10)). The cache answers 0 and the control plane 10, so a check that reads the
+  // control plane on the fetch path refuses offset 0 without a refresh.
+  private def withPhaseOnePrefixFetch(isLeader: Boolean)
+                                     (body: (ReplicaManager, ControlPlane, Long => FetchPartitionData) => Unit): Unit = {
+    val seal = 20L
+    val fetchHandlerCtor = mockFetchHandler(Map.empty)
+    val cache = mock(classOf[CrossTierLogStartCache])
+    when(cache.get(any())).thenReturn(null.asInstanceOf[java.lang.Long])
+    val controlPlane = mock(classOf[ControlPlane])
+    when(controlPlane.listOffsets(any())).thenReturn(util.List.of(
+      CpListOffsetsResponse.success(disklessTopicPartition, CpListOffsetsRequest.EARLIEST_TIMESTAMP, 10L)))
+    val replicaManager = spy(createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      controlPlane = Some(controlPlane),
+      disklessManagedReplicasEnabled = true,
+      disklessRemoteStorageConsolidationEnabled = true,
+      consolidatingDisklessTopics = Set(disklessTopicPartition.topic()),
+      topicIdMapping = Map(disklessTopicPartition.topic() -> disklessTopicPartition.topicId()),
+      crossTierLogStartCache = Some(cache),
+    ))
+    try {
+      val tp = disklessTopicPartition.topicPartition()
+      // Puts the partition in the hosted partitions that the refresh walks.
+      setupHybridLeaderPartition(replicaManager, disklessTopicPartition, localEndOffset = 0L)
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(seal)
+      when(replicaManager.inklessMetadataView().isClassicPrefixWaitingForUpload(tp)).thenReturn(true)
+      stubConsolidatingPartitionWithLogStart(replicaManager, disklessTopicPartition, localLeo = seal, isLeader = isLeader,
+        localLogStartOffset = 0L)
+      doReturn(Seq(disklessTopicPartition ->
+        new LogReadResult(
+          new FetchDataInfo(new LogOffsetMetadata(10L, 0L, 0), RECORDS),
+          Optional.empty(), seal, 0L, seal, 0L, 0L, OptionalLong.empty(), Errors.NONE
+        ))
+      ).when(replicaManager).readFromLog(any(), any(), any(), any())
+
+      val clientMetadata = new DefaultClientMetadata(
+        "rack-a", "client-id", InetAddress.getLoopbackAddress(), KafkaPrincipal.ANONYMOUS, "PLAINTEXT")
+      val fetchParams = new FetchParams(
+        FetchRequest.ORDINARY_CONSUMER_ID, -1L, 0L, 1, 1024, FetchIsolation.HIGH_WATERMARK, Optional.of(clientMetadata))
+      val fetchAt: Long => FetchPartitionData = fetchOffset => {
+        @volatile var responseData: Map[TopicIdPartition, FetchPartitionData] = null
+        replicaManager.fetchMessages(fetchParams,
+          Seq(disklessTopicPartition -> new PartitionData(disklessTopicPartition.topicId(), fetchOffset, 0L, 1024, Optional.empty())),
+          QuotaFactory.UNBOUNDED_QUOTA,
+          response => responseData = response.toMap)
+        waitForFetchResponse(responseData)
+        assertEquals(1, responseData.size)
+        responseData(disklessTopicPartition)
+      }
+      body(replicaManager, controlPlane, fetchAt)
+      verify(fetchHandlerCtor.constructed().get(0), never()).handle(any(), any())
     } finally {
       replicaManager.shutdown(checkpointHW = false)
       fetchHandlerCtor.close()

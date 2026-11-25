@@ -25,7 +25,9 @@ import org.apache.kafka.clients.admin.AlterConfigOp;
 import org.apache.kafka.clients.admin.AlterDisklessSwitchOptions;
 import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.clients.admin.CreateTopicsResult;
+import org.apache.kafka.clients.admin.DeleteRecordsOptions;
 import org.apache.kafka.clients.admin.NewTopic;
+import org.apache.kafka.clients.admin.RecordsToDelete;
 import org.apache.kafka.clients.admin.TransactionDescription;
 import org.apache.kafka.clients.admin.TransactionState;
 import org.apache.kafka.clients.consumer.Consumer;
@@ -61,6 +63,7 @@ import org.apache.kafka.server.log.remote.metadata.storage.TopicBasedRemoteLogMe
 import org.apache.kafka.server.log.remote.metadata.storage.TopicBasedRemoteLogMetadataManagerConfig;
 import org.apache.kafka.server.log.remote.storage.RemoteLogManagerConfig;
 import org.apache.kafka.storage.internals.log.UnifiedLog;
+import org.apache.kafka.test.TestUtils;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -79,17 +82,20 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.LongStream;
 
 import io.aiven.inkless.config.InklessConfig;
 import io.aiven.inkless.control_plane.postgres.PostgresControlPlane;
@@ -715,6 +721,194 @@ public class InklessTopicTypeSwitcherClusterTest {
                 s3Client.createBucket(request -> request.bucket(tieredStorageBucket));
             }
             waitForClassicPrefixInRemoteStorage(admin, topic);
+        }
+    }
+
+    @Test
+    @Tag(BLOCKS_REMOTE_UPLOADS)
+    public void testDeleteRecordsInPhaseOneHidesDeletedRecordsOnEveryReplica() throws Exception {
+        final String topic = "switch-delete-records-" + UUID.randomUUID().toString().substring(0, 8);
+        final TopicPartition tp = new TopicPartition(topic, 0);
+        final int classicRecords = 20;
+        final int disklessRecords = 5;
+        final long deleteBefore = 10;
+
+        try (Admin admin = AdminClient.create(baseClientConfigs())) {
+            switchToPhaseOne(admin, topic, classicRecords, disklessRecords);
+            assertConsumersInEveryZoneReadFrom(tp, 0, classicRecords + disklessRecords);
+
+            assertEquals(deleteBefore, admin.deleteRecords(Map.of(tp, RecordsToDelete.beforeOffset(deleteBefore)))
+                .lowWatermarks().get(tp).get(30, TimeUnit.SECONDS).lowWatermark());
+            assertFalse(readClassicPrefixInRemoteStorage(admin, topic, 0));
+            // Brokers 0, 1, and 2 are in az1, az2, and az3. Each consumer reads from the replica in its zone.
+            assertConsumersInEveryZoneReadFrom(tp, deleteBefore, classicRecords + disklessRecords);
+
+            // Move the leadership to a follower, whose log start offset is still 0 until the remote log manager raises it.
+            final int leader = phaseOneLeader(tp);
+            final int newLeader = (leader + 1) % 3;
+            admin.alterDisklessSwitch(topic, 0, PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET,
+                new AlterDisklessSwitchOptions().leaderId(newLeader)).all().get(20, TimeUnit.SECONDS);
+            TestUtils.waitForCondition(() -> phaseOneLeader(tp) == newLeader, "Broker " + newLeader + " didn't lead");
+            assertConsumersInEveryZoneReadFrom(tp, deleteBefore, classicRecords + disklessRecords);
+        }
+    }
+
+    @Test
+    @Tag(BLOCKS_REMOTE_UPLOADS)
+    public void testPhaseOnePrefixReadsDontWaitForAnUnreachableControlPlane() throws Exception {
+        final String topic = "switch-paused-control-plane-" + UUID.randomUUID().toString().substring(0, 8);
+        final TopicPartition tp = new TopicPartition(topic, 0);
+        final int classicRecords = 20;
+
+        try (Admin admin = AdminClient.create(baseClientConfigs())) {
+            switchToPhaseOne(admin, topic, classicRecords, 5);
+            final int leader = phaseOneLeader(tp);
+            final String classicTopic = "classic-" + UUID.randomUUID().toString().substring(0, 8);
+            admin.createTopics(List.of(new NewTopic(classicTopic, Map.of(0, List.of(leader)))))
+                .all().get(30, TimeUnit.SECONDS);
+            TopicMetadataProbe.awaitVisible(admin, classicTopic);
+            produceRecords(classicTopic, 1);
+
+            pgContainer.getDockerClient().pauseContainerCmd(pgContainer.getContainerId()).exec();
+            try {
+                // Longer than the cross-tier earliest cache TTL, so no broker holds a cached value.
+                Thread.sleep(11000);
+                final List<Thread> readers = new ArrayList<>();
+                final Map<String, Long> readMs = new ConcurrentHashMap<>();
+                final Map<String, Integer> readCounts = new ConcurrentHashMap<>();
+                for (int i = 0; i < 12; i++) {
+                    final String clientId = "paused-" + i + ",diskless_az=az" + (i % 3 + 1);
+                    final Thread reader = new Thread(() -> {
+                        final long[] countAndMs = readPrefix(tp, clientId, classicRecords);
+                        readCounts.put(clientId, (int) countAndMs[0]);
+                        readMs.put(clientId, countAndMs[1]);
+                    });
+                    reader.start();
+                    readers.add(reader);
+                }
+                final List<Long> produceMs = new ArrayList<>();
+                try (Producer<byte[], byte[]> producer = new KafkaProducer<>(producerConfigs())) {
+                    for (int i = 0; i < 3; i++) {
+                        final long start = System.nanoTime();
+                        producer.send(new ProducerRecord<>(classicTopic, 0, null, "paused".getBytes(StandardCharsets.UTF_8)))
+                            .get(30, TimeUnit.SECONDS);
+                        produceMs.add((System.nanoTime() - start) / 1_000_000);
+                    }
+                }
+                for (Thread reader : readers) {
+                    reader.join(60_000);
+                }
+                log.warn("[stage=paused] read counts={} read ms={} produce ms={}", readCounts, readMs, produceMs);
+                for (Map.Entry<String, Integer> entry : readCounts.entrySet()) {
+                    assertEquals(classicRecords, entry.getValue(), entry.getKey() + " didn't read the whole prefix");
+                }
+                assertEquals(12, readCounts.size());
+                assertTrue(readMs.values().stream().allMatch(ms -> ms < 5000), "A prefix read waited: " + readMs);
+                assertTrue(produceMs.stream().allMatch(ms -> ms < 2000), "A classic produce waited: " + produceMs);
+            } finally {
+                pgContainer.getDockerClient().unpauseContainerCmd(pgContainer.getContainerId()).exec();
+            }
+        }
+    }
+
+    @Test
+    @Tag(BLOCKS_REMOTE_UPLOADS)
+    public void testDeleteRecordsInPhaseOneFailsWhileTheControlPlaneIsUnreachable() throws Exception {
+        final String topic = "switch-delete-paused-" + UUID.randomUUID().toString().substring(0, 8);
+        final TopicPartition tp = new TopicPartition(topic, 0);
+        final int classicRecords = 20;
+        final int disklessRecords = 5;
+        final long deleteBefore = 10;
+
+        try (Admin admin = AdminClient.create(baseClientConfigs())) {
+            switchToPhaseOne(admin, topic, classicRecords, disklessRecords);
+            pgContainer.getDockerClient().pauseContainerCmd(pgContainer.getContainerId()).exec();
+            try {
+                final ExecutionException failure = assertThrows(ExecutionException.class, () ->
+                    admin.deleteRecords(Map.of(tp, RecordsToDelete.beforeOffset(deleteBefore)),
+                            new DeleteRecordsOptions().timeoutMs(20000))
+                        .lowWatermarks().get(tp).get(60, TimeUnit.SECONDS));
+                log.warn("[stage=paused-delete] DeleteRecords failed with {}", failure.getCause().toString());
+            } finally {
+                pgContainer.getDockerClient().unpauseContainerCmd(pgContainer.getContainerId()).exec();
+            }
+
+            assertEquals(deleteBefore, admin.deleteRecords(Map.of(tp, RecordsToDelete.beforeOffset(deleteBefore)))
+                .lowWatermarks().get(tp).get(60, TimeUnit.SECONDS).lowWatermark());
+            assertConsumersInEveryZoneReadFrom(tp, deleteBefore, classicRecords + disklessRecords);
+        }
+    }
+
+    private void switchToPhaseOne(final Admin admin,
+                                  final String topic,
+                                  final int classicRecords,
+                                  final int disklessRecords) throws Exception {
+        admin.createTopics(List.of(new NewTopic(topic, 1, (short) 3)
+            .configs(Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "false")))).all().get(30, TimeUnit.SECONDS);
+        TopicMetadataProbe.awaitVisible(admin, topic);
+        produceRecords(topic, classicRecords);
+        alterTopicConfigWithIncrementalAlterConfigs(admin, topic, Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true"));
+        assertEquals(classicRecords, waitForSealOffset(admin, topic, 0, offset -> offset >= 0));
+        waitForIsrRecovery(admin, topic, 0, 3);
+        // The broker accepts diskless records only after it initializes the partition in the control plane.
+        produceRecords(topic, disklessRecords);
+    }
+
+    /**
+     * Returns how many records below `end` a consumer with the client ID reads from offset 0, one record per fetch,
+     * and how many milliseconds it takes from its first poll to its last.
+     */
+    private long[] readPrefix(final TopicPartition tp, final String clientId, final int end) {
+        final Map<String, Object> configs = baseConsumerConfigs();
+        configs.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
+        configs.put(ConsumerConfig.CLIENT_ID_CONFIG, clientId);
+        configs.put(ConsumerConfig.MAX_PARTITION_FETCH_BYTES_CONFIG, "1");
+        long count = 0;
+        final long start = System.nanoTime();
+        try (Consumer<byte[], byte[]> consumer = new KafkaConsumer<>(configs)) {
+            consumer.assign(List.of(tp));
+            consumer.seek(tp, 0L);
+            final long deadline = System.currentTimeMillis() + Duration.ofSeconds(30).toMillis();
+            while (count < end && System.currentTimeMillis() < deadline) {
+                for (ConsumerRecord<byte[], byte[]> record : consumer.poll(Duration.ofMillis(100))) {
+                    if (record.offset() < end) {
+                        count++;
+                    }
+                }
+            }
+            return new long[] {count, (System.nanoTime() - start) / 1_000_000};
+        }
+    }
+
+    private int phaseOneLeader(final TopicPartition tp) {
+        return cluster.brokers().entrySet().stream()
+            .filter(entry -> entry.getValue().replicaManager().getPartitionOrException(tp).isLeader())
+            .map(Map.Entry::getKey)
+            .findFirst()
+            .orElse(-1);
+    }
+
+    /**
+     * Checks that a consumer in each zone that seeks to offset 0 reads every record from `earliest` to `end`.
+     * Below `earliest`, the consumer gets `OFFSET_OUT_OF_RANGE` and resets to the earliest offset.
+     */
+    private void assertConsumersInEveryZoneReadFrom(final TopicPartition tp, final long earliest, final long end) {
+        for (int zone = 1; zone <= 3; zone++) {
+            final Map<String, Object> configs = baseConsumerConfigs();
+            configs.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
+            configs.put(ConsumerConfig.CLIENT_ID_CONFIG, "delete-records,diskless_az=az" + zone);
+            final List<Long> offsets = new ArrayList<>();
+            try (Consumer<byte[], byte[]> consumer = new KafkaConsumer<>(configs)) {
+                consumer.assign(List.of(tp));
+                consumer.seek(tp, 0L);
+                final long deadline = System.currentTimeMillis() + Duration.ofSeconds(30).toMillis();
+                while (offsets.size() < end - earliest && System.currentTimeMillis() < deadline) {
+                    consumer.poll(Duration.ofMillis(500)).forEach(record -> offsets.add(record.offset()));
+                }
+            }
+            log.warn("[stage=read] zone=az{} offsets={}", zone, offsets);
+            assertEquals(LongStream.range(earliest, end).boxed().toList(), offsets,
+                "The consumer in az" + zone + " read the wrong offsets");
         }
     }
 

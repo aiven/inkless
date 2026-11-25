@@ -481,6 +481,8 @@ class ReplicaManager(val config: KafkaConfig,
   private val consolidationDeferredListOffsetsRate: Meter =
     metricsGroup.newMeter(ConsolidationDeferredListOffsetsRateMetricName, "requests", TimeUnit.SECONDS)
   private val lastPrefixDeferralLogMs = new AtomicLong(0L)
+  private val phaseOneCrossTierEarliest = new DisklessPhaseOneCrossTierEarliest(_inklessMetadataView,
+    config.disklessRemoteStorageConsolidationEnabled, inklessSharedState, time)
   metricsGroup.newGauge(PartitionsWithLateTransactionsCountMetricName, () => lateTransactionsCount)
   metricsGroup.newGauge(ProducerIdCountMetricName, () => producerIdCount)
 
@@ -663,6 +665,12 @@ class ReplicaManager(val config: KafkaConfig,
       scheduler.schedule("inkless-cross-tier-log-start-reporter",
         () => ReplicaManager.runIfControlPlaneAvailable(availability, "inkless-cross-tier-log-start-reporter") {
           sharedState.crossTierLogStartReporter().run()
+        }, sharedState.config().crossTierLogStartReportInterval().toMillis,
+        sharedState.config().crossTierLogStartReportInterval().toMillis)
+
+      scheduler.schedule("inkless-phase-one-cross-tier-earliest-refresh",
+        () => ReplicaManager.runIfControlPlaneAvailable(availability, "inkless-phase-one-cross-tier-earliest-refresh") {
+          refreshPhaseOneCrossTierEarliest()
         }, sharedState.config().crossTierLogStartReportInterval().toMillis,
         sharedState.config().crossTierLogStartReportInterval().toMillis)
 
@@ -1832,14 +1840,13 @@ class ReplicaManager(val config: KafkaConfig,
     // control plane and use it as their low watermark, so any broker (leader or the follower the
     // metadata transformer routes clients to) returns the same value as ListOffsets(EARLIEST).
     def finalizeCrossTierAndRespond(response: Map[TopicPartition, DeleteRecordsPartitionResult]): Unit = {
-      val advanced = advanceCrossTierEarliestForDeleteRecords(response, offsetPerPartition)
-      if (advanced.isEmpty) {
-        responseCallback(response)
-      } else {
-        responseCallback(response.map { case (topicPartition, result) =>
-          topicPartition -> advanced.getOrElse(topicPartition, result)
-        })
-      }
+      val (finalResponse, delayMs) = phaseOneCrossTierEarliest.completeDeleteRecords(response,
+        advanceCrossTierEarliestForDeleteRecords(response, offsetPerPartition), timeout)
+      if (delayMs > 0)
+        scheduler.scheduleOnce("inkless-delete-records-cross-tier-earliest-propagation",
+          () => responseCallback(finalResponse), delayMs)
+      else
+        responseCallback(finalResponse)
     }
 
     def maybeDeleteFromDiskless(localResponse: Map[TopicPartition, DeleteRecordsPartitionResult]): Unit = {
@@ -2009,6 +2016,7 @@ class ReplicaManager(val config: KafkaConfig,
         // RuntimeException), but Errors (e.g. OutOfMemoryError) must propagate rather than fail open.
         // Reporting failure must not fail the delete (the data is already deleted); leave the per-leg
         // low watermark in place and let the RLM's own report reconcile the control plane later.
+        // In phase 1 of the switch nothing reconciles it, so DisklessPhaseOneCrossTierEarliest fails those partitions.
         error(s"Failed to advance cross-tier log start offset for ${partitionsInOrder.mkString(", ")}", e)
         Map.empty
     }
@@ -2638,6 +2646,9 @@ class ReplicaManager(val config: KafkaConfig,
       earliest.forall(fetchOffset >= _.longValue)
     }
 
+  private[server] def refreshPhaseOneCrossTierEarliest(): Unit =
+    phaseOneCrossTierEarliest.refresh(onlinePartitionsIterator.map(_.topicPartition))
+
   /**
    * Checks whether `offset` of a consolidating topic is at or above the log start offset of the local log.
    * A remote read finds no leader epoch for such an offset only while this replica can't read the tier yet,
@@ -2919,6 +2930,21 @@ class ReplicaManager(val config: KafkaConfig,
         } else {
           shouldReadFromUnifiedLog = shouldReadFromUnifiedLog ||
             (classicToDisklessStartOffset >= 0 && fetchPartitionData.fetchOffset < classicToDisklessStartOffset)
+          if (phaseOneCrossTierEarliest.isPrefixReadBelowEarliest(params.isFromConsumer, tp.topicPartition,
+              fetchPartitionData.fetchOffset, classicToDisklessStartOffset)) {
+            immediateFetchResponses += tp -> new FetchPartitionData(
+              Errors.OFFSET_OUT_OF_RANGE,
+              UnifiedLog.UNKNOWN_OFFSET,
+              UnifiedLog.UNKNOWN_OFFSET,
+              MemoryRecords.EMPTY,
+              Optional.empty(),
+              OptionalLong.empty(),
+              Optional.empty(),
+              OptionalInt.empty(),
+              false
+            )
+            partitionLookupFailed = true
+          }
         }
 
         if (!partitionLookupFailed) {

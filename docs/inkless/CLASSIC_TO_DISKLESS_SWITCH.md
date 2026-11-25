@@ -250,6 +250,23 @@ Brokers also follow different rules in each phase. The consolidation rows apply 
 
 The broker applies the metadata routing rules to every switched partition. The replication factor and the remote storage config don't change them. The broker also applies the phase 1 rule while the switch is pending, because the ISR members are the only replicas with a complete copy of the classic prefix.
 
+### Deleted records in phase 1
+
+In phase 1, `DeleteRecords` and retention advance the log start offset of the leader's local log and the cross-tier earliest offset in the control plane. The followers left the classic fetcher at the seal, so their log start offset doesn't move, and their local logs still contain the deleted records. A follower that becomes the leader keeps its old log start offset until the remote log manager raises it to the cross-tier earliest offset.
+
+So every replica, the leader included, checks a consumer read below the seal against the cross-tier earliest offset. If the read starts below that offset, the replica returns `OFFSET_OUT_OF_RANGE`. The consumer then resets its position with `ListOffsets(EARLIEST)`, which the control plane answers. Replica fetches skip this check.
+
+The check doesn't query the control plane. Every `inkless.cross.tier.log.start.report.interval.ms`, each broker reads the cross-tier earliest offset of all its phase 1 partitions from the control plane in one call, and the check compares the read with the result. If the control plane is slow or unreachable, prefix reads and other requests don't wait for it:
+
+* Before the first successful read, the broker serves every prefix read, as it does for a partition that no one deleted from.
+* After a failed read, the broker keeps the values of the last successful one. Those values can only be too low. With them, the broker refuses only offsets that were already deleted.
+
+The other brokers learn a new value at their next read. So in phase 1, the leader answers `DeleteRecords` only after twice that interval: one interval for the next read to start, and one for its control-plane query. When the request succeeds, every in-sync replica refuses reads of the deleted records, unless a broker's control-plane query took longer than one interval. The hold covers the whole response, so classic partitions in the same request wait too.
+
+If the request timeout is shorter than the hold, the leader answers `REQUEST_TIMED_OUT` at the timeout, as for a classic partition whose followers don't catch up in time. The leader keeps the records deleted, and a retry is a no-op for it.
+
+If the leader can't advance the cross-tier earliest offset in the control plane, `DeleteRecords` fails with the retriable `KAFKA_STORAGE_ERROR`, even though the leader's local log already dropped the records. In phase 1, only `DeleteRecords` advances that offset, and a success would leave the records readable on the followers. The Java `Admin` client retries the request until its API timeout.
+
 ### Unclean leader election
 
 In phase 1, only the ISR members store a complete copy of the classic prefix. An unclean leader election makes a replica outside the ISR the leader and resets the ISR to that replica. Until the controller sets `classicPrefixInRemoteStorage`, it blocks unclean leader election for the partition:
