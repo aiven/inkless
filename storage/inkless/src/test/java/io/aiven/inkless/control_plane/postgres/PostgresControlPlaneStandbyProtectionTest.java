@@ -25,6 +25,7 @@ import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.server.metrics.KafkaMetricsGroup;
 import org.apache.kafka.server.metrics.KafkaYammerMetrics;
 
+import com.yammer.metrics.core.Gauge;
 import com.yammer.metrics.core.Histogram;
 import com.yammer.metrics.core.Meter;
 import com.yammer.metrics.core.Metric;
@@ -36,7 +37,13 @@ import org.junit.jupiter.api.TestInfo;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.io.Closeable;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.InetAddress;
+import java.net.ServerSocket;
+import java.net.Socket;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -44,6 +51,9 @@ import java.util.Map;
 import java.util.OptionalLong;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import io.aiven.inkless.common.ObjectFormat;
 import io.aiven.inkless.control_plane.AdvanceCrossTierLogStartOffsetRequest;
@@ -535,6 +545,162 @@ class PostgresControlPlaneStandbyProtectionTest {
         assertThat(responses.get(1).highWatermark()).isEqualTo(5L);
     }
 
+    @Test
+    void unreachableStandbyFallsBackImmediatelyTripsCircuitAndRecoversViaProbe() throws Exception {
+        final String standbyDbName = extractDbName(standbyDbUrl);
+        try (LocalTcpProxy standbyProxy = new LocalTcpProxy(pgContainer.getHost(), pgContainer.getMappedPort(5432))) {
+            standbyProxy.start();
+            final String proxiedStandbyUrl = "jdbc:postgresql://127.0.0.1:" + standbyProxy.port() + "/" + standbyDbName;
+
+            final PostgresControlPlane cp = openStandbyProtectedControlPlane(
+                primaryDbUrl,
+                proxiedStandbyUrl,
+                primaryDbUrl,
+                Map.of(
+                    "read.max.connections", "2",
+                    "read.connection.pool.timeout.ms", "500",
+                    "read.tcp.connect.timeout.ms", "1000",
+                    "read.socket.timeout.ms", "1000",
+                    PostgresControlPlaneConfig.STANDBY_CIRCUIT_BREAKER_FAILURE_THRESHOLD_CONFIG, "2",
+                    PostgresControlPlaneConfig.STANDBY_CIRCUIT_BREAKER_PROBE_INTERVAL_MS_CONFIG, "1000"
+                )
+            );
+
+            // Warm standby path while healthy: reads standby HWM (10).
+            final List<FindBatchResponse> healthyStandby = cp.findBatches(
+                List.of(new FindBatchRequest(TP0, 0, 1024 * 1024)), 1024 * 1024, 0);
+            assertThat(healthyStandby.get(0).errors()).isEqualTo(Errors.NONE);
+            assertThat(healthyStandby.get(0).highWatermark()).isEqualTo(10L);
+            assertThat(cp.standbyCircuitBreaker().isOpen()).isFalse();
+
+            // Stop proxy to simulate a standby outage.
+            standbyProxy.stop();
+
+            final long fallbackBefore = meterCount("StandbyFallbackRate");
+            final long primaryQueryTimeBefore = histogramCount("FindBatchesPrimaryQueryTime");
+
+            // Failure #1: falls back immediately to primary (HWM 20) even before circuit trips.
+            final List<FindBatchResponse> preTrip = cp.findBatches(
+                List.of(new FindBatchRequest(TP0, 0, 1024 * 1024)), 1024 * 1024, 0);
+            assertThat(preTrip.get(0).errors()).isEqualTo(Errors.NONE);
+            assertThat(preTrip.get(0).highWatermark()).isEqualTo(20L);
+            assertThat(cp.standbyCircuitBreaker().isOpen()).isFalse();
+            assertThat(meterCount("StandbyFallbackRate")).isEqualTo(fallbackBefore + 1);
+
+            // Failure #2 trips the circuit OPEN and still falls back to primary.
+            final List<FindBatchResponse> tripping = cp.findBatches(
+                List.of(new FindBatchRequest(TP0, 0, 1024 * 1024)), 1024 * 1024, 0);
+            assertThat(tripping.get(0).errors()).isEqualTo(Errors.NONE);
+            assertThat(tripping.get(0).highWatermark()).isEqualTo(20L);
+            assertThat(cp.standbyCircuitBreaker().isOpen()).isTrue();
+            assertThat(gaugeIntValue("StandbyCircuitOpen")).isEqualTo(1);
+            assertThat(meterCount("StandbyFallbackRate")).isEqualTo(fallbackBefore + 2);
+
+            // While OPEN, findBatches skips standby completely (FindBatchesQueryRate doesn't advance).
+            final int standbyQueryRateWhileOpen = gaugeIntValue("FindBatchesQueryRate");
+            final List<FindBatchResponse> whileOpen = cp.findBatches(
+                List.of(new FindBatchRequest(TP0, 0, 1024 * 1024)), 1024 * 1024, 0);
+            assertThat(whileOpen.get(0).errors()).isEqualTo(Errors.NONE);
+            assertThat(whileOpen.get(0).highWatermark()).isEqualTo(20L);
+            assertThat(gaugeIntValue("FindBatchesQueryRate")).isEqualTo(standbyQueryRateWhileOpen);
+            assertThat(meterCount("StandbyFallbackRate")).isEqualTo(fallbackBefore + 3);
+            assertThat(histogramCount("FindBatchesPrimaryQueryTime")).isEqualTo(primaryQueryTimeBefore + 3);
+
+            // Bring standby back up on the same port and wait for background SELECT 1 probe to close the breaker.
+            standbyProxy.start();
+            final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            while (cp.standbyCircuitBreaker().isOpen() && System.nanoTime() < deadline) {
+                Thread.sleep(50);
+            }
+            assertThat(cp.standbyCircuitBreaker().isOpen()).isFalse();
+            assertThat(gaugeIntValue("StandbyCircuitOpen")).isEqualTo(0);
+
+            // Subsequent fetch resumes reading from the standby (HWM 10).
+            final List<FindBatchResponse> afterRecovery = cp.findBatches(
+                List.of(new FindBatchRequest(TP0, 0, 1024 * 1024)), 1024 * 1024, 0);
+            assertThat(afterRecovery.get(0).errors()).isEqualTo(Errors.NONE);
+            assertThat(afterRecovery.get(0).highWatermark()).isEqualTo(10L);
+        }
+    }
+
+    @Test
+    void openCircuitConcurrencyLimitRejectionAndPrimaryFailureReturnKafkaStorageError() throws Exception {
+        final String standbyDbName = extractDbName(standbyDbUrl);
+        final String primaryDbName = extractDbName(primaryDbUrl);
+        try (LocalTcpProxy standbyProxy = new LocalTcpProxy(pgContainer.getHost(), pgContainer.getMappedPort(5432));
+             LocalTcpProxy primaryProxy = new LocalTcpProxy(pgContainer.getHost(), pgContainer.getMappedPort(5432))) {
+            standbyProxy.start();
+            primaryProxy.start();
+            final String proxiedStandbyUrl = "jdbc:postgresql://127.0.0.1:" + standbyProxy.port() + "/" + standbyDbName;
+            final String proxiedPrimaryUrl = "jdbc:postgresql://127.0.0.1:" + primaryProxy.port() + "/" + primaryDbName;
+
+            final PostgresControlPlane cp = openStandbyProtectedControlPlane(
+                primaryDbUrl,
+                proxiedStandbyUrl,
+                proxiedPrimaryUrl,
+                Map.of(
+                    "read.max.connections", "1",
+                    "read.connection.pool.timeout.ms", "500",
+                    "read.primary.max.connections", "1",
+                    "read.primary.connection.pool.timeout.ms", "500",
+                    PostgresControlPlaneConfig.STANDBY_FALLBACK_MAX_CONCURRENT_CONFIG, "1",
+                    PostgresControlPlaneConfig.STANDBY_CIRCUIT_BREAKER_FAILURE_THRESHOLD_CONFIG, "1",
+                    PostgresControlPlaneConfig.STANDBY_CIRCUIT_BREAKER_PROBE_INTERVAL_MS_CONFIG, "60000"
+                )
+            );
+
+            // Trip the circuit open.
+            standbyProxy.stop();
+            final List<FindBatchResponse> tripped = cp.findBatches(
+                List.of(new FindBatchRequest(TP0, 0, 1024 * 1024)), 1024 * 1024, 0);
+            assertThat(tripped.get(0).errors()).isEqualTo(Errors.NONE);
+            assertThat(cp.standbyCircuitBreaker().isOpen()).isTrue();
+
+            // Exhaust concurrency limiter while OPEN: returns per-partition `KAFKA_STORAGE_ERROR`.
+            final long rejectedBefore = meterCount("PrimaryReadLimitRejectedRate");
+            final long fallbackFailureBefore = meterCount("StandbyFallbackFailureRate");
+            cp.primaryReadLimiter().acquire();
+            try {
+                final List<FindBatchResponse> rejected = cp.findBatches(
+                    List.of(
+                        new FindBatchRequest(TP0, 0, 1024 * 1024),
+                        new FindBatchRequest(TP1, 0, 1024 * 1024)
+                    ),
+                    1024 * 1024,
+                    0
+                );
+                assertThat(rejected).hasSize(2);
+                assertThat(rejected.get(0).errors()).isEqualTo(Errors.KAFKA_STORAGE_ERROR);
+                assertThat(rejected.get(1).errors()).isEqualTo(Errors.KAFKA_STORAGE_ERROR);
+            } finally {
+                cp.primaryReadLimiter().release();
+            }
+            assertThat(meterCount("PrimaryReadLimitRejectedRate")).isEqualTo(rejectedBefore + 1);
+            assertThat(meterCount("StandbyFallbackFailureRate")).isEqualTo(fallbackFailureBefore + 1);
+
+            // Primary also fails while OPEN: returns per-partition `KAFKA_STORAGE_ERROR` instead of throwing.
+            primaryProxy.stop();
+            final List<FindBatchResponse> primaryDown = cp.findBatches(
+                List.of(
+                    new FindBatchRequest(TP0, 0, 1024 * 1024),
+                    new FindBatchRequest(TP1, 0, 1024 * 1024)
+                ),
+                1024 * 1024,
+                0
+            );
+            assertThat(primaryDown).hasSize(2);
+            assertThat(primaryDown.get(0).errors()).isEqualTo(Errors.KAFKA_STORAGE_ERROR);
+            assertThat(primaryDown.get(1).errors()).isEqualTo(Errors.KAFKA_STORAGE_ERROR);
+            assertThat(meterCount("StandbyFallbackFailureRate")).isEqualTo(fallbackFailureBefore + 2);
+        }
+    }
+
+    private static String extractDbName(final String jdbcUrl) {
+        final int slash = jdbcUrl.lastIndexOf('/');
+        final int query = jdbcUrl.indexOf('?', slash);
+        return query >= 0 ? jdbcUrl.substring(slash + 1, query) : jdbcUrl.substring(slash + 1);
+    }
+
     private String createDatabase(final String name) {
         pgContainer.createDatabase(name);
         return pgContainer.getUserJdbcUrl();
@@ -606,5 +772,118 @@ class PostgresControlPlaneStandbyProtectionTest {
 
     private static long histogramCount(final String name) {
         return ((Histogram) registeredMetric(name)).count();
+    }
+
+    private static int gaugeIntValue(final String name) {
+        return (int) ((Gauge<?>) registeredMetric(name)).value();
+    }
+
+    /**
+     * Minimal TCP proxy bound to an ephemeral local port. Tests stop and restart it on the same
+     * port to simulate a PostgreSQL standby outage and recovery against Testcontainers.
+     */
+    private static final class LocalTcpProxy implements Closeable {
+        private final String targetHost;
+        private final int targetPort;
+        private final AtomicBoolean running = new AtomicBoolean(false);
+        private final List<Socket> activeSockets = new CopyOnWriteArrayList<>();
+        private int listenPort;
+        private ServerSocket serverSocket;
+        private Thread acceptThread;
+
+        private LocalTcpProxy(final String targetHost, final int targetPort) {
+            this.targetHost = targetHost;
+            this.targetPort = targetPort;
+        }
+
+        int port() {
+            return listenPort;
+        }
+
+        synchronized void start() throws IOException {
+            if (running.get()) {
+                return;
+            }
+            serverSocket = new ServerSocket(listenPort, 50, InetAddress.getLoopbackAddress());
+            serverSocket.setReuseAddress(true);
+            listenPort = serverSocket.getLocalPort();
+            running.set(true);
+            acceptThread = new Thread(this::acceptLoop, "test-pg-proxy-accept-" + listenPort);
+            acceptThread.setDaemon(true);
+            acceptThread.start();
+        }
+
+        synchronized void stop() throws IOException {
+            running.set(false);
+            if (serverSocket != null) {
+                serverSocket.close();
+                serverSocket = null;
+            }
+            for (final Socket socket : activeSockets) {
+                closeQuietly(socket);
+            }
+            activeSockets.clear();
+            if (acceptThread != null) {
+                try {
+                    acceptThread.join(2_000L);
+                } catch (final InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                acceptThread = null;
+            }
+        }
+
+        private void acceptLoop() {
+            final ServerSocket listener = serverSocket;
+            while (running.get() && listener != null && !listener.isClosed()) {
+                try {
+                    final Socket client = listener.accept();
+                    final Socket upstream = new Socket(targetHost, targetPort);
+                    activeSockets.add(client);
+                    activeSockets.add(upstream);
+                    startPipe(client, upstream);
+                    startPipe(upstream, client);
+                } catch (final IOException ignored) {
+                    if (!running.get()) {
+                        return;
+                    }
+                }
+            }
+        }
+
+        private void startPipe(final Socket from, final Socket to) {
+            final Thread pipe = new Thread(() -> {
+                try (InputStream in = from.getInputStream(); OutputStream out = to.getOutputStream()) {
+                    final byte[] buffer = new byte[8192];
+                    int read;
+                    while ((read = in.read(buffer)) != -1) {
+                        out.write(buffer, 0, read);
+                        out.flush();
+                    }
+                } catch (final IOException ignored) {
+                    // Expected when either side closes or proxy stops.
+                } finally {
+                    closeQuietly(from);
+                    closeQuietly(to);
+                    activeSockets.remove(from);
+                    activeSockets.remove(to);
+                }
+            }, "test-pg-proxy-pipe");
+            pipe.setDaemon(true);
+            pipe.start();
+        }
+
+        private static void closeQuietly(final Socket socket) {
+            try {
+                socket.close();
+            } catch (final IOException ignored) {
+                // Ignore close errors during simulated outage.
+            }
+        }
+
+        @Override
+        public void close() throws IOException {
+            stop();
+        }
     }
 }

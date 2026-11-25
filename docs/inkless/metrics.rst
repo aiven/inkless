@@ -431,6 +431,9 @@ PurgeDeletedLogsQueryTime                          Time spent executing the Purg
 SafeDeleteFileCheckLastSuccessfulQueryAgeMs        Milliseconds since the last successful SafeDeleteFileCheck query completed; -1 if no query has succeeded since startup     
 SafeDeleteFileCheckQueryRate                       Total number of SafeDeleteFileCheck queries executed                                                                       
 SafeDeleteFileCheckQueryTime                       Time spent executing the SafeDeleteFileCheck query in milliseconds                                                         
+StandbyCircuitOpen                                 1 when the standby circuit breaker is open and findBatches traffic routes to the primary read pool; 0 otherwise            
+StandbyFallbackFailureRate                         Rate of standby fallback findBatches calls that fail on the primary read pool or hit the concurrency limit per second      
+StandbyFallbackRate                                Rate of findBatches calls routed to the primary read pool when the standby fails or the circuit breaker is open per second 
 TopicCreateLastSuccessfulQueryAgeMs                Milliseconds since the last successful TopicCreate query completed; -1 if no query has succeeded since startup             
 TopicCreateQueryRate                               Total number of TopicCreate queries executed                                                                               
 TopicCreateQueryTime                               Time spent executing the TopicCreate query in milliseconds                                                                 

@@ -380,6 +380,22 @@ Under ``inkless.control.plane.``
   * Valid Values: [1,...]
   * Importance: medium
 
+``standby.circuit.breaker.failure.threshold``
+  Number of consecutive standby connectivity or timeout failures before the standby circuit breaker opens and routes findBatches calls directly to the primary read pool.
+
+  * Type: int
+  * Default: 3
+  * Valid Values: [1,...]
+  * Importance: medium
+
+``standby.circuit.breaker.probe.interval.ms``
+  Delay in milliseconds between background SELECT 1 probes against the standby database while the standby circuit breaker is open.
+
+  * Type: long
+  * Default: 10000 (10 seconds)
+  * Valid Values: [1000,...]
+  * Importance: medium
+
 ``standby.fallback.max.concurrent``
   Maximum number of concurrent primary findBatches calls for standby confirmation and fallback. Caps findBatches fail-fast so confirmation and fallback bursts don't starve listOffsets, getCrossTierLogStart, and getProducerState on the read.primary pool. When set to 0, defaults to 90% of read.primary.max.connections (at least 1), reserving the remaining headroom for non-findBatches reads.
 
