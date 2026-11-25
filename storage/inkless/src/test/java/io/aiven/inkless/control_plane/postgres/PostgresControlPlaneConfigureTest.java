@@ -88,6 +88,51 @@ class PostgresControlPlaneConfigureTest {
     }
 
     @Test
+    void emptyReadPrimaryConnectionStringIsReportedAsNotConfigured() {
+        final var controlPlane = new PostgresControlPlane(new MockTime());
+
+        final var e = assertThrows(ControlPlaneNotConfiguredException.class,
+            () -> controlPlane.configure(Map.of(
+                "connection.string", "jdbc:postgresql://127.0.0.1:5432/inkless",
+                "username", "username",
+                "password", "password",
+                "read.primary.connection.string", "")));
+        assertEquals("No diskless control plane is configured: read.primary.connection.string is empty or missing",
+            e.getMessage());
+    }
+
+    @Test
+    void missingReadPrimaryConnectionStringIsReportedAsNotConfigured() {
+        final var controlPlane = new PostgresControlPlane(new MockTime());
+
+        final var e = assertThrows(ControlPlaneNotConfiguredException.class,
+            () -> controlPlane.configure(Map.of(
+                "connection.string", "jdbc:postgresql://127.0.0.1:5432/inkless",
+                "username", "username",
+                "password", "password",
+                "read.primary.username", "read-primary-username")));
+        assertEquals("No diskless control plane is configured: read.primary.connection.string is empty or missing",
+            e.getMessage());
+    }
+
+    @Test
+    void readPrimaryWithoutReadDoesNotRequireReadConnectionString() {
+        final var controlPlane = new PostgresControlPlane(new MockTime());
+
+        // Configuring `read.primary.*` alone must not trip the `read.*` connection-string check; validation
+        // proceeds to `PostgresControlPlaneConfig` parsing and fails on the invalid numeric value.
+        final ConfigException e = assertThrows(ConfigException.class,
+            () -> controlPlane.configure(Map.of(
+                "connection.string", "jdbc:postgresql://127.0.0.1:5432/inkless",
+                "username", "username",
+                "password", "password",
+                "read.primary.connection.string", "jdbc:postgresql://127.0.0.1:5432/inkless-rp",
+                "read.primary.username", "read-primary-username",
+                "max.connections", "not-a-number")));
+        assertEquals(ConfigException.class, e.getClass());
+    }
+
+    @Test
     void unrelatedInvalidConfigIsNotReportedAsNotConfigured() {
         final var controlPlane = new PostgresControlPlane(new MockTime());
 

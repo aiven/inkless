@@ -29,7 +29,7 @@ import io.aiven.inkless.control_plane.postgres.PostgresControlPlaneConfig;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * `InklessControlPlaneConfigs`, in `:server-common`, duplicates these three property names as
+ * `InklessControlPlaneConfigs`, in `:server-common`, duplicates these four property names as
  * literals because `:server` cannot depend on `:storage:inkless`, which defines the pieces below.
  * This guards against the two definitions drifting apart.
  */
@@ -43,11 +43,14 @@ class InklessControlPlaneConfigsConsistencyTest {
             .isEqualTo(prefix + PostgresConnectionConfig.CONNECTION_STRING_CONFIG);
         assertThat(InklessControlPlaneConfigs.READ_CONNECTION_STRING_CONFIG)
             .isEqualTo(prefix + PostgresControlPlaneConfig.READ_CONFIG_PREFIX + PostgresConnectionConfig.CONNECTION_STRING_CONFIG);
+        assertThat(InklessControlPlaneConfigs.READ_PRIMARY_CONNECTION_STRING_CONFIG)
+            .isEqualTo(prefix + PostgresControlPlaneConfig.READ_PRIMARY_CONFIG_PREFIX + PostgresConnectionConfig.CONNECTION_STRING_CONFIG);
         assertThat(InklessControlPlaneConfigs.WRITE_CONNECTION_STRING_CONFIG)
             .isEqualTo(prefix + PostgresControlPlaneConfig.WRITE_CONFIG_PREFIX + PostgresConnectionConfig.CONNECTION_STRING_CONFIG);
         assertThat(InklessControlPlaneConfigs.RECONFIGURABLE_CONFIGS).isEqualTo(Set.of(
             InklessControlPlaneConfigs.CONNECTION_STRING_CONFIG,
             InklessControlPlaneConfigs.READ_CONNECTION_STRING_CONFIG,
+            InklessControlPlaneConfigs.READ_PRIMARY_CONNECTION_STRING_CONFIG,
             InklessControlPlaneConfigs.WRITE_CONNECTION_STRING_CONFIG));
     }
 }

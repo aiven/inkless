@@ -94,6 +94,41 @@ class InklessControlPlaneConnectionStringValidatorTest {
   }
 
   @Test
+  def testValidInklessControlPlaneReadPrimaryConnectionStringConfig(): Unit = {
+    val config = new util.TreeMap[String, String]()
+    config.put("inkless.control.plane.read.primary.connection.string", "jdbc:postgresql://host/db")
+    validator.validate(new ConfigResource(BROKER, ""), config, emptyMap())
+  }
+
+  @Test
+  def testInklessControlPlaneReadPrimaryConnectionStringRejectsEmbeddedCredentials(): Unit = {
+    val config = new util.TreeMap[String, String]()
+    config.put("inkless.control.plane.read.primary.connection.string", "jdbc:postgresql://host/db?password=secret")
+    assertEquals("inkless.control.plane.read.primary.connection.string must not embed credentials in the " +
+      "connection string; configure username/password separately",
+      assertThrows(classOf[InvalidConfigurationException], () => validator.validate(
+        new ConfigResource(BROKER, ""), config, emptyMap())).getMessage)
+  }
+
+  @Test
+  def testInklessControlPlaneReadPrimaryConnectionStringRejectsPerBrokerOverride(): Unit = {
+    val config = new util.TreeMap[String, String]()
+    config.put("inkless.control.plane.read.primary.connection.string", "jdbc:postgresql://host/db")
+    assertEquals("inkless.control.plane.read.primary.connection.string can only be set on the default " +
+      "broker resource, not on broker 1",
+      assertThrows(classOf[InvalidConfigurationException], () => validator.validate(
+        new ConfigResource(BROKER, "1"), config, emptyMap())).getMessage)
+  }
+
+  @Test
+  def testInklessControlPlaneReadPrimaryPasswordCannotBeSetDynamically(): Unit =
+    assertDirectPropertyRejected("inkless.control.plane.read.primary.password")
+
+  @Test
+  def testInklessControlPlaneReadPrimaryUsernameCannotBeSetDynamically(): Unit =
+    assertDirectPropertyRejected("inkless.control.plane.read.primary.username")
+
+  @Test
   def testUnrelatedPerBrokerConfigIsAllowed(): Unit = {
     val config = new util.TreeMap[String, String]()
     config.put("some.other.config", "value")

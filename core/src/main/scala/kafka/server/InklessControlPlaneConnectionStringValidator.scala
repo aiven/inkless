@@ -69,10 +69,9 @@ object InklessControlPlaneConnectionStringValidator {
   def validate(resourceName: String, newConfigs: util.Map[String, String]): Unit = {
     newConfigs.forEach { (key, value) =>
       if (key.startsWith(JInklessControlPlaneConfigs.PREFIX) && value != null) {
-        // Only the three connection strings may be set at runtime. Every other nested Postgres
-        // property, especially the direct username/password fields, must be configured
-        // statically so it goes through the broker's own startup-time handling instead of a
-        // plaintext ConfigRecord.
+        // Operators can change only the configured connection strings at runtime. Every other nested
+        // Postgres property, especially the direct username and password fields, is static so the
+        // broker handles it at startup instead of writing a plaintext `ConfigRecord`.
         if (!JInklessControlPlaneConfigs.RECONFIGURABLE_CONFIGS.contains(key)) {
           throw new InvalidConfigurationException(
             s"$key cannot be set dynamically; only the Inkless control plane connection strings " +

@@ -659,6 +659,7 @@ object DynamicInklessControlPlaneConfig {
   private val ConnectionStringKeySuffixes: util.Set[String] = util.Set.of(
     PostgresConnectionConfig.CONNECTION_STRING_CONFIG,
     PostgresControlPlaneConfig.READ_CONFIG_PREFIX + PostgresConnectionConfig.CONNECTION_STRING_CONFIG,
+    PostgresControlPlaneConfig.READ_PRIMARY_CONFIG_PREFIX + PostgresConnectionConfig.CONNECTION_STRING_CONFIG,
     PostgresControlPlaneConfig.WRITE_CONFIG_PREFIX + PostgresConnectionConfig.CONNECTION_STRING_CONFIG)
 
   /**
@@ -672,7 +673,7 @@ object DynamicInklessControlPlaneConfig {
    *
    * Sourced from `InklessControlPlaneConfigs.RECONFIGURABLE_CONFIGS` rather than composed from
    * `InklessConfig`'s prefixes: `JDynamicBrokerConfig.ALL_DYNAMIC_CONFIGS` needs the exact same
-   * three names to mark `DescribeConfigs` results as writable and to replay them from a metadata
+   * four names to mark `DescribeConfigs` results as writable and to replay them from a metadata
    * snapshot on restart, and `:server` cannot depend on `:storage:inkless` (where `InklessConfig`
    * lives) to compute them independently.
    */

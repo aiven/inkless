@@ -380,6 +380,14 @@ Under ``inkless.control.plane.``
   * Valid Values: [1,...]
   * Importance: medium
 
+``standby.fallback.max.concurrent``
+  Maximum number of concurrent primary findBatches calls for standby confirmation and fallback. Caps findBatches fail-fast so confirmation and fallback bursts don't starve listOffsets, getCrossTierLogStart, and getProducerState on the read.primary pool. When set to 0, defaults to 90% of read.primary.max.connections (at least 1), reserving the remaining headroom for non-findBatches reads.
+
+  * Type: int
+  * Default: 0
+  * Valid Values: [0,...]
+  * Importance: medium
+
 ``tcp.connect.timeout.ms``
   Maximum time in milliseconds to establish a PostgreSQL TCP connection.
 
@@ -402,6 +410,66 @@ Under ``inkless.control.plane.``
 PostgresControlPlaneConfig - read overrides
 -----------------
 Under ``inkless.control.plane.read.``
+
+``connection.string``
+  PostgreSQL connection string
+
+  * Type: string
+  * Valid Values: non-empty string
+  * Importance: high
+
+``username``
+  Username
+
+  * Type: string
+  * Valid Values: non-empty string
+  * Importance: high
+
+``password``
+  Password
+
+  * Type: password
+  * Default: null
+  * Importance: high
+
+``connection.pool.timeout.ms``
+  Maximum time in milliseconds to wait for a PostgreSQL connection from the pool.
+
+  * Type: long
+  * Default: 5000 (5 seconds)
+  * Valid Values: [250,...]
+  * Importance: medium
+
+``max.connections``
+  Maximum number of connections to the database
+
+  * Type: int
+  * Default: 10
+  * Valid Values: [1,...]
+  * Importance: medium
+
+``socket.timeout.ms``
+  Maximum time in milliseconds to wait for PostgreSQL socket reads.
+
+  * Type: int
+  * Default: 5000 (5 seconds)
+  * Valid Values: [1,...]
+  * Importance: medium
+
+``tcp.connect.timeout.ms``
+  Maximum time in milliseconds to establish a PostgreSQL TCP connection.
+
+  * Type: int
+  * Default: 5000 (5 seconds)
+  * Valid Values: [1,...]
+  * Importance: medium
+
+
+
+-----------------
+PostgresControlPlaneConfig - read primary overrides
+-----------------
+Under ``inkless.control.plane.read.primary.``
 
 ``connection.string``
   PostgreSQL connection string

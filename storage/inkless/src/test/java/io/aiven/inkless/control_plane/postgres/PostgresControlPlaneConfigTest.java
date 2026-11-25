@@ -72,10 +72,12 @@ class PostgresControlPlaneConfigTest {
         assertThat(config.tcpConnectTimeoutMs()).isEqualTo(5000);
         assertThat(config.socketTimeoutMs()).isEqualTo(5000);
         assertThat(config.batchCoalescingEnabled()).isTrue();
+        assertThat(config.standbyFallbackMaxConcurrent()).isEqualTo(0);
 
         // ensure read/write configs are null when not set
         config.initializeReadWriteConfigs();
         assertThat(config.readConfig()).isNull();
+        assertThat(config.readPrimaryConfig()).isNull();
         assertThat(config.writeConfig()).isNull();
     }
 
@@ -199,5 +201,95 @@ class PostgresControlPlaneConfigTest {
         assertThat(config.writeConfig().connectionString()).isEqualTo("jdbc:postgresql://127.0.0.1:5432/inkless-write");
         assertThat(config.writeConfig().username()).isEqualTo("username-w");
         assertThat(config.writeConfig().password()).isEqualTo("password-w");
+        assertThat(config.readPrimaryConfig()).isNull();
+    }
+
+    @Test
+    void readAndReadPrimaryConfigsAreIsolated() {
+        final Map<String, String> configs = new HashMap<>();
+        configs.putAll(
+            Map.of(
+                "connection.string", "jdbc:postgresql://127.0.0.1:5432/inkless",
+                "username", "username",
+                "password", "password"
+            )
+        );
+        configs.putAll(
+            Map.of(
+                "read.connection.string", "jdbc:postgresql://127.0.0.1:5432/inkless-read",
+                "read.username", "username-r",
+                "read.password", "password-r",
+                "read.max.connections", "20"
+            )
+        );
+        configs.putAll(
+            Map.of(
+                "read.primary.connection.string", "jdbc:postgresql://127.0.0.1:5432/inkless-read-primary",
+                "read.primary.username", "username-rp",
+                "read.primary.password", "password-rp",
+                "read.primary.max.connections", "12"
+            )
+        );
+
+        final var config = new PostgresControlPlaneConfig(configs);
+        config.initializeReadWriteConfigs();
+
+        assertThat(config.readConfig()).isNotNull();
+        assertThat(config.readConfig().connectionString()).isEqualTo("jdbc:postgresql://127.0.0.1:5432/inkless-read");
+        assertThat(config.readConfig().username()).isEqualTo("username-r");
+        assertThat(config.readConfig().password()).isEqualTo("password-r");
+        assertThat(config.readConfig().maxConnections()).isEqualTo(20);
+        assertThat(config.readConfig().unused()).isEmpty();
+
+        assertThat(config.readPrimaryConfig()).isNotNull();
+        assertThat(config.readPrimaryConfig().connectionString()).isEqualTo("jdbc:postgresql://127.0.0.1:5432/inkless-read-primary");
+        assertThat(config.readPrimaryConfig().username()).isEqualTo("username-rp");
+        assertThat(config.readPrimaryConfig().password()).isEqualTo("password-rp");
+        assertThat(config.readPrimaryConfig().maxConnections()).isEqualTo(12);
+        assertThat(config.readPrimaryConfig().unused()).isEmpty();
+    }
+
+    @Test
+    void readPrimaryOnlyDoesNotPopulateReadConfig() {
+        final Map<String, String> configs = Map.of(
+            "connection.string", "jdbc:postgresql://127.0.0.1:5432/inkless",
+            "username", "username",
+            "password", "password",
+            "read.primary.connection.string", "jdbc:postgresql://127.0.0.1:5432/inkless-read-primary",
+            "read.primary.username", "username-rp",
+            "read.primary.password", "password-rp"
+        );
+
+        final var config = new PostgresControlPlaneConfig(configs);
+        config.initializeReadWriteConfigs();
+
+        assertThat(config.readConfig()).isNull();
+        assertThat(config.readPrimaryConfig()).isNotNull();
+        assertThat(config.readPrimaryConfig().connectionString()).isEqualTo("jdbc:postgresql://127.0.0.1:5432/inkless-read-primary");
+    }
+
+    @Test
+    void standbyFallbackMaxConcurrentConfig() {
+        final var config = new PostgresControlPlaneConfig(
+            Map.of(
+                "connection.string", "jdbc:postgresql://127.0.0.1:5432/inkless",
+                "username", "username",
+                "standby.fallback.max.concurrent", "8"
+            )
+        );
+        assertThat(config.standbyFallbackMaxConcurrent()).isEqualTo(8);
+
+        assertThrows(ConfigException.class, () -> new PostgresControlPlaneConfig(
+            Map.of(
+                "connection.string", "jdbc:postgresql://127.0.0.1:5432/inkless",
+                "username", "username",
+                "standby.fallback.max.concurrent", "-1"
+            )
+        ));
+
+        assertThat(PostgresControlPlaneConfig.defaultStandbyFallbackMaxConcurrent(30)).isEqualTo(27);
+        assertThat(PostgresControlPlaneConfig.defaultStandbyFallbackMaxConcurrent(10)).isEqualTo(9);
+        assertThat(PostgresControlPlaneConfig.defaultStandbyFallbackMaxConcurrent(2)).isEqualTo(1);
+        assertThat(PostgresControlPlaneConfig.defaultStandbyFallbackMaxConcurrent(1)).isEqualTo(1);
     }
 }
