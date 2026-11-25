@@ -4088,7 +4088,8 @@ class ReplicaManager(val config: KafkaConfig,
 
             case classicToDisklessStartOffset if classicToDisklessStartOffset >= 0L =>
               // The classic prefix is sealed at the switch offset, so any replica with the
-              // complete local classic log can answer epoch lookups for that prefix.
+              // complete local classic log can answer epoch lookups for that prefix. No other
+              // replica answers them, the leader included.
               val hasCompleteLocalClassicPrefix = getPartition(topicPartition) match {
                 case online: HostedPartition.Online[Partition] =>
                   online.partition.log.exists(_.highWatermark >= classicToDisklessStartOffset)
@@ -4113,6 +4114,16 @@ class ReplicaManager(val config: KafkaConfig,
                 requestedEpoch != OffsetsForLeaderEpochResponse.UNDEFINED_EPOCH
               if (localError != Errors.NONE) {
                 () => localResult
+              } else if (isClassicEpoch && !hasCompleteLocalClassicPrefix) {
+                // In phase 2 a leader can start with a log that ends below the seal, such as an empty
+                // log on a reassigned replica, and consolidation rebuilds it from remote storage. Until
+                // then its leader epoch cache doesn't cover the classic prefix, and `makeLeader` maps
+                // the current leader epoch to its log end offset. A classic epoch would get an end
+                // offset below the seal, and a consumer at or below the seal would truncate. The
+                // consumer retries this error, as it does on a follower below the seal.
+                () => new EpochEndOffset()
+                  .setPartition(topicPartition.partition)
+                  .setErrorCode(Errors.NOT_LEADER_OR_FOLLOWER.code)
               } else if (!isDisklessEpoch &&
                   localResult.endOffset != OffsetsForLeaderEpochResponse.UNDEFINED_EPOCH_OFFSET &&
                   localResult.endOffset <= classicToDisklessStartOffset) {
