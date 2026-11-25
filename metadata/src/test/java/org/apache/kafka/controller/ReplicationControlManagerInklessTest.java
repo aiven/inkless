@@ -3959,6 +3959,194 @@ public class ReplicationControlManagerInklessTest {
                 ctx.replicationControl.getPartition(topicId, 0).classicToDisklessStartOffset);
         }
 
+        // Topic type flags padded with whitespace
+
+        /**
+         * Rejects disabling diskless the way {@code LogConfig} does. {@code ConfigDef} trims the requested
+         * value before it parses it, and {@code LogConfig} reads the stored value as is.
+         */
+        private static final class DisableDisklessValidator implements ConfigurationValidator {
+            @Override
+            public void validate(ConfigResource resource) { }
+
+            @Override
+            public void validate(ConfigResource resource, Map<String, String> newConfigs, Map<String, String> existingConfigs) {
+                boolean wasDiskless = Boolean.parseBoolean(existingConfigs.getOrDefault(DISKLESS_ENABLE_CONFIG, "false"));
+                boolean isDiskless = Boolean.parseBoolean(newConfigs.getOrDefault(DISKLESS_ENABLE_CONFIG, "false").trim());
+                if (wasDiskless && !isDiskless) {
+                    throw new ConfigException("It is invalid to disable diskless.");
+                }
+            }
+        }
+
+        private record AlterOutcome(ApiError error, List<ApiMessageAndVersion> batch) {
+            long switchPendingMarkers() {
+                return batch.stream()
+                    .filter(m -> m.message() instanceof PartitionChangeRecord)
+                    .map(m -> (PartitionChangeRecord) m.message())
+                    .filter(r -> InitDisklessLogFields.decodeClassicToDisklessStartOffset(r.unknownTaggedFields())
+                        == PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING)
+                    .count();
+            }
+        }
+
+        // Drives and commits the same three steps as QuorumController.incrementalAlterConfigs.
+        private AlterOutcome incrementalAlterAndCommit(ReplicationControlTestContext ctx, String topic, String key, String value) {
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, topic);
+            Map<ConfigResource, Map<String, Entry<AlterConfigOp.OpType, String>>> requested = Map.of(resource,
+                Map.of(key, new AbstractMap.SimpleImmutableEntry<>(AlterConfigOp.OpType.SET, value)));
+            Map<ConfigResource, Map<String, Entry<AlterConfigOp.OpType, String>>> effective =
+                ctx.replicationControl.maybeAddRemoteStorageEnableForSwitch(requested);
+            ControllerResult<Map<ConfigResource, ApiError>> configResult =
+                ctx.configurationControl.incrementalAlterConfigs(effective, false,
+                    r -> ctx.replicationControl.validateClassicToDisklessSwitchPrecondition(r, effective));
+            List<ApiMessageAndVersion> batch = new ArrayList<>(configResult.records());
+            batch.addAll(ctx.replicationControl.markClassicToDisklessSwitchStarted(effective, configResult.response()));
+            batch.addAll(ctx.replicationControl.markConsolidationStarted(effective, configResult.response()));
+            ctx.replay(batch);
+            return new AlterOutcome(configResult.response().get(resource), batch);
+        }
+
+        // Drives and commits the same three steps as QuorumController.legacyAlterConfigs.
+        private AlterOutcome legacyAlterAndCommit(ReplicationControlTestContext ctx, String topic, Map<String, String> configs) {
+            ConfigResource resource = new ConfigResource(ConfigResource.Type.TOPIC, topic);
+            Map<ConfigResource, Map<String, String>> requested = Map.of(resource, configs);
+            Map<ConfigResource, Map<String, String>> effective =
+                ctx.replicationControl.maybeAddRemoteStorageEnableForLegacyAlterConfigs(requested);
+            ControllerResult<Map<ConfigResource, ApiError>> configResult =
+                ctx.configurationControl.legacyAlterConfigs(effective, false,
+                    r -> ctx.replicationControl.validateClassicToDisklessSwitchPreconditionForLegacy(r, effective));
+            List<ApiMessageAndVersion> batch = new ArrayList<>(configResult.records());
+            batch.addAll(ctx.replicationControl.markClassicToDisklessSwitchStartedForLegacyAlterConfigs(
+                effective, configResult.response()));
+            batch.addAll(ctx.replicationControl.markConsolidationStartedForLegacyAlterConfigs(
+                effective, configResult.response()));
+            ctx.replay(batch);
+            return new AlterOutcome(configResult.response().get(resource), batch);
+        }
+
+        private String storedTopicConfig(ReplicationControlTestContext ctx, String topic, String key) {
+            return ctx.configurationControl.currentTopicConfig(topic).get(key);
+        }
+
+        @Test
+        void testPaddedThenCanonicalDisklessEnableOnBornDisklessTopicStartsNoSwitch() {
+            ReplicationControlTestContext ctx = consolidationSwitchCtxBuilder().build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            Uuid topicId = ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}},
+                Map.of(DISKLESS_ENABLE_CONFIG, "true"), NONE.code()).topicId();
+
+            AlterOutcome padded = incrementalAlterAndCommit(ctx, "foo", DISKLESS_ENABLE_CONFIG, " true");
+            AlterOutcome canonical = incrementalAlterAndCommit(ctx, "foo", DISKLESS_ENABLE_CONFIG, "true");
+
+            assertEquals(0, padded.switchPendingMarkers() + canonical.switchPendingMarkers());
+            assertEquals(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET,
+                ctx.replicationControl.getPartition(topicId, 0).classicToDisklessStartOffset);
+            assertEquals(Errors.INVALID_CONFIG, padded.error().error());
+            assertEquals(ApiError.NONE, canonical.error());
+            assertEquals("true", storedTopicConfig(ctx, "foo", DISKLESS_ENABLE_CONFIG));
+        }
+
+        @Test
+        void testPaddedThenFalseDisklessEnableKeepsDisklessEnabled() {
+            ReplicationControlTestContext ctx = consolidationSwitchCtxBuilder()
+                .setConfigurationValidator(new DisableDisklessValidator())
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}},
+                Map.of(DISKLESS_ENABLE_CONFIG, "true"), NONE.code());
+
+            AlterOutcome padded = incrementalAlterAndCommit(ctx, "foo", DISKLESS_ENABLE_CONFIG, " true");
+            AlterOutcome disable = incrementalAlterAndCommit(ctx, "foo", DISKLESS_ENABLE_CONFIG, "false");
+
+            assertEquals("true", storedTopicConfig(ctx, "foo", DISKLESS_ENABLE_CONFIG));
+            assertEquals(Errors.INVALID_CONFIG, padded.error().error());
+            assertEquals(Errors.INVALID_CONFIG, disable.error().error());
+        }
+
+        @Test
+        void testPaddedDisklessEnableOnClassicTopicIsRejectedWhenSwitchIsAllowed() {
+            ReplicationControlTestContext ctx = consolidationSwitchCtxBuilder().build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            Uuid topicId = ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}}).topicId();
+
+            AlterOutcome padded = incrementalAlterAndCommit(ctx, "foo", DISKLESS_ENABLE_CONFIG, " true");
+
+            assertEquals(Errors.INVALID_CONFIG, padded.error().error());
+            assertEquals(List.of(), padded.batch());
+            assertFalse(ctx.configurationControl.currentTopicConfig("foo").containsKey(DISKLESS_ENABLE_CONFIG));
+            assertEquals(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET,
+                ctx.replicationControl.getPartition(topicId, 0).classicToDisklessStartOffset);
+        }
+
+        @Test
+        void testLegacyPaddedThenCanonicalDisklessEnableOnBornDisklessTopicStartsNoSwitch() {
+            ReplicationControlTestContext ctx = consolidationSwitchCtxBuilder().build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            Uuid topicId = ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}},
+                Map.of(DISKLESS_ENABLE_CONFIG, "true"), NONE.code()).topicId();
+
+            AlterOutcome padded = legacyAlterAndCommit(ctx, "foo",
+                Map.of(DISKLESS_ENABLE_CONFIG, " true", REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true"));
+            AlterOutcome canonical = legacyAlterAndCommit(ctx, "foo",
+                Map.of(DISKLESS_ENABLE_CONFIG, "true", REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true"));
+
+            assertEquals(0, padded.switchPendingMarkers() + canonical.switchPendingMarkers());
+            assertEquals(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET,
+                ctx.replicationControl.getPartition(topicId, 0).classicToDisklessStartOffset);
+            assertEquals(Errors.INVALID_CONFIG, padded.error().error());
+            assertEquals(ApiError.NONE, canonical.error());
+            assertEquals("true", storedTopicConfig(ctx, "foo", DISKLESS_ENABLE_CONFIG));
+        }
+
+        @Test
+        void testLegacyPaddedThenFalseDisklessEnableKeepsDisklessEnabled() {
+            ReplicationControlTestContext ctx = consolidationSwitchCtxBuilder()
+                .setConfigurationValidator(new DisableDisklessValidator())
+                .build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}},
+                Map.of(DISKLESS_ENABLE_CONFIG, "true"), NONE.code());
+
+            AlterOutcome padded = legacyAlterAndCommit(ctx, "foo",
+                Map.of(DISKLESS_ENABLE_CONFIG, " true", REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true"));
+            AlterOutcome disable = legacyAlterAndCommit(ctx, "foo",
+                Map.of(DISKLESS_ENABLE_CONFIG, "false", REMOTE_LOG_STORAGE_ENABLE_CONFIG, "true"));
+
+            assertEquals("true", storedTopicConfig(ctx, "foo", DISKLESS_ENABLE_CONFIG));
+            assertEquals(Errors.INVALID_CONFIG, padded.error().error());
+            assertEquals(Errors.INVALID_CONFIG, disable.error().error());
+        }
+
+        @Test
+        void testPaddedRemoteStorageEnableOnDisklessTopicIsRejected() {
+            ReplicationControlTestContext ctx = consolidationSwitchCtxBuilder().build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+            seedDisklessWithoutRemote(ctx, "foo", new int[][] {new int[] {0, 1, 2}});
+
+            AlterOutcome padded = incrementalAlterAndCommit(ctx, "foo", REMOTE_LOG_STORAGE_ENABLE_CONFIG, " true");
+
+            assertEquals(Errors.INVALID_CONFIG, padded.error().error());
+            assertEquals(List.of(), padded.batch());
+            assertFalse(ctx.configurationControl.currentTopicConfig("foo").containsKey(REMOTE_LOG_STORAGE_ENABLE_CONFIG));
+        }
+
+        @Test
+        void testCreateTopicWithPaddedDisklessEnableIsRejected() {
+            ReplicationControlTestContext ctx = consolidationSwitchCtxBuilder().build();
+            ctx.registerBrokers(0, 1, 2);
+            ctx.unfenceBrokers(0, 1, 2);
+
+            ctx.createTestTopic("foo", new int[][] {new int[] {0, 1, 2}},
+                Map.of(DISKLESS_ENABLE_CONFIG, " true"), Errors.INVALID_CONFIG.code());
+        }
+
         private Map<ConfigResource, Map<String, Entry<AlterConfigOp.OpType, String>>> setRemoteTrue(String topic) {
             return Map.of(new ConfigResource(ConfigResource.Type.TOPIC, topic),
                 Map.of(REMOTE_LOG_STORAGE_ENABLE_CONFIG,

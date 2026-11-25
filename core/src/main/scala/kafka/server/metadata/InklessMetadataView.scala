@@ -213,8 +213,9 @@ class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConf
     topicConfigs.computeIfPresent(topicName, (_, _) => LogConfig.fromProps(getDefaultConfig, topicOverrides))
   }
 
-  // ConfigDef trims before it validates, so an alter can store a value such as " true".
-  // The topic type flags throw on it, and LogConfig reads it as true.
+  // ConfigDef trims before it validates, so a controller that doesn't reject a padded value for
+  // these keys can store one, such as `" true"`. The topic type flags throw on it, and LogConfig
+  // reads it as true.
   private def warnIfNotBoolean(topicName: String, topicOverrides: Properties, key: String): Unit = {
     val value = topicOverrides.getProperty(key)
     if (value != null && !value.equalsIgnoreCase("true") && !value.equalsIgnoreCase("false"))

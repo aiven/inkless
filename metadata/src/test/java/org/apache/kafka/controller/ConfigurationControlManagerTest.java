@@ -677,6 +677,46 @@ public class ConfigurationControlManagerTest {
         assertEquals(List.of(), second.records());
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {TopicConfig.DISKLESS_ENABLE_CONFIG, TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG})
+    public void testRejectPaddedTopicTypeFlag(String key) {
+        ConfigurationControlManager manager = new ConfigurationControlManager.Builder().
+            setFeatureControl(createFeatureControlManager()).
+            setKafkaConfigSchema(SCHEMA).
+            build();
+        for (String value : List.of(" true", "true ", "\tfalse", "")) {
+            ControllerResult<ApiError> incremental =
+                manager.incrementalAlterConfig(MYTOPIC, toMap(entry(key, entry(SET, value))), false);
+            assertEquals(Errors.INVALID_CONFIG, incremental.response().error(), "value '" + value + "'");
+            assertEquals(List.of(), incremental.records());
+
+            ControllerResult<ApiError> created =
+                manager.incrementalAlterConfig(MYTOPIC, toMap(entry(key, entry(SET, value))), true);
+            assertEquals(Errors.INVALID_CONFIG, created.response().error(), "value '" + value + "'");
+            assertEquals(List.of(), created.records());
+
+            ControllerResult<Map<ConfigResource, ApiError>> legacy =
+                manager.legacyAlterConfigs(toMap(entry(MYTOPIC, toMap(entry(key, value)))), false);
+            assertEquals(Errors.INVALID_CONFIG, legacy.response().get(MYTOPIC).error(), "value '" + value + "'");
+            assertEquals(List.of(), legacy.records());
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {TopicConfig.DISKLESS_ENABLE_CONFIG, TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG})
+    public void testAcceptTopicTypeFlagInAnyCase(String key) {
+        ConfigurationControlManager manager = new ConfigurationControlManager.Builder().
+            setFeatureControl(createFeatureControlManager()).
+            setKafkaConfigSchema(SCHEMA).
+            build();
+        for (String value : List.of("TRUE", "False")) {
+            ControllerResult<ApiError> result =
+                manager.incrementalAlterConfig(MYTOPIC, toMap(entry(key, entry(SET, value))), true);
+            assertEquals(ApiError.NONE, result.response(), "value '" + value + "'");
+            assertEquals(1, result.records().size());
+        }
+    }
+
     private FeatureControlManager createFeatureControlManager() {
         FeatureControlManager featureControlManager = new FeatureControlManager.Builder().build();
         featureControlManager.replay(new FeatureLevelRecord().
