@@ -191,6 +191,16 @@ class InklessMetadataView(val metadataCache: KRaftMetadataCache, val defaultConf
       .map(_.lastClassicLeaderEpoch)
       .getOrElse(PartitionRegistration.NO_LAST_CLASSIC_LEADER_EPOCH)
 
+  /**
+   * Returns the diskless leader epoch of the seal commit, or
+   * [[PartitionRegistration.NO_DISKLESS_LEADER_EPOCH]] when the partition has none. Unlike
+   * [[getDisklessLeaderEpoch]], it doesn't change when phase 2 starts.
+   */
+  def getInitialDisklessLeaderEpoch(topicPartition: TopicPartition): Int =
+    partitionRegistration(topicPartition)
+      .map(_.initialDisklessLeaderEpoch)
+      .getOrElse(PartitionRegistration.NO_DISKLESS_LEADER_EPOCH)
+
   override def getTopicConfig(topicName: String): LogConfig = topicConfigs.computeIfAbsent(topicName, t => {
     val props = metadataCache.topicConfig(t)
     if (props.isEmpty) new LogConfig(getDefaultConfig)

@@ -318,6 +318,72 @@ public class InklessTopicTypeSwitcherClusterTest {
         consumeAndAssertTopicCounts(baseConsumerConfigs(), topics, producedCounts);
     }
 
+    // The consumer tails the log. Its fetches wait at the log end, and diskless storage answers
+    // them. A second consumer in the same group validates the committed position with
+    // `OffsetsForLeaderEpoch` before its first fetch, and resets if the answer is below the position.
+    @Test
+    public void testConsumerResumesFromCommittedOffsetPastSeal() throws Exception {
+        final String topic = "resume-past-seal-" + UUID.randomUUID().toString().substring(0, 8);
+        final TopicPartition tp = new TopicPartition(topic, 0);
+        final int classicRecords = 20;
+        final int disklessRecords = 30;
+        final int recordsAfterCommit = 5;
+
+        final Map<String, Object> consumerConfigs = baseConsumerConfigs();
+        consumerConfigs.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
+
+        try (Admin admin = AdminClient.create(baseClientConfigs());
+             Producer<byte[], byte[]> producer = new KafkaProducer<>(producerConfigs())) {
+            admin.createTopics(List.of(new NewTopic(topic, 1, (short) 3)
+                .configs(Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "false")))).all().get(30, TimeUnit.SECONDS);
+
+            for (int i = 0; i < classicRecords; i++) {
+                assertTrue(sendWithRetry(producer, new ProducerRecord<>(topic, 0, null, ("classic-" + i).getBytes(StandardCharsets.UTF_8))));
+            }
+
+            alterTopicConfigWithIncrementalAlterConfigs(admin, topic, Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true"));
+            TopicMetadataProbe.awaitValue(admin, topic, TopicConfig.DISKLESS_ENABLE_CONFIG, "true");
+
+            final long committedOffset;
+            try (Consumer<byte[], byte[]> consumer = new KafkaConsumer<>(consumerConfigs)) {
+                consumer.assign(List.of(tp));
+                final long deadline = System.currentTimeMillis() + Duration.ofSeconds(120).toMillis();
+                while (consumer.position(tp) < classicRecords && System.currentTimeMillis() < deadline) {
+                    consumer.poll(Duration.ofMillis(200));
+                }
+                for (int i = 0; i < disklessRecords; i++) {
+                    producer.send(new ProducerRecord<>(topic, 0, null, ("diskless-" + i).getBytes(StandardCharsets.UTF_8)));
+                    while (consumer.position(tp) < classicRecords + i + 1 && System.currentTimeMillis() < deadline) {
+                        consumer.poll(Duration.ofMillis(200));
+                    }
+                }
+                consumer.commitSync();
+                final var committed = consumer.committed(Set.of(tp)).get(tp);
+                log.warn("[stage=committed] committed={}", committed);
+                committedOffset = committed.offset();
+                assertTrue(committed.leaderEpoch().orElse(-1) > 0,
+                    "A position past the seal carries a diskless leader epoch, but the commit has " + committed.leaderEpoch());
+            }
+            assertEquals(classicRecords + disklessRecords, committedOffset);
+
+            for (int i = 0; i < recordsAfterCommit; i++) {
+                assertTrue(sendWithRetry(producer, new ProducerRecord<>(topic, 0, null, ("after-commit-" + i).getBytes(StandardCharsets.UTF_8))));
+            }
+
+            try (Consumer<byte[], byte[]> consumer = new KafkaConsumer<>(consumerConfigs)) {
+                consumer.assign(List.of(tp));
+                final long deadline = System.currentTimeMillis() + Duration.ofSeconds(90).toMillis();
+                ConsumerRecords<byte[], byte[]> records = ConsumerRecords.empty();
+                while (records.isEmpty() && System.currentTimeMillis() < deadline) {
+                    records = consumer.poll(Duration.ofSeconds(1));
+                }
+                assertTrue(!records.isEmpty(), "The resumed consumer read no records");
+                assertEquals(committedOffset, records.iterator().next().offset(),
+                    "The resumed consumer didn't start at its committed offset");
+            }
+        }
+    }
+
     private Map<String, Object> baseClientConfigs() {
         final Map<String, Object> configs = new HashMap<>();
         configs.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
