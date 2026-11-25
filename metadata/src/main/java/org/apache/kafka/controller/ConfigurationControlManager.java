@@ -498,7 +498,10 @@ public class ConfigurationControlManager {
 
     // ConfigDef trims a boolean before it parses it, but the controller and the brokers read the
     // stored topic type flags as is: " true" passes validation as true, the controller reads it as
-    // false, and the brokers fail on it.
+    // false, and the brokers fail on it. Upstream has the same mismatch for
+    // unclean.leader.election.enable, where the controller only skips an unclean election. From
+    // these two keys the controller writes the switch and consolidation markers of the partitions,
+    // so it rejects the value.
     private static boolean isNonCanonicalTopicTypeFlag(ConfigRecord configRecord) {
         String name = configRecord.name();
         String value = configRecord.value();
