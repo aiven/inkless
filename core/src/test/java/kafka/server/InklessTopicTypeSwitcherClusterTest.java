@@ -905,10 +905,24 @@ public class InklessTopicTypeSwitcherClusterTest {
             try (var s3Client = s3Container.getS3Client()) {
                 s3Client.createBucket(request -> request.bucket(tieredStorageBucket));
             }
-            waitForClassicPrefixInRemoteStorage(admin, topic);
+            // The admin client reads the phase from one broker. The leader rejects the request until its own
+            // metadata shows phase 2, and the client doesn't retry INVALID_REQUEST.
+            waitForPhaseTwoOnEveryBroker(tp);
             assertEquals(deleteBefore, admin.deleteRecords(Map.of(tp, RecordsToDelete.beforeOffset(deleteBefore)))
                 .lowWatermarks().get(tp).get(30, TimeUnit.SECONDS).lowWatermark());
         }
+    }
+
+    private void waitForPhaseTwoOnEveryBroker(final TopicPartition tp) throws Exception {
+        final long deadline = System.currentTimeMillis() + Duration.ofSeconds(90).toMillis();
+        while (System.currentTimeMillis() < deadline) {
+            if (cluster.brokers().values().stream().allMatch(broker ->
+                    broker.replicaManager().inklessMetadataView().isClassicPrefixInRemoteStorage(tp))) {
+                return;
+            }
+            Thread.sleep(100);
+        }
+        throw new AssertionError("Not every broker applied phase 2 of " + tp + " within timeout");
     }
 
     private long firstOffsetReadFromTheStart(final TopicPartition tp, final String zone) {
