@@ -7,6 +7,8 @@ on:
     branches:
       - 'main'
       - 'inkless-4.*'
+      # Release-prep branches (inkless-4.x-0.y) get CI from their pull request.
+      - '!inkless-4.*-*'
   pull_request:
     types: [ opened, synchronize, ready_for_review, reopened ]
 

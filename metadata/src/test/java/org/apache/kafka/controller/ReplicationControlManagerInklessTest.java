@@ -4326,6 +4326,7 @@ public class ReplicationControlManagerInklessTest {
             assertEquals(42L, updatedPartition.classicToDisklessStartOffset);
             assertTrue(updatedPartition.disklessProducerStates.isEmpty());
             assertEquals(partition.leaderEpoch, updatedPartition.disklessLeaderEpoch);
+            assertEquals(partition.leaderEpoch, updatedPartition.initialDisklessLeaderEpoch);
         }
 
         @Test
@@ -6151,6 +6152,7 @@ public class ReplicationControlManagerInklessTest {
                 .setPartitionId(partitionId);
             sealRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicToDisklessStartOffset(seal));
             sealRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeDisklessLeaderEpoch(partition.leaderEpoch));
+            sealRecord.unknownTaggedFields().add(InitDisklessLogFields.encodeInitialDisklessLeaderEpoch(partition.leaderEpoch));
             ctx.replay(List.of(new ApiMessageAndVersion(sealRecord, (short) 0)));
         }
 
@@ -6234,6 +6236,8 @@ public class ReplicationControlManagerInklessTest {
             assertEquals(before.leader, after.leader);
             assertEquals(before.leaderEpoch + 1, after.leaderEpoch);
             assertEquals(after.leaderEpoch, after.disklessLeaderEpoch);
+            // Phase 2 keeps the diskless leader epoch of the seal commit.
+            assertEquals(before.leaderEpoch, after.initialDisklessLeaderEpoch);
             assertEquals(LAST_CLASSIC_LEADER_EPOCH, after.lastClassicLeaderEpoch);
             assertIsrAndElrDisjoint(after);
         }

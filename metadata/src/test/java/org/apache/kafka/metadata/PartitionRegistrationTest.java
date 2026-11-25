@@ -852,4 +852,67 @@ public class PartitionRegistrationTest {
         assertEquals("lastClassicLeaderEpoch: -1 -> 3", after.diff(before));
         assertTrue(after.toString().contains("lastClassicLeaderEpoch=3"));
     }
+
+    @Test
+    public void testInitialDisklessLeaderEpochRoundTrip() {
+        PartitionRegistration original = classicPrefixBuilder().setInitialDisklessLeaderEpoch(3).build();
+
+        ApiMessageAndVersion record = original.toRecord(Uuid.randomUuid(), 0,
+            new ImageWriterOptions.Builder(MetadataVersion.latestTesting()).build());
+        PartitionRecord partitionRecord = (PartitionRecord) record.message();
+        PartitionRegistration restored = new PartitionRegistration(partitionRecord);
+
+        assertEquals(3, InitDisklessLogFields.decodeInitialDisklessLeaderEpoch(partitionRecord.unknownTaggedFields()));
+        assertEquals(3, restored.initialDisklessLeaderEpoch);
+        assertEquals(5, restored.disklessLeaderEpoch);
+        assertEquals(original, restored);
+        assertEquals(PartitionRegistration.NO_DISKLESS_LEADER_EPOCH, classicPrefixBuilder().build().initialDisklessLeaderEpoch);
+    }
+
+    @Test
+    public void testMergeKeepsInitialDisklessLeaderEpochUntilTheSwitchIsUndone() {
+        PartitionRegistration pending = classicPrefixBuilder().
+            setClassicToDisklessStartOffset(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING).
+            setDisklessProducerStates(List.of()).
+            setDisklessLeaderEpoch(PartitionRegistration.NO_DISKLESS_LEADER_EPOCH).build();
+
+        PartitionChangeRecord sealCommit = new PartitionChangeRecord();
+        sealCommit.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicToDisklessStartOffset(100L));
+        sealCommit.unknownTaggedFields().add(InitDisklessLogFields.encodeDisklessLeaderEpoch(5));
+        sealCommit.unknownTaggedFields().add(InitDisklessLogFields.encodeInitialDisklessLeaderEpoch(5));
+        PartitionRegistration sealed = pending.merge(sealCommit);
+        assertEquals(5, sealed.disklessLeaderEpoch);
+        assertEquals(5, sealed.initialDisklessLeaderEpoch);
+
+        // A lowered seal and the record that starts phase 2 set the diskless leader epoch again.
+        PartitionChangeRecord loweredSeal = new PartitionChangeRecord();
+        loweredSeal.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicToDisklessStartOffset(90L));
+        loweredSeal.unknownTaggedFields().add(InitDisklessLogFields.encodeDisklessLeaderEpoch(6));
+        PartitionRegistration lowered = sealed.merge(loweredSeal);
+        assertEquals(6, lowered.disklessLeaderEpoch);
+        assertEquals(5, lowered.initialDisklessLeaderEpoch);
+
+        PartitionChangeRecord phaseTwo = new PartitionChangeRecord().setLeader(1);
+        phaseTwo.unknownTaggedFields().add(InitDisklessLogFields.encodeDisklessLeaderEpoch(7));
+        phaseTwo.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicPrefixInRemoteStorage());
+        PartitionRegistration inPhaseTwo = lowered.merge(phaseTwo);
+        assertEquals(7, inPhaseTwo.disklessLeaderEpoch);
+        assertEquals(5, inPhaseTwo.initialDisklessLeaderEpoch);
+
+        PartitionChangeRecord undo = new PartitionChangeRecord();
+        undo.unknownTaggedFields().add(InitDisklessLogFields.encodeClassicToDisklessStartOffset(
+            PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET));
+        assertEquals(PartitionRegistration.NO_DISKLESS_LEADER_EPOCH, inPhaseTwo.merge(undo).initialDisklessLeaderEpoch);
+    }
+
+    @Test
+    public void testInitialDisklessLeaderEpochInEqualsDiffAndToString() {
+        PartitionRegistration before = classicPrefixBuilder().build();
+        PartitionRegistration after = classicPrefixBuilder().setInitialDisklessLeaderEpoch(3).build();
+
+        assertNotEquals(before, after);
+        assertEquals(after, classicPrefixBuilder().setInitialDisklessLeaderEpoch(3).build());
+        assertEquals("initialDisklessLeaderEpoch: -1 -> 3", after.diff(before));
+        assertTrue(after.toString().contains("initialDisklessLeaderEpoch=3"));
+    }
 }

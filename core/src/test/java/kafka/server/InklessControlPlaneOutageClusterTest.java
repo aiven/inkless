@@ -485,6 +485,7 @@ public class InklessControlPlaneOutageClusterTest {
     }
 
     private static Uuid topicId(final Admin admin, final String topicName) throws Exception {
+        TopicMetadataProbe.awaitVisible(admin, topicName);
         return admin.describeTopics(List.of(topicName)).allTopicNames().get(30, TimeUnit.SECONDS)
             .get(topicName).topicId();
     }
