@@ -1011,10 +1011,10 @@ class InklessClassicToDisklessSwitchTest(Test):
     def _get_leader_node(self, topic=None, partition=0, timeout_sec=60):
         """Returns the broker that leads ``partition`` in the KRaft metadata.
 
-        For a diskless topic, ``InklessTopicMetadataTransformer`` rewrites the
-        leader that clients see to a replica it picks by hash, so
-        ``kafka-topics.sh --describe`` can show a follower. Only the leader
-        reports a nonzero ``ReplicasCount`` gauge for the partition.
+        For a diskless topic, ``InklessTopicMetadataTransformer`` can rewrite the
+        leader that clients see (such as for untiered RF=1 topics or AZ-aware
+        clients), so ``kafka-topics.sh --describe`` can show a follower. Only the
+        leader reports a nonzero ``ReplicasCount`` gauge for the partition.
         """
         if topic is None:
             topic = self.topic

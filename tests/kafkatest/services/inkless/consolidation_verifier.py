@@ -778,7 +778,7 @@ class ConsolidationVerifier(object):
                                              timeout_ms=timeout_ms)
         return first
 
-    def delete_records(self, topic, before_offset, partition=0):
+    def delete_records(self, topic, before_offset, partition=0, client_id=None):
         """Run ``kafka-delete-records.sh`` to delete every record before
         ``before_offset`` on ``topic``-``partition`` and return the resulting
         ``low_watermark`` (the new log start) for that partition.
@@ -789,6 +789,8 @@ class ConsolidationVerifier(object):
         drives ``RemoteLogManager`` deletion of the remote segments below the new start)
         and, past the local log end, the diskless WAL in the control plane. The offset
         JSON file is written on the broker node and passed with ``--offset-json-file``.
+        Passing ``client_id`` writes a ``--command-config`` file so tests can pin an
+        AZ-aware client (such as ``diskless_az=<rack>``) to a follower.
 
         ``DeleteRecordsCommand`` prints the per-partition outcome on stdout as either
         ``partition: <tp>\\terror: <msg>`` or ``partition: <tp>\\tlow_watermark: <off>``.
@@ -802,10 +804,16 @@ class ConsolidationVerifier(object):
                        % (topic, partition, before_offset))
         json_path = "/tmp/delete-records-%s-%d.json" % (topic, partition)
         node.account.create_file(json_path, offset_json)
-        cmd = "%s --bootstrap-server %s --offset-json-file %s" % (
+        config_flag = ""
+        if client_id:
+            config_path = "/tmp/delete-records-admin-%s-%d.properties" % (topic, partition)
+            node.account.create_file(config_path, "client.id=%s\n" % client_id)
+            config_flag = " --command-config %s" % config_path
+        cmd = "%s --bootstrap-server %s --offset-json-file %s%s" % (
             self.kafka.path.script("kafka-delete-records.sh", node),
             self.kafka.bootstrap_servers(),
             json_path,
+            config_flag,
         )
         self.logger.info("Deleting records before offset %d on %s-%d: %s"
                          % (before_offset, topic, partition, cmd))
@@ -965,7 +973,8 @@ class ConsolidationVerifier(object):
         return records
 
     def read_values_with_old_client(self, topic, from_offset, max_messages, partition=0,
-                                    timeout_ms=120000, bootstrap_server=None):
+                                    timeout_ms=120000, bootstrap_server=None,
+                                    consumer_properties=None):
         """Run the pre-KIP-392 console consumer (Kafka 2.2, Fetch < v11) so the read carries no
         ``clientMetadata`` -- the ``isOlderConsumer`` fetch path the follower
         cross-tier-earliest read guard protects. Returns the list of record *values* read, in
@@ -985,13 +994,18 @@ class ConsolidationVerifier(object):
         rather than jump to the log end, so the test can tell "reset to the delete boundary" apart
         from "served a logically-deleted record".
 
-        ``bootstrap_server`` pins the initial metadata lookup to one broker; the metadata
-        transformer still redirects the fetch to its hash-selected replica regardless."""
+        ``bootstrap_server`` pins the initial metadata lookup to one broker; ``consumer_properties``
+        adds extra ``--consumer-property`` settings (such as ``client.id`` with ``diskless_az``
+        to pin an AZ-aware consumer to a follower)."""
         node = self.kafka.nodes[0]
         script = self.kafka.path.script("kafka-console-consumer.sh", self.OLD_CONSUMER_VERSION)
+        merged_props = {"auto.offset.reset": "earliest"}
+        if consumer_properties:
+            merged_props.update(consumer_properties)
+        props = "".join(" --consumer-property %s=%s" % (k, v)
+                        for k, v in merged_props.items())
         cmd = ("%s --bootstrap-server %s --topic %s --partition %d --offset %d "
-               "--max-messages %d --timeout-ms %d "
-               "--consumer-property auto.offset.reset=earliest "
+               "--max-messages %d --timeout-ms %d%s "
                "--property print.key=false --property print.value=true" % (
                    script,
                    bootstrap_server or self.kafka.bootstrap_servers(),
@@ -1000,6 +1014,7 @@ class ConsolidationVerifier(object):
                    from_offset,
                    max_messages,
                    timeout_ms,
+                   props,
                ))
         values = []
         try:

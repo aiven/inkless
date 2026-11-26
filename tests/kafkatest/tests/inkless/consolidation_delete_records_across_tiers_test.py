@@ -37,10 +37,9 @@ class DeleteRecordsAcrossTiersTest(Test):
     consolidating partition used to be served from the broker-local classic
     ``UnifiedLog.logStartOffset`` while it was still below the seal. With managed
     replicas enabled (``diskless.managed.rf.enable=true``, which consolidation
-    requires) ``InklessTopicMetadataTransformer`` advertises a *hash-selected replica*
-    as the partition leader for locality-aware reads -- deterministically the same
-    replica for every client, and generally a *follower*, not the real KRaft leader
-    that holds the writable log. That follower's local classic log start is frozen at
+    requires) ``InklessTopicMetadataTransformer`` advertises a same-AZ replica
+    as the partition leader for AZ-aware clients (often a *follower*, not the
+    real KRaft leader that holds the writable log). That follower's local classic log start remains frozen at
     the switch, so a ``DeleteRecords`` (which advances only the real leader's log start
     and the control plane) left the client-visible earliest stuck at ``0`` forever. The
     fix routes ``ListOffsets(EARLIEST)`` for consolidating topics to the control plane
@@ -131,6 +130,11 @@ class DeleteRecordsAcrossTiersTest(Test):
                 ["remote.log.manager.task.interval.ms", "5000"],
                 ["log.retention.check.interval.ms", "5000"],
             ],
+            # Give each broker a distinct rack so AZ-aware clients can pin a specific follower.
+            per_node_server_prop_overrides={
+                i: [["broker.rack", "az-%d" % i]]
+                for i in range(1, self.num_brokers + 1)
+            },
             # Switch-completion gauges live on the broker; the controller never
             # exposes them, so scraping it would hang start_jmx_tool's --wait.
             jmx_object_names=list(ConsolidationVerifier.SWITCH_JMX_OBJECT_NAMES),
@@ -148,6 +152,14 @@ class DeleteRecordsAcrossTiersTest(Test):
             ctrl.jmx_object_names = None
             ctrl.jmx_attributes = []
         self.kafka.start()
+
+    def _follower_rack(self, topic=None, partition=0):
+        """Return the ``broker.rack`` of a follower for ``topic``-``partition``."""
+        topic = topic or self.TOPIC
+        leader = self.kafka.leader(topic, partition=partition)
+        followers = [n for n in self.kafka.nodes if n != leader]
+        assert followers, "no follower node found for %s-%d (leader=%s)" % (topic, partition, leader)
+        return "az-%d" % self.kafka.idx(followers[0])
 
     def _switch_and_drain(self, verifier, baseline_tiered):
         """Produce a classic prefix, switch to consolidating diskless, tier the classic
@@ -528,9 +540,9 @@ class DeleteRecordsAcrossTiersTest(Test):
         records below the cross-tier earliest after a ``DeleteRecords``, whether it is an old
         (pre-KIP-392) or a modern client.
 
-        With managed replicas the transformer advertises a hash-selected replica -- usually a
-        follower, not the real KRaft leader -- as the partition leader, and the follower then
-        serves the read from its local classic log (an old consumer via the
+        With managed replicas, the transformer routes AZ-aware clients to a same-AZ replica
+        (often a follower rather than the real KRaft leader) as the partition leader. That
+        follower then serves the read from its local classic log (an old consumer via the
         ``isOlderConsumer && switched`` relaxation, a modern consumer because ``allowReplica``
         is true for it once routed to a non-leader). A follower's broker-local whole-log start
         (``UnifiedLog.logStartOffset``) does not move on a ``DeleteRecords`` (that advances only
@@ -541,11 +553,12 @@ class DeleteRecordsAcrossTiersTest(Test):
         path and returns ``OFFSET_OUT_OF_RANGE`` for anything below it, so the consumer resets
         (``auto.offset.reset=earliest``) to the delete boundary.
 
-        Both client generations are exercised: the 2.2 console consumer the ducker image ships
-        (Fetch < v11, empty ``clientMetadata``) and the current one (Fetch v11+). Each asserts
-        a seek below the boundary never yields an offset ``< delete_before`` (guard rejects it;
-        the consumer resets to ``delete_before``), and the old client additionally checks a read
-        at the boundary is still served (the guard does not over-reject valid data)."""
+        This test exercises both client generations with ``diskless_az`` pinned to a follower's
+        rack: the 2.2 console consumer in the ducker image (Fetch < v11, empty ``clientMetadata``)
+        and the current one (Fetch v11+). Each asserts a seek below the boundary never yields an
+        offset ``< delete_before`` (guard rejects it; the consumer resets to ``delete_before``),
+        and the old client also checks a read at the boundary still succeeds (the guard doesn't
+        over-reject valid data)."""
         self._start_cluster()
         verifier = ConsolidationVerifier(self.kafka)
         verifier.verify_tooling()
@@ -571,6 +584,10 @@ class DeleteRecordsAcrossTiersTest(Test):
         self.logger.info("Earliest settled at %d across all brokers" % agreed_earliest)
 
         spot = min(seal_offset - delete_before, self.SPOT_CHECK)
+        follower_rack = self._follower_rack()
+        follower_client_id = "follower-guard,diskless_az=%s" % follower_rack
+        self.logger.info("Pinning follower-read consumers to rack %s via client.id=%s"
+                         % (follower_rack, follower_client_id))
 
         # 1) Old consumer resuming from *inside* the deleted range must not be served any
         # record below the cross-tier earliest. With the guard it gets OFFSET_OUT_OF_RANGE
@@ -582,7 +599,8 @@ class DeleteRecordsAcrossTiersTest(Test):
         # so a returned value is the record's offset.
         probe = delete_before // 2
         below = verifier.read_values_with_old_client(
-            self.TOPIC, from_offset=probe, max_messages=spot, timeout_ms=240000)
+            self.TOPIC, from_offset=probe, max_messages=spot, timeout_ms=240000,
+            consumer_properties={"client.id": follower_client_id})
         stale = [v for v in below if v < delete_before]
         assert not stale, (
             "a pre-KIP-392 consumer seeking to %d (inside the deleted range [0, %d)) was served "
@@ -610,7 +628,10 @@ class DeleteRecordsAcrossTiersTest(Test):
         # boundary rather than the log end.
         modern_below = verifier.read_records_with_values_from(
             self.TOPIC, from_offset=probe, max_messages=spot, timeout_ms=240000,
-            consumer_properties={"auto.offset.reset": "earliest"})
+            consumer_properties={
+                "auto.offset.reset": "earliest",
+                "client.id": follower_client_id,
+            })
         modern_stale = [(o, v) for (o, v) in modern_below if o < delete_before]
         assert not modern_stale, (
             "a modern consumer seeking to %d (inside the deleted range [0, %d)) was served %d "
@@ -630,7 +651,8 @@ class DeleteRecordsAcrossTiersTest(Test):
         # surviving boundary is served that offset with the originally produced content
         # (value == offset in the classic prefix).
         at = verifier.read_values_with_old_client(
-            self.TOPIC, from_offset=delete_before, max_messages=spot, timeout_ms=240000)
+            self.TOPIC, from_offset=delete_before, max_messages=spot, timeout_ms=240000,
+            consumer_properties={"client.id": follower_client_id})
         assert at and at[0] == delete_before, (
             "a pre-KIP-392 consumer reading from the surviving boundary %d got %s; the guard "
             "over-rejected a valid at-earliest read" % (delete_before, at[:1]))
@@ -680,14 +702,19 @@ class DeleteRecordsAcrossTiersTest(Test):
 
         # Delete the first half of the classic prefix. The boundary is strictly inside
         # the sealed classic region [0, seal), which is tiered to remote, so the
-        # reclaimed range [0, delete_before) is remote-backed: this exercises the
-        # local-log -> RemoteLogManager cross-tier delete on the real leader (reached
-        # via DisklessDeleteRecordsForwarder).
+        # reclaimed range [0, `delete_before`) is remote-backed: pin the client to a
+        # follower's rack so the request routes through DisklessDeleteRecordsForwarder to
+        # the real leader's local-log -> RemoteLogManager cross-tier delete path.
         #
         # delete_records parses the per-partition result and raises on a partition error
         # (kafka-delete-records.sh reports those on stdout yet still exits 0). The returned
         # low_watermark is the partition's new log start as the broker computed it.
-        low_watermark = verifier.delete_records(self.TOPIC, before_offset=delete_before)
+        follower_rack = self._follower_rack()
+        low_watermark = verifier.delete_records(
+            self.TOPIC,
+            before_offset=delete_before,
+            client_id="delete-records-forward,diskless_az=%s" % follower_rack,
+        )
         self.logger.info("Requested DeleteRecords before offset %d (seal=%d, total=%d); low_watermark=%d"
                          % (delete_before, seal_offset, total_acked, low_watermark))
         assert low_watermark == delete_before, (
@@ -697,7 +724,7 @@ class DeleteRecordsAcrossTiersTest(Test):
 
         # Combined assertion: the client-visible earliest advances from below the boundary
         # to a single, stable value that is the SAME on every broker (served from the
-        # control plane, not a hash-selected follower's frozen local log) and settles at
+        # control plane, not a follower's frozen local log) and settles at
         # EXACTLY the delete boundary (only [0, delete_before) is reclaimed -- with retention
         # unset nothing else may move the earliest, and the consolidation cleanup must not
         # over-reclaim the classic prefix down to the seal). Before the fixes this stayed at

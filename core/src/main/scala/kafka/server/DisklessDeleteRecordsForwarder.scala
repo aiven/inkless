@@ -44,9 +44,10 @@ import scala.jdk.CollectionConverters._
  * consolidating), `ReplicaManager.deleteRecords` splits the request into a broker-agnostic diskless
  * (control-plane) leg and a local-log leg. The local-log leg only succeeds on the real KRaft leader
  * (`Partition.deleteRecordsOnLeader` requires `leaderLogIfLocal`). Because
- * `InklessTopicMetadataTransformer` advertises a hash/AZ-selected replica as the client-facing
- * leader for locality-aware read routing, the AdminClient generally delivers `DeleteRecords` to a
- * follower, which rejects it with `NOT_LEADER_OR_FOLLOWER`.
+ * `InklessTopicMetadataTransformer` advertises a same-AZ replica to AZ-aware clients (which is
+ * often a follower) as the client-facing leader for locality-aware read routing, an AZ-aware
+ * AdminClient can deliver `DeleteRecords` to a follower, which rejects it with
+ * `NOT_LEADER_OR_FOLLOWER`.
  *
  * `KafkaApis` uses this forwarder to send the affected partitions to their real leader (resolved
  * from the raw KRaft metadata image, independent of the transformer). The receiving leader runs its
