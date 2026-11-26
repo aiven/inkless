@@ -42,6 +42,7 @@ import org.apache.kafka.common.message.ListOffsetsRequestData.{ListOffsetsPartit
 import org.apache.kafka.common.message.ListOffsetsResponseData.{ListOffsetsPartitionResponse, ListOffsetsTopicResponse}
 import org.apache.kafka.common.message.{DeleteRecordsResponseData, FetchResponseData}
 import org.apache.kafka.common.message.OffsetForLeaderEpochRequestData.{OffsetForLeaderPartition, OffsetForLeaderTopic}
+import org.apache.kafka.common.message.OffsetForLeaderEpochResponseData.EpochEndOffset
 import org.apache.kafka.common.metadata.{PartitionChangeRecord, PartitionRecord, RemoveTopicRecord, TopicRecord}
 import org.apache.kafka.common.metrics.Metrics
 import org.apache.kafka.common.protocol.Errors
@@ -5402,6 +5403,105 @@ class ReplicaManagerInklessTest {
       assertEquals(Errors.NOT_LEADER_OR_FOLLOWER.code, partitionResult.errorCode())
       verify(jobMock, never()).add(any(), any())
       verify(jobMock, never()).start()
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testLastOffsetForLeaderEpochHybridRejectsClassicEpochOnPhaseTwoLeaderWithEmptyLog(): Unit = {
+    // A replica that a reassignment adds in phase 2 leads with an empty log.
+    assertPhaseTwoLeaderBelowSealRejectsClassicEpochs(localEndOffset = 0L)
+  }
+
+  @Test
+  def testLastOffsetForLeaderEpochHybridRejectsClassicEpochOnPhaseTwoLeaderWithLogBelowSeal(): Unit = {
+    // A replica that lagged in phase 1 leads in phase 2 with a log that ends in the last classic epoch.
+    assertPhaseTwoLeaderBelowSealRejectsClassicEpochs(localEndOffset = 50L)
+  }
+
+  private def assertPhaseTwoLeaderBelowSealRejectsClassicEpochs(localEndOffset: Long): Unit = {
+    val seal = 101L
+    val disklessEndOffset = 200L
+    val disklessResult = new OffsetResultHolder.FileRecordsOrError(
+      Optional.empty(),
+      Optional.of(new FileRecords.TimestampAndOffset(RecordBatch.NO_TIMESTAMP, disklessEndOffset, Optional.of[Integer](0))))
+    val jobMock = Mockito.mock(classOf[FetchOffsetHandler.Job])
+    when(jobMock.mustHandle(any())).thenReturn(true)
+    when(jobMock.add(any(), any())).thenReturn(CompletableFuture.completedFuture(disklessResult))
+    doNothing().when(jobMock).start()
+
+    val fetchOffsetHandlerCtorInit: MockedConstruction.MockInitializer[FetchOffsetHandler] = {
+      case (handlerMock, _) =>
+        when(handlerMock.createJob()).thenReturn(jobMock)
+    }
+    val fetchOffsetHandlerCtor = mockConstruction(classOf[FetchOffsetHandler], fetchOffsetHandlerCtorInit)
+
+    val replicaManager = try {
+      createReplicaManager(List(disklessTopicPartition.topic()), disklessManagedReplicasEnabled = true)
+    } finally {
+      fetchOffsetHandlerCtor.close()
+    }
+    try {
+      val partition = setupHybridLeaderPartition(replicaManager, disklessTopicPartition, localEndOffset)
+      val phaseTwoLeaderEpoch = 6
+      partition.makeLeader(
+        partitionRegistration(
+          replicaManager.config.brokerId,
+          leaderEpoch = phaseTwoLeaderEpoch,
+          isr = Array(replicaManager.config.brokerId),
+          partitionEpoch = 1,
+          replicas = Array(replicaManager.config.brokerId)),
+        isNew = false,
+        new LazyOffsetCheckpoints(replicaManager.highWatermarkCheckpoints.asJava),
+        None)
+      val tp = disklessTopicPartition.topicPartition()
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(seal)
+      when(replicaManager.inklessMetadataView().getDisklessLeaderEpoch(tp)).thenReturn(5)
+      when(replicaManager.inklessMetadataView().getInitialDisklessLeaderEpoch(tp)).thenReturn(4)
+      val log = partition.localLogOrException
+      // makeLeader maps the current leader epoch to the log end offset, which is below the seal.
+      assertEquals(new EpochEntry(phaseTwoLeaderEpoch, localEndOffset), log.leaderEpochCache.epochEntries.asScala.last)
+
+      def lookup(leaderEpoch: Int): EpochEndOffset =
+        replicaManager.lastOffsetForLeaderEpoch(Seq(
+          new OffsetForLeaderTopic()
+            .setTopic(disklessTopicPartition.topic())
+            .setPartitions(util.List.of(
+              new OffsetForLeaderPartition()
+                .setPartition(disklessTopicPartition.partition())
+                .setLeaderEpoch(leaderEpoch)
+            ))
+        )).head.partitions().get(0)
+
+      def assertClassicEpochsRejected(): Unit =
+        for (classicEpoch <- Seq(0, 2, 3)) {
+          val result = lookup(classicEpoch)
+          assertEquals(Errors.NOT_LEADER_OR_FOLLOWER.code, result.errorCode(), s"classic epoch $classicEpoch")
+          assertEquals(OffsetsForLeaderEpochResponse.UNDEFINED_EPOCH_OFFSET, result.endOffset(), s"classic epoch $classicEpoch")
+        }
+
+      assertClassicEpochsRejected()
+      // The first truncation of the consolidation fetcher drops the epoch that makeLeader assigned at the
+      // log end offset. The epoch of the last local record then ends at the log end offset.
+      partition.truncateTo(localEndOffset, isFuture = false)
+      assertClassicEpochsRejected()
+      verify(jobMock, never()).add(any(), any())
+
+      // A diskless epoch doesn't depend on the local classic log.
+      val disklessEpochResult = lookup(4)
+      assertEquals(Errors.NONE.code, disklessEpochResult.errorCode())
+      assertEquals(disklessEndOffset, disklessEpochResult.endOffset())
+
+      // Consolidation rebuilds the log from remote storage: it starts at the seal with the classic epochs.
+      log.truncateFullyAndStartAt(seal, Optional.empty())
+      log.leaderEpochCache.assign(util.List.of(new EpochEntry(0, 0L), new EpochEntry(2, 60L)))
+      val epochZeroResult = lookup(0)
+      assertEquals(Errors.NONE.code, epochZeroResult.errorCode())
+      assertEquals(60L, epochZeroResult.endOffset())
+      val lastClassicEpochResult = lookup(2)
+      assertEquals(Errors.NONE.code, lastClassicEpochResult.errorCode())
+      assertEquals(seal, lastClassicEpochResult.endOffset())
     } finally {
       replicaManager.shutdown(checkpointHW = false)
     }
