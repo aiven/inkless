@@ -4032,6 +4032,9 @@ class ReplicaManager(val config: KafkaConfig,
     ): EpochEndOffset = {
       val isInSyncFollower = _inklessMetadataView.isReplicaInIsr(topicPartition, config.brokerId) &&
         !onlinePartition(topicPartition).exists(_.isLeader)
+      // A request from a replica fetcher gets the same relaxed check, as it does once the seal is committed.
+      // It can't reach the log of a follower: a fetcher sends its request with its leader epoch to the
+      // leader of that epoch, and `Partition` rejects a leader epoch that differs from its own.
       val localResult = localOffsetForLeaderEpoch(
         topicPartition,
         offsetForLeaderPartition,
