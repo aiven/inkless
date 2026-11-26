@@ -9113,6 +9113,68 @@ class ReplicaManagerInklessTest {
       .fetchIndex(lastClassicSegment, RemoteStorageManager.IndexType.PRODUCER_SNAPSHOT)
   }
 
+  // Local retention moved the local log start of a phase 2 leader past the seal. A follower below the seal rebuilds
+  // from the consolidated segment that ends before that offset. The leader answers OffsetsForLeaderEpoch for the
+  // epoch before the diskless leader epoch with the diskless end offset, and no remote segment holds that epoch.
+  @Test
+  def testTierStateMachineRebuildsFromSourceWhoseLocalLogStartsPastTheSeal(): Unit = {
+    val tp = new TopicPartition("switched-consolidating-topic", 0)
+    val sealOffset = 100L
+    val sourceLocalLogStartOffset = 250L
+    val disklessLeaderEpoch = 5
+    val lastClassicLeaderEpoch = 2
+    val epochs = Seq(new EpochEntry(0, 0L), new EpochEntry(lastClassicLeaderEpoch, 80L),
+      new EpochEntry(disklessLeaderEpoch, sealOffset))
+    val tip = new TopicIdPartition(Uuid.randomUuid(), tp)
+    val consolidatedSegment = new RemoteLogSegmentMetadata(new RemoteLogSegmentId(tip, Uuid.randomUuid()), 180L,
+      sourceLocalLogStartOffset - 1, -1L, 0, 0L, 1024, Optional.empty(), RemoteLogSegmentState.COPY_SEGMENT_FINISHED,
+      util.Map.of[Integer, java.lang.Long](disklessLeaderEpoch, 180L))
+    val rsm = mock(classOf[RemoteStorageManager])
+    when(rsm.fetchIndex(consolidatedSegment, RemoteStorageManager.IndexType.LEADER_EPOCH))
+      .thenReturn(new ByteArrayInputStream(
+        (Seq("0", epochs.size.toString) ++ epochs.map(entry => s"${entry.epoch} ${entry.startOffset}"))
+          .mkString("", "\n", "\n").getBytes(StandardCharsets.UTF_8)))
+    when(rsm.fetchIndex(consolidatedSegment, RemoteStorageManager.IndexType.PRODUCER_SNAPSHOT))
+      .thenReturn(new ByteArrayInputStream(Array.emptyByteArray))
+    val rlm = mock(classOf[RemoteLogManager])
+    when(rlm.isPartitionReady(tp)).thenReturn(true)
+    when(rlm.storageManager()).thenReturn(rsm)
+    when(rlm.fetchRemoteLogSegmentMetadata(tp, disklessLeaderEpoch, sourceLocalLogStartOffset - 1))
+      .thenReturn(Optional.of(consolidatedSegment))
+    val epochCache = mock(classOf[LeaderEpochFileCache])
+    val log = mock(classOf[UnifiedLog])
+    when(log.remoteLogEnabled()).thenReturn(true)
+    when(log.leaderEpochCache).thenReturn(epochCache)
+    when(log.producerStateManager).thenReturn(mock(classOf[ProducerStateManager]))
+    when(log.dir).thenReturn(TestUtils.tempDir())
+    val partition = mock(classOf[Partition])
+    val replicaManager = mock(classOf[ReplicaManager])
+    when(replicaManager.brokerTopicStats).thenReturn(new BrokerTopicStats(true))
+    when(replicaManager.localLogOrException(tp)).thenReturn(log)
+    when(replicaManager.remoteLogManager).thenReturn(Some(rlm))
+    when(replicaManager.classicToDisklessStartOffset(tp)).thenReturn(sealOffset)
+    when(replicaManager.lastClassicLeaderEpoch(tp)).thenReturn(lastClassicLeaderEpoch)
+    when(replicaManager.getPartitionOrException(tp)).thenReturn(partition)
+    val source = mock(classOf[LeaderEndPoint])
+    when(source.fetchLatestOffset(tp, disklessLeaderEpoch)).thenReturn(new OffsetAndEpoch(400L, disklessLeaderEpoch))
+    // The answer of `ReplicaManager.lastOffsetForLeaderEpoch` on a phase 2 leader: the requested epoch and the
+    // diskless end offset.
+    when(source.fetchEpochEndOffsets(any())).thenReturn(util.Map.of(tp, new EpochEndOffset()
+      .setPartition(tp.partition)
+      .setErrorCode(Errors.NONE.code)
+      .setLeaderEpoch(disklessLeaderEpoch - 1)
+      .setEndOffset(400L)))
+
+    val fetchState = new TierStateMachine(source, replicaManager, false).start(tp, Optional.empty(),
+      disklessLeaderEpoch, new OffsetAndEpoch(sourceLocalLogStartOffset, disklessLeaderEpoch), 0L)
+
+    assertEquals(sourceLocalLogStartOffset, fetchState.fetchOffset)
+    verify(rlm, never()).fetchRemoteLogSegmentMetadata(tp, disklessLeaderEpoch - 1, sourceLocalLogStartOffset - 1)
+    verify(partition).truncateFullyAndStartAt(sourceLocalLogStartOffset, false, Optional.of[java.lang.Long](0L))
+    verify(log).maybeIncrementLocalLogStartOffset(ArgumentMatchers.eq(sourceLocalLogStartOffset), any())
+    verify(epochCache).assign(util.List.of(epochs.toSeq: _*))
+  }
+
   // The classic fetcher thread deletes the prefix when it evicts a partition. If it took
   // replicaStateChangeLock through markPartitionOffline, it would deadlock with applyDelta, which
   // holds that lock while it shuts down idle fetcher threads.

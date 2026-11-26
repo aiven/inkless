@@ -26,6 +26,7 @@ import org.apache.kafka.clients.admin.AlterDisklessSwitchOptions;
 import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.clients.admin.CreateTopicsResult;
 import org.apache.kafka.clients.admin.ListOffsetsResult;
+import org.apache.kafka.clients.admin.NewPartitionReassignment;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.admin.OffsetSpec;
 import org.apache.kafka.clients.admin.TransactionDescription;
@@ -61,10 +62,12 @@ import org.apache.kafka.raft.KRaftConfigs;
 import org.apache.kafka.server.IntegrationTestUtils;
 import org.apache.kafka.server.config.ReplicationConfigs;
 import org.apache.kafka.server.config.ServerConfigs;
+import org.apache.kafka.server.config.ServerLogConfigs;
 import org.apache.kafka.server.log.remote.metadata.storage.TopicBasedRemoteLogMetadataManager;
 import org.apache.kafka.server.log.remote.metadata.storage.TopicBasedRemoteLogMetadataManagerConfig;
 import org.apache.kafka.server.log.remote.storage.RemoteLogManagerConfig;
 import org.apache.kafka.storage.internals.log.UnifiedLog;
+import org.apache.kafka.test.TestUtils;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -192,6 +195,7 @@ public class InklessTopicTypeSwitcherClusterTest {
             .setConfigProp(ServerConfigs.DISKLESS_ALLOW_FROM_CLASSIC_ENABLE_CONFIG, "true")
             .setConfigProp(RemoteLogManagerConfig.REMOTE_LOG_STORAGE_SYSTEM_ENABLE_PROP, "true")
             .setConfigProp(RemoteLogManagerConfig.REMOTE_LOG_MANAGER_TASK_INTERVAL_MS_PROP, "5000")
+            .setConfigProp(ServerLogConfigs.LOG_CLEANUP_INTERVAL_MS_CONFIG, "500")
             .setConfigProp(RemoteLogManagerConfig.REMOTE_LOG_MANAGER_FOLLOWER_THREAD_POOL_SIZE_PROP, "4")
             .setConfigProp(RemoteLogManagerConfig.REMOTE_LOG_METADATA_MANAGER_CLASS_NAME_PROP, TopicBasedRemoteLogMetadataManager.class.getName())
             .setConfigProp(RemoteLogManagerConfig.REMOTE_LOG_METADATA_MANAGER_LISTENER_NAME_PROP, "EXTERNAL")
@@ -397,6 +401,75 @@ public class InklessTopicTypeSwitcherClusterTest {
                 assertTrue(!records.isEmpty(), "The resumed consumer read no records");
                 assertEquals(committedOffset, records.iterator().next().offset(),
                     "The resumed consumer didn't start at its committed offset");
+            }
+        }
+    }
+
+    // Local retention deletes the consolidated segments that the leader uploaded, so the local log of the leader
+    // starts past the seal. A replica that a reassignment adds starts below the seal, and it rebuilds its log from
+    // the consolidated segment in remote storage that ends before the local log start of the leader.
+    @Test
+    public void testAddedReplicaRebuildsWhenLeaderLocalLogStartsPastSeal() throws Exception {
+        final String topic = "switch-added-replica-" + UUID.randomUUID().toString().substring(0, 8);
+        final TopicPartition tp = new TopicPartition(topic, 0);
+        final int classicRecords = 300;
+        final int disklessRecords = 2500;
+        final byte[] value = new byte[1500];
+
+        try (Admin admin = AdminClient.create(baseClientConfigs());
+             Producer<byte[], byte[]> producer = new KafkaProducer<>(producerConfigs())) {
+            // Consolidation fetches one batch at a time unless a segment is larger than the largest batch.
+            admin.createTopics(List.of(new NewTopic(topic, Map.of(0, List.of(0, 1))).configs(Map.of(
+                TopicConfig.DISKLESS_ENABLE_CONFIG, "false",
+                TopicConfig.SEGMENT_BYTES_CONFIG, "1048576",
+                TopicConfig.MAX_MESSAGE_BYTES_CONFIG, "262144")))).all().get(30, TimeUnit.SECONDS);
+            TopicMetadataProbe.awaitVisible(admin, topic);
+            for (int i = 0; i < classicRecords; i++) {
+                producer.send(new ProducerRecord<>(topic, 0, null, value));
+            }
+            producer.flush();
+            alterTopicConfigWithIncrementalAlterConfigs(admin, topic, Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true"));
+            final long seal = waitForSealOffset(admin, topic, 0, offset -> offset >= 0);
+            assertEquals(classicRecords, seal);
+            waitForClassicPrefixInRemoteStorage(admin, topic);
+            for (int i = 0; i < disklessRecords; i++) {
+                producer.send(new ProducerRecord<>(topic, 0, null, value));
+            }
+            producer.flush();
+            final long endOffset = seal + disklessRecords;
+
+            final int leaderId = cluster.brokers().get(0).replicaManager().getPartitionOrException(tp).isLeader() ? 0 : 1;
+            final UnifiedLog leaderLog = cluster.brokers().get(leaderId).replicaManager().getLog(tp).get();
+            alterTopicConfigWithIncrementalAlterConfigs(admin, topic, Map.of(TopicConfig.LOCAL_LOG_RETENTION_MS_CONFIG, "1000"));
+            TestUtils.waitForCondition(() -> leaderLog.localLogStartOffset() > seal, 180_000L,
+                () -> "Local retention didn't move the local log start of the leader past the seal " + seal
+                    + ": it's " + leaderLog.localLogStartOffset());
+
+            admin.alterPartitionReassignments(Map.of(tp, Optional.of(new NewPartitionReassignment(List.of(0, 1, 2)))))
+                .all().get(30, TimeUnit.SECONDS);
+            final ReplicaManager addedReplica = cluster.brokers().get(2).replicaManager();
+            TestUtils.waitForCondition(
+                () -> addedReplica.getLog(tp).isDefined() && addedReplica.getLog(tp).get().logEndOffset() >= seal,
+                60_000L,
+                () -> "The added replica didn't rebuild its log up to the seal " + seal + ": its log end offset is "
+                    + (addedReplica.getLog(tp).isDefined() ? addedReplica.getLog(tp).get().logEndOffset() : -1));
+
+            // Broker 2 is in az3. The metadata routing sends a consumer in that zone to the added replica.
+            final Map<String, Object> consumerConfigs = baseConsumerConfigs();
+            consumerConfigs.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
+            consumerConfigs.put(ConsumerConfig.CLIENT_ID_CONFIG, "added-replica,diskless_az=az3");
+            try (Consumer<byte[], byte[]> consumer = new KafkaConsumer<>(consumerConfigs)) {
+                consumer.assign(List.of(tp));
+                consumer.seek(tp, 0L);
+                long nextOffset = 0;
+                final long deadline = System.currentTimeMillis() + Duration.ofSeconds(60).toMillis();
+                while (nextOffset < endOffset && System.currentTimeMillis() < deadline) {
+                    for (ConsumerRecord<byte[], byte[]> record : consumer.poll(Duration.ofMillis(500))) {
+                        assertEquals(nextOffset, record.offset());
+                        nextOffset++;
+                    }
+                }
+                assertEquals(endOffset, nextOffset, "The consumer in az3 didn't read every record");
             }
         }
     }
