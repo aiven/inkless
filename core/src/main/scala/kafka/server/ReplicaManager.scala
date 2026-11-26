@@ -4030,6 +4030,35 @@ class ReplicaManager(val config: KafkaConfig,
       }
     }
 
+    // While the classic-to-diskless switch is pending, the metadata routing sends clients to any alive ISR
+    // member. An in-sync follower answers too: its log holds every record below the leader's high
+    // watermark, and a consumer validates a position at or below that offset.
+    // A follower caches only the epochs of the batches it appends. It has no end offset for a later epoch,
+    // such as the leader epoch of the switch, and a consumer reads an undefined end offset as a truncation.
+    // The follower returns the retriable error for that epoch, as a replica outside the ISR does.
+    def pendingSwitchOffsetForLeaderEpoch(
+      topicPartition: TopicPartition,
+      offsetForLeaderPartition: OffsetForLeaderPartition
+    ): EpochEndOffset = {
+      val isInSyncFollower = _inklessMetadataView.isReplicaInIsr(topicPartition, config.brokerId) &&
+        !onlinePartition(topicPartition).exists(_.isLeader)
+      // A request from a replica fetcher gets the same relaxed check, as it does once the seal is committed.
+      // It can't reach the log of a follower: a fetcher sends its request with its leader epoch to the
+      // leader of that epoch, and `Partition` rejects a leader epoch that differs from its own.
+      val localResult = localOffsetForLeaderEpoch(
+        topicPartition,
+        offsetForLeaderPartition,
+        fetchOnlyFromLeader = !isInSyncFollower)
+      if (isInSyncFollower && localResult.errorCode == Errors.NONE.code &&
+          localResult.endOffset == OffsetsForLeaderEpochResponse.UNDEFINED_EPOCH_OFFSET) {
+        new EpochEndOffset()
+          .setPartition(topicPartition.partition)
+          .setErrorCode(Errors.NOT_LEADER_OR_FOLLOWER.code)
+      } else {
+        localResult
+      }
+    }
+
     def disklessOffsetForLeaderEpoch(
       topicPartition: TopicPartition,
       offsetForLeaderPartition: OffsetForLeaderPartition,
@@ -4091,7 +4120,7 @@ class ReplicaManager(val config: KafkaConfig,
           _inklessMetadataView.getClassicToDisklessStartOffset(topicPartition) match {
             case PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING =>
               // Switch is still in progress: only the classic log has authoritative epoch data.
-              () => localOffsetForLeaderEpoch(topicPartition, offsetForLeaderPartition)
+              () => pendingSwitchOffsetForLeaderEpoch(topicPartition, offsetForLeaderPartition)
 
             case PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET =>
               disklessOffsetForLeaderEpoch(topicPartition, offsetForLeaderPartition)
