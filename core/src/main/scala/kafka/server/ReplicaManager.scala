@@ -481,6 +481,7 @@ class ReplicaManager(val config: KafkaConfig,
   private val consolidationDeferredListOffsetsRate: Meter =
     metricsGroup.newMeter(ConsolidationDeferredListOffsetsRateMetricName, "requests", TimeUnit.SECONDS)
   private val lastPrefixDeferralLogMs = new AtomicLong(0L)
+  private val lastEpochLookupDeferralLogMs = new AtomicLong(0L)
   metricsGroup.newGauge(PartitionsWithLateTransactionsCountMetricName, () => lateTransactionsCount)
   metricsGroup.newGauge(ProducerIdCountMetricName, () => producerIdCount)
 
@@ -2658,6 +2659,15 @@ class ReplicaManager(val config: KafkaConfig,
         s"${Errors.OFFSET_NOT_AVAILABLE} until this replica can read the prefix; fetch offset $fetchOffset")
   }
 
+  /** Logs at most one line per [[ReplicaManager.PrefixDeferralLogGapMs]] for a classic epoch lookup that this replica defers. */
+  private def recordClassicEpochLookupDeferral(tp: TopicPartition, requestedEpoch: Int, seal: Long): Unit = {
+    val now = time.milliseconds
+    val lastMs = lastEpochLookupDeferralLogMs.get
+    if ((lastMs == 0L || now - lastMs >= PrefixDeferralLogGapMs) && lastEpochLookupDeferralLogMs.compareAndSet(lastMs, now))
+      info(s"Answering OffsetsForLeaderEpoch of $tp for classic epoch $requestedEpoch with ${Errors.NOT_LEADER_OR_FOLLOWER} " +
+        s"until this replica holds the classic prefix up to the seal $seal")
+  }
+
   /**
    * Create new FetchParams by scaling the maxBytes by a percentage.
    */
@@ -4121,6 +4131,7 @@ class ReplicaManager(val config: KafkaConfig,
                 // the current leader epoch to its log end offset. A classic epoch would get an end
                 // offset below the seal, and a consumer at or below the seal would truncate. The
                 // consumer retries this error, as it does on a follower below the seal.
+                recordClassicEpochLookupDeferral(topicPartition, requestedEpoch, classicToDisklessStartOffset)
                 () => new EpochEndOffset()
                   .setPartition(topicPartition.partition)
                   .setErrorCode(Errors.NOT_LEADER_OR_FOLLOWER.code)
