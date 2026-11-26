@@ -3471,6 +3471,21 @@ class ReplicaManagerInklessTest {
 
   // --- buildConsolidationSupplementFetchInfos unit tests ---
 
+  private def singleRecordAt(offset: Long): MemoryRecords =
+    MemoryRecords.withRecords(
+      2.toByte, offset, Compression.NONE, TimestampType.CREATE_TIME, 123L, 0.toShort, 0, 0, false, new SimpleRecord(0, "local".getBytes())
+    )
+
+  private def logReadResult(
+      records: MemoryRecords,
+      fetchOffset: Long = 50L,
+      preferredReadReplica: OptionalInt = OptionalInt.empty()
+  ): LogReadResult =
+    new LogReadResult(
+      new FetchDataInfo(new LogOffsetMetadata(fetchOffset, 0L, 0), records),
+      Optional.empty(), 0L, 0L, 0L, 0L, 0L, OptionalLong.empty(), preferredReadReplica, Errors.NONE
+    )
+
   /**
    * Supplement requests must follow fetchInfos, not the iteration order of the `supplements` HashMap, because
    * fetchDisklessMessages requires the rotated order (see its javadoc).
@@ -3481,15 +3496,13 @@ class ReplicaManagerInklessTest {
   def testBuildConsolidationSupplementFetchInfosFollowsFetchInfoOrder(): Unit = {
     val topicId = Uuid.randomUuid()
     val partitions = (0 until 8).map(p => new TopicIdPartition(topicId, p, "diskless"))
-    val logEndOffset = 100L
+    // Each local read ends at offset 51, which is the log end offset, so every partition takes a supplement.
+    val logEndOffset = 51L
     val supplements = mutable.HashMap(partitions.map(_ -> logEndOffset): _*)
     val fetchInfos = partitions.map(tp => tp -> new PartitionData(tp.topicId(), 50L, 0L, 1024, Optional.empty()))
     val logReadResultMap = new util.HashMap[TopicIdPartition, LogReadResult]()
     partitions.foreach { tp =>
-      logReadResultMap.put(tp, new LogReadResult(
-        new FetchDataInfo(new LogOffsetMetadata(50L, 0L, 0), MemoryRecords.EMPTY),
-        Optional.empty(), 0L, 0L, 0L, 0L, 0L, OptionalLong.empty(), Errors.NONE
-      ))
+      logReadResultMap.put(tp, logReadResult(singleRecordAt(50L)))
     }
 
     val replicaManager = createReplicaManager(List("diskless"))
@@ -3502,17 +3515,51 @@ class ReplicaManagerInklessTest {
     }
   }
 
+  // An empty local read with no error (for example when an earlier partition used up the request
+  // byte budget) hasn't reached the log end offset. A supplement anchored at the log end offset
+  // would make the consumer skip [fetchOffset, logEndOffset).
   @Test
-  def testBuildConsolidationSupplementFetchInfosReturnsRequestStartingAtLogEndOffset(): Unit = {
+  def testBuildConsolidationSupplementFetchInfosSkipsEmptyLocalReadBelowLogEndOffset(): Unit = {
+    val tp = disklessTopicPartition
+    val supplements = mutable.HashMap(tp -> 100L)
+    val fetchInfos = Seq(tp -> new PartitionData(tp.topicId(), 50L, 0L, 1024, Optional.empty()))
+    val logReadResultMap = new util.HashMap[TopicIdPartition, LogReadResult]()
+    logReadResultMap.put(tp, logReadResult(MemoryRecords.EMPTY, fetchOffset = 50L))
+
+    val replicaManager = createReplicaManager(List(tp.topic()))
+    try {
+      val result = replicaManager.buildConsolidationSupplementFetchInfos(supplements, fetchInfos, logReadResultMap)
+      assertTrue(result.isEmpty, s"Expected no supplement for an empty local read below the log end offset, got $result")
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testBuildConsolidationSupplementFetchInfosSkipsPartitionWithoutLocalReadResultBelowLogEndOffset(): Unit = {
+    val tp = disklessTopicPartition
+    val supplements = mutable.HashMap(tp -> 100L)
+    val fetchInfos = Seq(tp -> new PartitionData(tp.topicId(), 50L, 0L, 1024, Optional.empty()))
+
+    val replicaManager = createReplicaManager(List(tp.topic()))
+    try {
+      val result = replicaManager.buildConsolidationSupplementFetchInfos(supplements, fetchInfos, new util.HashMap[TopicIdPartition, LogReadResult]())
+      assertTrue(result.isEmpty, s"Expected no supplement without a local read result, got $result")
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  // The local log can hold nothing at fetchOffset only when fetchOffset is the log end offset. The
+  // supplement then starts at fetchOffset, so the response stays contiguous.
+  @Test
+  def testBuildConsolidationSupplementFetchInfosStartsAtFetchOffsetForEmptyLocalReadAtLogEndOffset(): Unit = {
     val tp = disklessTopicPartition
     val logEndOffset = 100L
     val supplements = mutable.HashMap(tp -> logEndOffset)
-    val fetchInfos = Seq(tp -> new PartitionData(tp.topicId(), 50L, 0L, 1024, Optional.empty()))
+    val fetchInfos = Seq(tp -> new PartitionData(tp.topicId(), logEndOffset, 0L, 1024, Optional.empty()))
     val logReadResultMap = new util.HashMap[TopicIdPartition, LogReadResult]()
-    logReadResultMap.put(tp, new LogReadResult(
-      new FetchDataInfo(new LogOffsetMetadata(50L, 0L, 0), MemoryRecords.EMPTY),
-      Optional.empty(), 0L, 0L, 0L, 0L, 0L, OptionalLong.empty(), Errors.NONE
-    ))
+    logReadResultMap.put(tp, logReadResult(MemoryRecords.EMPTY, fetchOffset = logEndOffset))
 
     val replicaManager = createReplicaManager(List(tp.topic()))
     try {
@@ -3522,6 +3569,49 @@ class ReplicaManagerInklessTest {
       assertEquals(tp, resultTp)
       assertEquals(logEndOffset, partitionData.fetchOffset)
       assertEquals(1024, partitionData.maxBytes) // no local bytes read, so full budget remains
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  // DelayedFetch re-reads on completion, and the re-read can return a preferred read replica.
+  // The consumer then switches replicas, so a diskless supplement must not be appended.
+  @Test
+  def testBuildConsolidationSupplementFetchInfosSkipsPartitionWithPreferredReadReplica(): Unit = {
+    val tp = disklessTopicPartition
+    val supplements = mutable.HashMap(tp -> 51L)
+    val fetchInfos = Seq(tp -> new PartitionData(tp.topicId(), 50L, 0L, 1024, Optional.empty()))
+    val logReadResultMap = new util.HashMap[TopicIdPartition, LogReadResult]()
+    logReadResultMap.put(tp, logReadResult(singleRecordAt(50L), preferredReadReplica = OptionalInt.of(2)))
+
+    val replicaManager = createReplicaManager(List(tp.topic()))
+    try {
+      val result = replicaManager.buildConsolidationSupplementFetchInfos(supplements, fetchInfos, logReadResultMap)
+      assertTrue(result.isEmpty, s"Expected no supplement for a preferred read replica, got $result")
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  // The re-read in DelayedFetch can come back as a remote storage redirect when local retention
+  // moved the log start offset past fetchOffset. The remote read serves that range instead.
+  @Test
+  def testBuildConsolidationSupplementFetchInfosSkipsPartitionWithRemoteStorageFetch(): Unit = {
+    val tp = disklessTopicPartition
+    val supplements = mutable.HashMap(tp -> 100L)
+    val partitionData = new PartitionData(tp.topicId(), 50L, 0L, 1024, Optional.empty())
+    val fetchInfos = Seq(tp -> partitionData)
+    val remoteFetch = new RemoteStorageFetchInfo(1024, false, tp, partitionData, FetchIsolation.HIGH_WATERMARK)
+    val logReadResultMap = new util.HashMap[TopicIdPartition, LogReadResult]()
+    logReadResultMap.put(tp, new LogReadResult(
+      new FetchDataInfo(new LogOffsetMetadata(50L, 0L, 0), MemoryRecords.EMPTY, false, Optional.empty(), Optional.of(remoteFetch)),
+      Optional.empty(), 0L, 0L, 0L, 0L, 0L, OptionalLong.empty(), Errors.NONE
+    ))
+
+    val replicaManager = createReplicaManager(List(tp.topic()))
+    try {
+      val result = replicaManager.buildConsolidationSupplementFetchInfos(supplements, fetchInfos, logReadResultMap)
+      assertTrue(result.isEmpty, s"Expected no supplement for a remote storage redirect, got $result")
     } finally {
       replicaManager.shutdown(checkpointHW = false)
     }
@@ -3582,9 +3672,10 @@ class ReplicaManagerInklessTest {
   def testBuildConsolidationSupplementFetchInfosIgnoresPartitionsNotInFetchInfos(): Unit = {
     val tp = disklessTopicPartition
     val otherTp = new TopicIdPartition(Uuid.randomUuid(), 0, "other")
-    val supplements = mutable.HashMap(tp -> 100L, otherTp -> 200L)
+    val supplements = mutable.HashMap(tp -> 51L, otherTp -> 200L)
     val fetchInfos = Seq(tp -> new PartitionData(tp.topicId(), 50L, 0L, 1024, Optional.empty()))
     val logReadResultMap = new util.HashMap[TopicIdPartition, LogReadResult]()
+    logReadResultMap.put(tp, logReadResult(singleRecordAt(50L)))
 
     val replicaManager = createReplicaManager(List(tp.topic()))
     try {
