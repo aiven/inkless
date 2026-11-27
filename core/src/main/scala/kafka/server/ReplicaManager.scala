@@ -1756,21 +1756,26 @@ class ReplicaManager(val config: KafkaConfig,
                     allowInternalTopicDeletion: Boolean = false): Unit = {
 
     // While the classic-to-diskless switch of a partition is pending or in phase 1, only DeleteRecords can
-    // move its log start offset: remote retention waits for the remote log start in the control plane, which
-    // phase 2 sets. The followers stop fetching at the seal, so they would never learn a new log start
-    // offset, and the metadata routing sends consumers to them. So the broker rejects the request.
-    val (rejected, accepted) = ReplicaManager.rejectDeleteRecordsDuringSwitch(offsetPerPartition, _inklessMetadataView)
-    if (rejected.nonEmpty) {
-      info(s"Rejecting DeleteRecords for ${rejected.keys.mkString(", ")}: the classic-to-diskless switch of these " +
-        "partitions is pending or in phase 1")
-      if (accepted.isEmpty)
-        responseCallback(rejected)
-      else
-        deleteRecords(timeout, accepted, response => responseCallback(response ++ rejected), allowInternalTopicDeletion)
-      return
+    // move its log start offset: remote retention waits for the control plane to store the remote log start,
+    // which doesn't happen while the leader still uploads the classic prefix. The followers stop fetching at
+    // the seal, so they would never learn a new log start offset, and the metadata routing sends consumers to
+    // them. So the broker rejects the request.
+    val (rejectedDuringSwitch, remainingOffsets) =
+      ReplicaManager.rejectDeleteRecordsDuringSwitch(offsetPerPartition, _inklessMetadataView)
+    if (rejectedDuringSwitch.nonEmpty) {
+      info(s"Rejecting DeleteRecords for ${rejectedDuringSwitch.keys.mkString(", ")}: the classic-to-diskless switch " +
+        "of these partitions is pending or in phase 1")
+      if (remainingOffsets.isEmpty) {
+        responseCallback(rejectedDuringSwitch)
+        return
+      }
     }
+    // Adds the rejected partitions to the response once the other partitions finish.
+    val effectiveCallback: Map[TopicPartition, DeleteRecordsPartitionResult] => Unit =
+      if (rejectedDuringSwitch.isEmpty) responseCallback
+      else response => responseCallback(response ++ rejectedDuringSwitch)
 
-    val disklessStartOffsetPerPartition = offsetPerPartition.keys.flatMap { topicPartition =>
+    val disklessStartOffsetPerPartition = remainingOffsets.keys.flatMap { topicPartition =>
       if (_inklessMetadataView.isDisklessTopic(topicPartition.topic)) {
         Some(topicPartition -> _inklessMetadataView.getClassicToDisklessStartOffset(topicPartition))
       } else {
@@ -1779,7 +1784,8 @@ class ReplicaManager(val config: KafkaConfig,
     }.toMap
     val disklessDeleteRecordsRequested = disklessStartOffsetPerPartition.nonEmpty
 
-    val failedDisklessDeleteRecords = if (disklessDeleteRecordsRequested && inklessDeleteRecordsInterceptor.isEmpty) {
+    val failedDisklessDeleteRecords = mutable.Map.empty[TopicPartition, DeleteRecordsPartitionResult]
+    failedDisklessDeleteRecords ++= (if (disklessDeleteRecordsRequested && inklessDeleteRecordsInterceptor.isEmpty) {
       error(s"Cannot delete records from diskless partitions ${disklessStartOffsetPerPartition.keys.mkString(", ")}: DeleteRecordsInterceptor is not enabled")
       disklessStartOffsetPerPartition.keys.map { topicPartition =>
         topicPartition -> new DeleteRecordsPartitionResult()
@@ -1789,14 +1795,14 @@ class ReplicaManager(val config: KafkaConfig,
       }.toMap
     } else {
       Map.empty[TopicPartition, DeleteRecordsPartitionResult]
-    }
+    })
 
     val localOffsetPerPartition = mutable.Map.empty[TopicPartition, Long]
     val disklessOffsetPerPartition = mutable.Map.empty[TopicPartition, Long]
     val hybridDisklessPartitions = mutable.Set.empty[TopicPartition]
 
     if (disklessDeleteRecordsRequested) {
-      offsetPerPartition.filterNot { case (topicPartition, _) =>
+      remainingOffsets.filterNot { case (topicPartition, _) =>
         failedDisklessDeleteRecords.contains(topicPartition)
       }.foreach { case (topicPartition, requestedOffset) =>
         disklessStartOffsetPerPartition.get(topicPartition) match {
@@ -1815,8 +1821,12 @@ class ReplicaManager(val config: KafkaConfig,
               hybridDisklessPartitions += topicPartition
             }
           case Some(PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING) =>
-            // partition not switched yet to diskless: data is only available in local log
-            localOffsetPerPartition += topicPartition -> requestedOffset
+            // The record that starts the switch arrived after the check at the start of this method.
+            info(s"Rejecting DeleteRecords for $topicPartition: the classic-to-diskless switch of this partition is pending")
+            failedDisklessDeleteRecords += topicPartition -> new DeleteRecordsPartitionResult()
+              .setPartitionIndex(topicPartition.partition)
+              .setLowWatermark(DeleteRecordsResponse.INVALID_LOW_WATERMARK)
+              .setErrorCode(Errors.INVALID_REQUEST.code)
           case Some(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
             if config.disklessRemoteStorageConsolidationEnabled &&
               _inklessMetadataView.isConsolidatingDisklessTopic(topicPartition.topic) =>
@@ -1858,22 +1868,23 @@ class ReplicaManager(val config: KafkaConfig,
       }
     } else {
       // No diskless partitions are present, so keep the existing local delete path.
-      localOffsetPerPartition ++= offsetPerPartition
+      localOffsetPerPartition ++= remainingOffsets
     }
 
     // Convert to immutable before passing to the async closure to prevent accidental mutation.
     val immutableDisklessOffsets = disklessOffsetPerPartition.toMap
     val immutableHybridPartitions = hybridDisklessPartitions.toSet
+    val immutableFailedDisklessDeleteRecords = failedDisklessDeleteRecords.toMap
 
     // Report the cross-tier earliest of successfully-deleted consolidating diskless partitions to the
     // control plane and use it as their low watermark, so any broker (leader or the follower the
     // metadata transformer routes clients to) returns the same value as ListOffsets(EARLIEST).
     def finalizeCrossTierAndRespond(response: Map[TopicPartition, DeleteRecordsPartitionResult]): Unit = {
-      val advanced = advanceCrossTierEarliestForDeleteRecords(response, offsetPerPartition)
+      val advanced = advanceCrossTierEarliestForDeleteRecords(response, remainingOffsets)
       if (advanced.isEmpty) {
-        responseCallback(response)
+        effectiveCallback(response)
       } else {
-        responseCallback(response.map { case (topicPartition, result) =>
+        effectiveCallback(response.map { case (topicPartition, result) =>
           topicPartition -> advanced.getOrElse(topicPartition, result)
         })
       }
@@ -1886,11 +1897,11 @@ class ReplicaManager(val config: KafkaConfig,
           localResponse.get(topicPartition).exists(_.errorCode != Errors.NONE.code)
       }
       if (disklessOffsetsAfterLocalDelete.isEmpty) {
-        finalizeCrossTierAndRespond(localResponse ++ failedDisklessDeleteRecords)
+        finalizeCrossTierAndRespond(localResponse ++ immutableFailedDisklessDeleteRecords)
       } else {
         inklessDeleteRecordsInterceptor.get.intercept(
           disklessOffsetsAfterLocalDelete.view.mapValues(java.lang.Long.valueOf).toMap.asJava,
-          r => finalizeCrossTierAndRespond(localResponse ++ failedDisklessDeleteRecords ++ r.asScala))
+          r => finalizeCrossTierAndRespond(localResponse ++ immutableFailedDisklessDeleteRecords ++ r.asScala))
       }
     }
 
@@ -1910,8 +1921,11 @@ class ReplicaManager(val config: KafkaConfig,
     // finalizeCrossTierAndRespond; only classic partitions keep the ISR-gated delayed operation. The
     // local leg above still ran to drive the leader's RemoteLogManager physical deletion of remote
     // segments.
+    // A partition that this request classified as classic keeps the wait, even if the record that starts its
+    // switch arrived since: its followers still fetch, and they must learn the new log start offset.
     val (crossTierResults, classicResults) = localDeleteRecordsResults.partition { case (topicPartition, _) =>
-      _inklessMetadataView.isConsolidatingDisklessTopic(topicPartition.topic)
+      disklessStartOffsetPerPartition.contains(topicPartition) &&
+        _inklessMetadataView.isConsolidatingDisklessTopic(topicPartition.topic)
     }
 
     val crossTierResponseStatus = crossTierResults.map { case (topicPartition, result) =>
