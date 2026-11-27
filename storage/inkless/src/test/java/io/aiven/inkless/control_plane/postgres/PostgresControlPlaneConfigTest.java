@@ -73,6 +73,8 @@ class PostgresControlPlaneConfigTest {
         assertThat(config.socketTimeoutMs()).isEqualTo(5000);
         assertThat(config.batchCoalescingEnabled()).isTrue();
         assertThat(config.standbyFallbackMaxConcurrent()).isEqualTo(0);
+        assertThat(config.standbyCircuitBreakerFailureThreshold()).isEqualTo(3);
+        assertThat(config.standbyCircuitBreakerProbeIntervalMs()).isEqualTo(10_000L);
 
         // ensure read/write configs are null when not set
         config.initializeReadWriteConfigs();
@@ -291,5 +293,34 @@ class PostgresControlPlaneConfigTest {
         assertThat(PostgresControlPlaneConfig.defaultStandbyFallbackMaxConcurrent(10)).isEqualTo(9);
         assertThat(PostgresControlPlaneConfig.defaultStandbyFallbackMaxConcurrent(2)).isEqualTo(1);
         assertThat(PostgresControlPlaneConfig.defaultStandbyFallbackMaxConcurrent(1)).isEqualTo(1);
+    }
+
+    @Test
+    void standbyCircuitBreakerConfigs() {
+        final var config = new PostgresControlPlaneConfig(
+            Map.of(
+                "connection.string", "jdbc:postgresql://127.0.0.1:5432/inkless",
+                "username", "username",
+                "standby.circuit.breaker.failure.threshold", "5",
+                "standby.circuit.breaker.probe.interval.ms", "2500"
+            )
+        );
+        assertThat(config.standbyCircuitBreakerFailureThreshold()).isEqualTo(5);
+        assertThat(config.standbyCircuitBreakerProbeIntervalMs()).isEqualTo(2_500L);
+
+        assertThrows(ConfigException.class, () -> new PostgresControlPlaneConfig(
+            Map.of(
+                "connection.string", "jdbc:postgresql://127.0.0.1:5432/inkless",
+                "username", "username",
+                "standby.circuit.breaker.failure.threshold", "0"
+            )
+        ));
+        assertThrows(ConfigException.class, () -> new PostgresControlPlaneConfig(
+            Map.of(
+                "connection.string", "jdbc:postgresql://127.0.0.1:5432/inkless",
+                "username", "username",
+                "standby.circuit.breaker.probe.interval.ms", "999"
+            )
+        ));
     }
 }

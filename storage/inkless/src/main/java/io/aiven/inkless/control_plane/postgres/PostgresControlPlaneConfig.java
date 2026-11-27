@@ -48,6 +48,20 @@ public class PostgresControlPlaneConfig extends PostgresConnectionConfig {
         + "defaults to 90% of read.primary.max.connections (at least 1), reserving the remaining headroom for non-findBatches reads.";
     private static final int STANDBY_FALLBACK_MAX_CONCURRENT_DEFAULT = 0;
 
+    public static final String STANDBY_CIRCUIT_BREAKER_FAILURE_THRESHOLD_CONFIG =
+        "standby.circuit.breaker.failure.threshold";
+    private static final String STANDBY_CIRCUIT_BREAKER_FAILURE_THRESHOLD_DOC =
+        "Number of consecutive standby connectivity or timeout failures before the standby circuit breaker opens "
+            + "and routes findBatches calls directly to the primary read pool.";
+    private static final int STANDBY_CIRCUIT_BREAKER_FAILURE_THRESHOLD_DEFAULT = 3;
+
+    public static final String STANDBY_CIRCUIT_BREAKER_PROBE_INTERVAL_MS_CONFIG =
+        "standby.circuit.breaker.probe.interval.ms";
+    private static final String STANDBY_CIRCUIT_BREAKER_PROBE_INTERVAL_MS_DOC =
+        "Delay in milliseconds between background SELECT 1 probes against the standby database while the standby "
+            + "circuit breaker is open.";
+    private static final long STANDBY_CIRCUIT_BREAKER_PROBE_INTERVAL_MS_DEFAULT = 10_000;
+
     private PostgresConnectionConfig readConfig;
     private PostgresConnectionConfig readPrimaryConfig;
     private PostgresConnectionConfig writeConfig;
@@ -83,6 +97,22 @@ public class PostgresControlPlaneConfig extends PostgresConnectionConfig {
                 ConfigDef.Range.atLeast(0),
                 ConfigDef.Importance.MEDIUM,
                 STANDBY_FALLBACK_MAX_CONCURRENT_DOC
+            )
+            .define(
+                STANDBY_CIRCUIT_BREAKER_FAILURE_THRESHOLD_CONFIG,
+                ConfigDef.Type.INT,
+                STANDBY_CIRCUIT_BREAKER_FAILURE_THRESHOLD_DEFAULT,
+                ConfigDef.Range.atLeast(1),
+                ConfigDef.Importance.MEDIUM,
+                STANDBY_CIRCUIT_BREAKER_FAILURE_THRESHOLD_DOC
+            )
+            .define(
+                STANDBY_CIRCUIT_BREAKER_PROBE_INTERVAL_MS_CONFIG,
+                ConfigDef.Type.LONG,
+                STANDBY_CIRCUIT_BREAKER_PROBE_INTERVAL_MS_DEFAULT,
+                ConfigDef.Range.atLeast(1_000),
+                ConfigDef.Importance.MEDIUM,
+                STANDBY_CIRCUIT_BREAKER_PROBE_INTERVAL_MS_DOC
             );
     }
 
@@ -109,6 +139,14 @@ public class PostgresControlPlaneConfig extends PostgresConnectionConfig {
      */
     static int defaultStandbyFallbackMaxConcurrent(final int maxConnections) {
         return Math.max(1, (maxConnections * 9) / 10);
+    }
+
+    public int standbyCircuitBreakerFailureThreshold() {
+        return getInt(STANDBY_CIRCUIT_BREAKER_FAILURE_THRESHOLD_CONFIG);
+    }
+
+    public long standbyCircuitBreakerProbeIntervalMs() {
+        return getLong(STANDBY_CIRCUIT_BREAKER_PROBE_INTERVAL_MS_CONFIG);
     }
 
     public void initializeReadWriteConfigs() {

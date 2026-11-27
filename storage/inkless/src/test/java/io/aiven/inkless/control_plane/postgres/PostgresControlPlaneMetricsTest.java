@@ -29,6 +29,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.Map;
 import java.util.Set;
+import java.util.function.BooleanSupplier;
 import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -84,18 +85,30 @@ class PostgresControlPlaneMetricsTest {
         final long overrideBefore = meterCount("FindBatchesPrimaryOverrideRate");
         final long failureBefore = meterCount("FindBatchesPrimaryConfirmFailureRate");
         final long rejectedBefore = meterCount("PrimaryReadLimitRejectedRate");
+        final long fallbackBefore = meterCount("StandbyFallbackRate");
+        final long fallbackFailureBefore = meterCount("StandbyFallbackFailureRate");
 
         metrics.onFindBatchesPrimaryCompleted(25L);
         metrics.onFindBatchesPrimaryConfirm(3L);
         metrics.onFindBatchesPrimaryOverride(2L);
         metrics.onFindBatchesPrimaryConfirmFailed(1L);
         metrics.onPrimaryReadLimitRejected();
+        metrics.onStandbyFallback();
+        metrics.onStandbyFallbackFailed();
 
         assertThat(((Histogram) registered("FindBatchesPrimaryQueryTime")).count()).isEqualTo(queryTimeCountBefore + 1);
         assertThat(meterCount("FindBatchesPrimaryConfirmRate")).isEqualTo(confirmBefore + 3);
         assertThat(meterCount("FindBatchesPrimaryOverrideRate")).isEqualTo(overrideBefore + 2);
         assertThat(meterCount("FindBatchesPrimaryConfirmFailureRate")).isEqualTo(failureBefore + 1);
         assertThat(meterCount("PrimaryReadLimitRejectedRate")).isEqualTo(rejectedBefore + 1);
+        assertThat(meterCount("StandbyFallbackRate")).isEqualTo(fallbackBefore + 1);
+        assertThat(meterCount("StandbyFallbackFailureRate")).isEqualTo(fallbackFailureBefore + 1);
+
+        final BooleanSupplier openSupplier = () -> true;
+        metrics.registerStandbyCircuitBreaker(openSupplier);
+        assertThat(gaugeValue("StandbyCircuitOpen")).isEqualTo(1);
+        metrics.unregisterStandbyCircuitBreaker(openSupplier);
+        assertThat(gaugeValue("StandbyCircuitOpen")).isEqualTo(0);
 
         final Set<String> documentedNames = PostgresControlPlaneMetrics.all().stream()
             .map(template -> template.name())
@@ -105,7 +118,10 @@ class PostgresControlPlaneMetricsTest {
             "FindBatchesPrimaryConfirmRate",
             "FindBatchesPrimaryOverrideRate",
             "FindBatchesPrimaryConfirmFailureRate",
-            "PrimaryReadLimitRejectedRate"
+            "PrimaryReadLimitRejectedRate",
+            "StandbyCircuitOpen",
+            "StandbyFallbackRate",
+            "StandbyFallbackFailureRate"
         );
     }
 

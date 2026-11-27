@@ -29,7 +29,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.LongAdder;
+import java.util.function.BooleanSupplier;
 
 /**
  * Query metrics shared by every {@code PostgresControlPlane} in the process.
@@ -65,6 +67,15 @@ public final class PostgresControlPlaneMetrics {
     private static final String PRIMARY_READ_LIMIT_REJECTED_RATE = "PrimaryReadLimitRejectedRate";
     private static final String PRIMARY_READ_LIMIT_REJECTED_RATE_DOC =
         "Rate of primary read fallback and confirmation calls rejected per second when the concurrency limiter is full";
+    private static final String STANDBY_CIRCUIT_OPEN = "StandbyCircuitOpen";
+    private static final String STANDBY_CIRCUIT_OPEN_DOC =
+        "1 when the standby circuit breaker is open and findBatches traffic routes to the primary read pool; 0 otherwise";
+    private static final String STANDBY_FALLBACK_RATE = "StandbyFallbackRate";
+    private static final String STANDBY_FALLBACK_RATE_DOC =
+        "Rate of findBatches calls routed to the primary read pool when the standby fails or the circuit breaker is open per second";
+    private static final String STANDBY_FALLBACK_FAILURE_RATE = "StandbyFallbackFailureRate";
+    private static final String STANDBY_FALLBACK_FAILURE_RATE_DOC =
+        "Rate of standby fallback findBatches calls that fail on the primary read pool or hit the concurrency limit per second";
 
     /**
      * This method returns a list of all the metric name templates for the PostgresControlPlaneMetrics class.
@@ -85,6 +96,9 @@ public final class PostgresControlPlaneMetrics {
         templates.add(new MetricNameTemplate(FIND_BATCHES_PRIMARY_OVERRIDE_RATE, GROUP, FIND_BATCHES_PRIMARY_OVERRIDE_RATE_DOC));
         templates.add(new MetricNameTemplate(FIND_BATCHES_PRIMARY_CONFIRM_FAILURE_RATE, GROUP, FIND_BATCHES_PRIMARY_CONFIRM_FAILURE_RATE_DOC));
         templates.add(new MetricNameTemplate(PRIMARY_READ_LIMIT_REJECTED_RATE, GROUP, PRIMARY_READ_LIMIT_REJECTED_RATE_DOC));
+        templates.add(new MetricNameTemplate(STANDBY_CIRCUIT_OPEN, GROUP, STANDBY_CIRCUIT_OPEN_DOC));
+        templates.add(new MetricNameTemplate(STANDBY_FALLBACK_RATE, GROUP, STANDBY_FALLBACK_RATE_DOC));
+        templates.add(new MetricNameTemplate(STANDBY_FALLBACK_FAILURE_RATE, GROUP, STANDBY_FALLBACK_FAILURE_RATE_DOC));
         return templates;
     }
 
@@ -127,8 +141,17 @@ public final class PostgresControlPlaneMetrics {
         metricsGroup.newMeter(FIND_BATCHES_PRIMARY_CONFIRM_FAILURE_RATE, "partitions", TimeUnit.SECONDS, Map.of());
     private final Meter primaryReadLimitRejectedRate =
         metricsGroup.newMeter(PRIMARY_READ_LIMIT_REJECTED_RATE, "rejections", TimeUnit.SECONDS, Map.of());
+    private final AtomicReference<BooleanSupplier> standbyCircuitOpenSupplier = new AtomicReference<>();
+    private final Meter standbyFallbackRate =
+        metricsGroup.newMeter(STANDBY_FALLBACK_RATE, "requests", TimeUnit.SECONDS, Map.of());
+    private final Meter standbyFallbackFailureRate =
+        metricsGroup.newMeter(STANDBY_FALLBACK_FAILURE_RATE, "requests", TimeUnit.SECONDS, Map.of());
 
     private PostgresControlPlaneMetrics() {
+        metricsGroup.newGauge(STANDBY_CIRCUIT_OPEN, () -> {
+            final BooleanSupplier supplier = standbyCircuitOpenSupplier.get();
+            return supplier != null && supplier.getAsBoolean() ? 1 : 0;
+        });
     }
 
     public static PostgresControlPlaneMetrics instance() {
@@ -225,6 +248,24 @@ public final class PostgresControlPlaneMetrics {
 
     public void onPrimaryReadLimitRejected() {
         primaryReadLimitRejectedRate.mark();
+    }
+
+    public void onStandbyFallback() {
+        standbyFallbackRate.mark();
+    }
+
+    public void onStandbyFallbackFailed() {
+        standbyFallbackFailureRate.mark();
+    }
+
+    void registerStandbyCircuitBreaker(final BooleanSupplier openSupplier) {
+        standbyCircuitOpenSupplier.set(openSupplier);
+    }
+
+    void unregisterStandbyCircuitBreaker(final BooleanSupplier openSupplier) {
+        // Detach via CAS so a retiring control plane closing after a rebuild doesn't zero out the
+        // replacement control plane's live gauge.
+        standbyCircuitOpenSupplier.compareAndSet(openSupplier, null);
     }
 
     // Visible for testing.

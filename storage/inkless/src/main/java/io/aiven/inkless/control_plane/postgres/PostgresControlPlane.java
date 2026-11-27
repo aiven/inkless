@@ -34,6 +34,7 @@ import org.jooq.impl.DSL;
 import java.io.IOException;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -94,6 +95,7 @@ public class PostgresControlPlane extends AbstractControlPlane {
     // bursts don't saturate `readPrimaryDataSource` and block `listOffsets`, `getCrossTierLogStart`,
     // and `getProducerState`.
     private Semaphore primaryReadLimiter;
+    private StandbyCircuitBreaker standbyCircuitBreaker;
 
     public PostgresControlPlane(final Time time) {
         super(time);
@@ -156,6 +158,12 @@ public class PostgresControlPlane extends AbstractControlPlane {
                 : PostgresControlPlaneConfig.defaultStandbyFallbackMaxConcurrent(
                     controlPlaneConfig.readPrimaryConfig().maxConnections());
             primaryReadLimiter = new Semaphore(maxConcurrentPermits);
+            standbyCircuitBreaker = new StandbyCircuitBreaker(
+                controlPlaneConfig.standbyCircuitBreakerFailureThreshold(),
+                controlPlaneConfig.standbyCircuitBreakerProbeIntervalMs(),
+                readDataSource,
+                pgMetrics
+            );
         } else if (readDataSource != null) {
             // Keep `jobsDataSource` isolated for background and controller jobs instead of borrowing
             // it for read fallback when `read.primary.*` is absent.
@@ -269,13 +277,39 @@ public class PostgresControlPlane extends AbstractControlPlane {
         final int maxBatchesPerPartition
     ) {
         final List<FindBatchRequest> requestList = requests.toList();
-        final List<FindBatchResponse> responses = new FindBatchesJob(
-            time, readJooqCtx, // use specific read context when finding batches
-            requestList, fetchMaxBytes, maxBatchesPerPartition,
-            pgMetrics::onFindBatchesCompleted).call();
-
         if (!standbyProtectionEnabled) {
+            final List<FindBatchResponse> responses = new FindBatchesJob(
+                time, readJooqCtx, // use specific read context when finding batches
+                requestList, fetchMaxBytes, maxBatchesPerPartition,
+                pgMetrics::onFindBatchesCompleted).call();
             return responses.iterator();
+        }
+        // Short-circuit empty fetches before checking the breaker so they don't take a limiter
+        // permit or increment `StandbyFallbackRate`.
+        if (requestList.isEmpty()) {
+            return Collections.emptyIterator();
+        }
+
+        if (standbyCircuitBreaker.isOpen()) {
+            return fallbackFindBatchesOnPrimary(requestList, fetchMaxBytes, maxBatchesPerPartition).iterator();
+        }
+
+        final long generation = standbyCircuitBreaker.generation();
+        final List<FindBatchResponse> responses;
+        try {
+            responses = new FindBatchesJob(
+                time, readJooqCtx, // use specific read context when finding batches
+                requestList, fetchMaxBytes, maxBatchesPerPartition,
+                pgMetrics::onFindBatchesCompleted).call();
+            standbyCircuitBreaker.recordSuccess(generation);
+        } catch (final RuntimeException e) {
+            if (!StandbyCircuitBreaker.isConnectivityOrTimeoutFailure(e)) {
+                throw e;
+            }
+            standbyCircuitBreaker.recordFailure(generation, e);
+            // Fall back immediately even before reaching the trip threshold so a brief failure on
+            // the standby doesn't surface `UNKNOWN_SERVER_ERROR` to callers.
+            return fallbackFindBatchesOnPrimary(requestList, fetchMaxBytes, maxBatchesPerPartition).iterator();
         }
         return maybeRetryOutOfRangeOnPrimary(requestList, responses, fetchMaxBytes, maxBatchesPerPartition).iterator();
     }
@@ -345,6 +379,38 @@ public class PostgresControlPlane extends AbstractControlPlane {
             pgMetrics.onFindBatchesPrimaryOverride(overrideCount);
         }
         return primaryResponses;
+    }
+
+    private List<FindBatchResponse> fallbackFindBatchesOnPrimary(
+        final List<FindBatchRequest> requestList,
+        final int fetchMaxBytes,
+        final int maxBatchesPerPartition
+    ) {
+        pgMetrics.onStandbyFallback();
+        // Fail fast instead of queuing fetch threads behind `readPrimaryDataSource`: return
+        // retriable `KAFKA_STORAGE_ERROR` so callers back off without resetting offsets.
+        if (!primaryReadLimiter.tryAcquire()) {
+            pgMetrics.onPrimaryReadLimitRejected();
+            pgMetrics.onStandbyFallbackFailed();
+            return Collections.nCopies(requestList.size(), FindBatchResponse.kafkaStorageError());
+        }
+        try {
+            return new FindBatchesJob(
+                time, primaryReadJooqCtx,
+                requestList, fetchMaxBytes, maxBatchesPerPartition,
+                pgMetrics::onFindBatchesPrimaryCompleted).call();
+        } catch (final RuntimeException e) {
+            LOGGER.warn(
+                "Standby fallback findBatches failed on primary for {} partition(s); returning KAFKA_STORAGE_ERROR",
+                requestList.size(), e);
+            pgMetrics.onStandbyFallbackFailed();
+            // Return per-partition retriable `KAFKA_STORAGE_ERROR` instead of letting
+            // `ControlPlaneException` escape to `FetchHandler`, which maps it to
+            // non-retriable `UNKNOWN_SERVER_ERROR`.
+            return Collections.nCopies(requestList.size(), FindBatchResponse.kafkaStorageError());
+        } finally {
+            primaryReadLimiter.release();
+        }
     }
 
     private static List<FindBatchResponse> replaceWithKafkaStorageError(
@@ -510,6 +576,11 @@ public class PostgresControlPlane extends AbstractControlPlane {
         return primaryReadLimiter;
     }
 
+    // Visible for testing.
+    StandbyCircuitBreaker standbyCircuitBreaker() {
+        return standbyCircuitBreaker;
+    }
+
     /**
      * Closes whatever {@link #configure} managed to open before this is discarded, whether that is
      * everything, nothing, because it failed before opening any pool, or something in between,
@@ -523,6 +594,11 @@ public class PostgresControlPlane extends AbstractControlPlane {
             return;
         }
         closed = true;
+        // Stop the standby probe thread before closing `readDataSource` so it doesn't probe a
+        // closing pool.
+        if (standbyCircuitBreaker != null) {
+            standbyCircuitBreaker.close();
+        }
         if (jobsDataSource != null) {
             jobsDataSource.close();
         }
