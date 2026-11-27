@@ -11419,6 +11419,39 @@ class ReplicaManagerInklessTest {
     }
   }
 
+  // Local retention deleted every local segment of an idle phase 2 leader, so its local log is an empty active
+  // segment past the seal, and a read at the seal is out of range. The leader validates the fetch of a follower
+  // that rebuilt its log up to that offset at its local log start.
+  @Test
+  def testFollowerFetchPastSealSucceedsWhenLeaderLocalLogStartsPastSeal(): Unit = {
+    val followerId = 2
+    val sealOffset = 5L
+    val localLogStartOffset = 20L
+    val replicaManager = createReplicaManager(
+      List(disklessTopicPartition.topic()),
+      topicIdMapping = Map(disklessTopicPartition.topic() -> disklessTopicPartition.topicId()),
+      disklessManagedReplicasEnabled = true,
+    )
+    try {
+      val partition = setupSwitchedLeaderWithOutOfSyncFollower(
+        replicaManager, disklessTopicPartition, followerId, sealOffset, followerInIsr = true)
+      partition.truncateFullyAndStartAt(localLogStartOffset, isFuture = false, Optional.of[java.lang.Long](0L))
+      partition.localLogOrException.maybeIncrementLocalLogStartOffset(localLogStartOffset,
+        LogStartOffsetIncrementReason.LeaderOffsetIncremented)
+      assertEquals(localLogStartOffset, partition.localLogOrException.localLogStartOffset)
+      assertEquals(localLogStartOffset, partition.localLogOrException.logEndOffset)
+
+      val data = fetchFollowerAtSeal(replicaManager, disklessTopicPartition, followerId, sealOffset,
+        Optional.of(partition.getLeaderEpoch), fetchOffset = Some(localLogStartOffset))
+
+      assertEquals(Errors.NONE, data.error)
+      assertEquals(MemoryRecords.EMPTY, data.records)
+      assertEquals(sealOffset, data.highWatermark)
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
   @Test
   def testFollowerFetchAtSealReturnsDivergingEpochAndSkipsIsrExpansion(): Unit = {
     val followerId = 2

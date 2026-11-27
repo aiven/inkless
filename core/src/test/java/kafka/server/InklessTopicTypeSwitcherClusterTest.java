@@ -77,6 +77,7 @@ import org.junit.jupiter.api.TestInfo;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.testcontainers.junit.jupiter.Container;
@@ -407,9 +408,12 @@ public class InklessTopicTypeSwitcherClusterTest {
 
     // Local retention deletes the consolidated segments that the leader uploaded, so the local log of the leader
     // starts past the seal. A replica that a reassignment adds starts below the seal, and it rebuilds its log from
-    // the consolidated segment in remote storage that ends before the local log start of the leader.
-    @Test
-    public void testAddedReplicaRebuildsWhenLeaderLocalLogStartsPastSeal() throws Exception {
+    // the consolidated segment in remote storage that ends before the local log start of the leader. On an idle
+    // leader, local retention also rolls the last segment, and the broker uploads and deletes it. The local log of
+    // the leader is then empty.
+    @ParameterizedTest(name = "idleLeader={0}")
+    @ValueSource(booleans = {false, true})
+    public void testAddedReplicaRebuildsWhenLeaderLocalLogStartsPastSeal(final boolean idleLeader) throws Exception {
         final String topic = "switch-added-replica-" + UUID.randomUUID().toString().substring(0, 8);
         final TopicPartition tp = new TopicPartition(topic, 0);
         final int classicRecords = 300;
@@ -441,18 +445,25 @@ public class InklessTopicTypeSwitcherClusterTest {
             final int leaderId = cluster.brokers().get(0).replicaManager().getPartitionOrException(tp).isLeader() ? 0 : 1;
             final UnifiedLog leaderLog = cluster.brokers().get(leaderId).replicaManager().getLog(tp).get();
             alterTopicConfigWithIncrementalAlterConfigs(admin, topic, Map.of(TopicConfig.LOCAL_LOG_RETENTION_MS_CONFIG, "1000"));
-            TestUtils.waitForCondition(() -> leaderLog.localLogStartOffset() > seal, 180_000L,
-                () -> "Local retention didn't move the local log start of the leader past the seal " + seal
-                    + ": it's " + leaderLog.localLogStartOffset());
+            final long expectedLocalLogStart = idleLeader ? endOffset : seal + 1;
+            TestUtils.waitForCondition(() -> leaderLog.localLogStartOffset() >= expectedLocalLogStart, 240_000L,
+                () -> "Local retention didn't move the local log start of the leader to " + expectedLocalLogStart
+                    + ": it's " + leaderLog.localLogStartOffset() + ", and the log end offset is "
+                    + leaderLog.logEndOffset());
 
             admin.alterPartitionReassignments(Map.of(tp, Optional.of(new NewPartitionReassignment(List.of(0, 1, 2)))))
                 .all().get(30, TimeUnit.SECONDS);
             final ReplicaManager addedReplica = cluster.brokers().get(2).replicaManager();
+            // The classic fetcher rebuilds the log, and it evicts the partition when it hands off to consolidation.
             TestUtils.waitForCondition(
-                () -> addedReplica.getLog(tp).isDefined() && addedReplica.getLog(tp).get().logEndOffset() >= seal,
+                () -> addedReplica.getLog(tp).isDefined() && addedReplica.getLog(tp).get().logEndOffset() >= seal
+                    && addedReplica.replicaFetcherManager().getFetcher(tp).isEmpty(),
                 60_000L,
-                () -> "The added replica didn't rebuild its log up to the seal " + seal + ": its log end offset is "
-                    + (addedReplica.getLog(tp).isDefined() ? addedReplica.getLog(tp).get().logEndOffset() : -1));
+                () -> "The added replica didn't rebuild its log up to the seal " + seal + " and hand off to "
+                    + "consolidation: its log end offset is "
+                    + (addedReplica.getLog(tp).isDefined() ? addedReplica.getLog(tp).get().logEndOffset() : -1)
+                    + ", and the classic fetcher " + (addedReplica.replicaFetcherManager().getFetcher(tp).isEmpty()
+                        ? "doesn't hold" : "still holds") + " the partition");
 
             // Broker 2 is in az3. The metadata routing sends a consumer in that zone to the added replica.
             final Map<String, Object> consumerConfigs = baseConsumerConfigs();
