@@ -216,6 +216,13 @@ public class TierStateMachine {
         // will have the same epoch.
         if (epochForLeaderLocalLogStartOffset == 0) {
             targetEpoch = epochForLeaderLocalLogStartOffset;
+        } else if (seal >= 0 && leaderLocalLogStartOffset > seal) {
+            // Inkless: the record before the local log start of the source is at or past the classic-to-diskless seal.
+            // Consolidation writes every record from the seal on in one leader epoch, so that record is in the epoch
+            // of the local log start. A classic leader answers OffsetsForLeaderEpoch for the epoch before it with the
+            // diskless end offset, which a consumer needs to validate its position. No remote segment holds that
+            // epoch, so the lookup below would fail on every retry.
+            targetEpoch = epochForLeaderLocalLogStartOffset;
         } else {
             // Fetch the earlier epoch/end-offset(exclusive) from the leader.
             OffsetForLeaderEpochResponseData.EpochEndOffset earlierEpochEndOffset = fetchEarlierEpochEndOffset(epochForLeaderLocalLogStartOffset, topicPartition, currentLeaderEpoch);

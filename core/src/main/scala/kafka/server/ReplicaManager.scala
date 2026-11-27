@@ -2995,9 +2995,16 @@ class ReplicaManager(val config: KafkaConfig,
                 case Right(partition) =>
                   try {
                     // Use the classic follower-read validation without returning any records.
+                    // In phase 2, local retention can move the local log start of the leader past the seal.
+                    // A leader that holds no local record from there on, such as an idle one, can't read at
+                    // the seal. A follower that rebuilt its log up to that offset would get
+                    // OFFSET_OUT_OF_RANGE on every fetch and never hand off to consolidation.
+                    val validationOffset = partition.log
+                      .map(log => math.max(classicToDisklessStartOffset, log.localLogStartOffset))
+                      .getOrElse(classicToDisklessStartOffset)
                     val fetchAtSeal = new PartitionData(
                       fetchPartitionData.topicId,
-                      classicToDisklessStartOffset,
+                      validationOffset,
                       fetchPartitionData.logStartOffset,
                       0,
                       fetchPartitionData.currentLeaderEpoch,
