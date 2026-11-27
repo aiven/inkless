@@ -22,10 +22,12 @@ import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.server.metrics.KafkaMetricsGroup;
 
 import com.yammer.metrics.core.Histogram;
+import com.yammer.metrics.core.Meter;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
 
@@ -48,6 +50,22 @@ public final class PostgresControlPlaneMetrics {
         "PruneDisklessLogs", "AdvanceCrossTierLogStart", "GetCrossTierLogStart"
     );
 
+    private static final String FIND_BATCHES_PRIMARY_QUERY_TIME = "FindBatchesPrimaryQueryTime";
+    private static final String FIND_BATCHES_PRIMARY_QUERY_TIME_DOC =
+        "Time in milliseconds spent executing the FindBatches query on the primary database";
+    private static final String FIND_BATCHES_PRIMARY_CONFIRM_RATE = "FindBatchesPrimaryConfirmRate";
+    private static final String FIND_BATCHES_PRIMARY_CONFIRM_RATE_DOC =
+        "Rate of above-HWM OFFSET_OUT_OF_RANGE partitions that the broker confirms on the primary database per second";
+    private static final String FIND_BATCHES_PRIMARY_OVERRIDE_RATE = "FindBatchesPrimaryOverrideRate";
+    private static final String FIND_BATCHES_PRIMARY_OVERRIDE_RATE_DOC =
+        "Rate of stale standby OFFSET_OUT_OF_RANGE partitions that the primary database overrides with valid data per second";
+    private static final String FIND_BATCHES_PRIMARY_CONFIRM_FAILURE_RATE = "FindBatchesPrimaryConfirmFailureRate";
+    private static final String FIND_BATCHES_PRIMARY_CONFIRM_FAILURE_RATE_DOC =
+        "Rate of above-HWM OFFSET_OUT_OF_RANGE partitions whose primary confirmation fails or hits the concurrency limit per second";
+    private static final String PRIMARY_READ_LIMIT_REJECTED_RATE = "PrimaryReadLimitRejectedRate";
+    private static final String PRIMARY_READ_LIMIT_REJECTED_RATE_DOC =
+        "Rate of primary read fallback and confirmation calls rejected per second when the concurrency limiter is full";
+
     /**
      * This method returns a list of all the metric name templates for the PostgresControlPlaneMetrics class.
      * This is used for documentation purposes only.
@@ -62,6 +80,11 @@ public final class PostgresControlPlaneMetrics {
             templates.add(new MetricNameTemplate(name + "LastSuccessfulQueryAgeMs", GROUP,
                 "Milliseconds since the last successful " + name + " query completed; -1 if no query has succeeded since startup"));
         }
+        templates.add(new MetricNameTemplate(FIND_BATCHES_PRIMARY_QUERY_TIME, GROUP, FIND_BATCHES_PRIMARY_QUERY_TIME_DOC));
+        templates.add(new MetricNameTemplate(FIND_BATCHES_PRIMARY_CONFIRM_RATE, GROUP, FIND_BATCHES_PRIMARY_CONFIRM_RATE_DOC));
+        templates.add(new MetricNameTemplate(FIND_BATCHES_PRIMARY_OVERRIDE_RATE, GROUP, FIND_BATCHES_PRIMARY_OVERRIDE_RATE_DOC));
+        templates.add(new MetricNameTemplate(FIND_BATCHES_PRIMARY_CONFIRM_FAILURE_RATE, GROUP, FIND_BATCHES_PRIMARY_CONFIRM_FAILURE_RATE_DOC));
+        templates.add(new MetricNameTemplate(PRIMARY_READ_LIMIT_REJECTED_RATE, GROUP, PRIMARY_READ_LIMIT_REJECTED_RATE_DOC));
         return templates;
     }
 
@@ -94,6 +117,16 @@ public final class PostgresControlPlaneMetrics {
     private final QueryMetrics pruneDisklessLogsMetrics = new QueryMetrics("PruneDisklessLogs");
     private final QueryMetrics advanceCrossTierLogStartMetrics = new QueryMetrics("AdvanceCrossTierLogStart");
     private final QueryMetrics getCrossTierLogStartMetrics = new QueryMetrics("GetCrossTierLogStart");
+    private final Histogram findBatchesPrimaryQueryTime =
+        metricsGroup.newHistogram(FIND_BATCHES_PRIMARY_QUERY_TIME, true, Map.of());
+    private final Meter findBatchesPrimaryConfirmRate =
+        metricsGroup.newMeter(FIND_BATCHES_PRIMARY_CONFIRM_RATE, "partitions", TimeUnit.SECONDS, Map.of());
+    private final Meter findBatchesPrimaryOverrideRate =
+        metricsGroup.newMeter(FIND_BATCHES_PRIMARY_OVERRIDE_RATE, "partitions", TimeUnit.SECONDS, Map.of());
+    private final Meter findBatchesPrimaryConfirmFailureRate =
+        metricsGroup.newMeter(FIND_BATCHES_PRIMARY_CONFIRM_FAILURE_RATE, "partitions", TimeUnit.SECONDS, Map.of());
+    private final Meter primaryReadLimitRejectedRate =
+        metricsGroup.newMeter(PRIMARY_READ_LIMIT_REJECTED_RATE, "rejections", TimeUnit.SECONDS, Map.of());
 
     private PostgresControlPlaneMetrics() {
     }
@@ -172,6 +205,26 @@ public final class PostgresControlPlaneMetrics {
 
     public void onGetCrossTierLogStartCompleted(Long duration) {
         getCrossTierLogStartMetrics.record(duration);
+    }
+
+    public void onFindBatchesPrimaryCompleted(final Long duration) {
+        findBatchesPrimaryQueryTime.update(duration);
+    }
+
+    public void onFindBatchesPrimaryConfirm(final long count) {
+        findBatchesPrimaryConfirmRate.mark(count);
+    }
+
+    public void onFindBatchesPrimaryOverride(final long count) {
+        findBatchesPrimaryOverrideRate.mark(count);
+    }
+
+    public void onFindBatchesPrimaryConfirmFailed(final long count) {
+        findBatchesPrimaryConfirmFailureRate.mark(count);
+    }
+
+    public void onPrimaryReadLimitRejected() {
+        primaryReadLimitRejectedRate.mark();
     }
 
     // Visible for testing.

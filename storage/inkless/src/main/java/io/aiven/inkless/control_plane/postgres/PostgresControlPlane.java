@@ -20,6 +20,7 @@ package io.aiven.inkless.control_plane.postgres;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.config.ConfigException;
+import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.utils.Time;
 
 import com.zaxxer.hikari.HikariConfig;
@@ -32,11 +33,13 @@ import org.jooq.impl.DSL;
 
 import java.io.IOException;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.OptionalLong;
 import java.util.Set;
+import java.util.concurrent.Semaphore;
 import java.util.stream.Stream;
 
 import io.aiven.inkless.common.ObjectFormat;
@@ -77,13 +80,20 @@ public class PostgresControlPlane extends AbstractControlPlane {
 
     private HikariDataSource jobsDataSource;
     private HikariDataSource readDataSource;
+    private HikariDataSource readPrimaryDataSource;
     private HikariDataSource writeDataSource;
     private PostgresControlPlaneConfig controlPlaneConfig;
     private volatile boolean closed;
 
     private DSLContext readJooqCtx;
+    private DSLContext primaryReadJooqCtx;
     private DSLContext writeJooqCtx;
     private DSLContext jobsJooqCtx;
+    private volatile boolean standbyProtectionEnabled;
+    // Fail-fast concurrency limiter for primary `findBatches` calls (confirmation and fallback) so
+    // bursts don't saturate `readPrimaryDataSource` and block `listOffsets`, `getCrossTierLogStart`,
+    // and `getProducerState`.
+    private Semaphore primaryReadLimiter;
 
     public PostgresControlPlane(final Time time) {
         super(time);
@@ -129,18 +139,47 @@ public class PostgresControlPlane extends AbstractControlPlane {
         if (controlPlaneConfig.readConfig() != null) {
             LOGGER.info("Using separate read configuration");
             readDataSource = new HikariDataSource(dataSourceConfig(POOL_NAME + "-read", controlPlaneConfig.readConfig()));
+        }
+        if (controlPlaneConfig.readPrimaryConfig() != null) {
+            LOGGER.info("Using separate read primary configuration");
+            readPrimaryDataSource = new HikariDataSource(
+                dataSourceConfig(POOL_NAME + "-read-primary", controlPlaneConfig.readPrimaryConfig()));
+        }
+
+        if (readDataSource != null && readPrimaryDataSource != null) {
             readJooqCtx = DSL.using(readDataSource, SQLDialect.POSTGRES);
+            primaryReadJooqCtx = DSL.using(readPrimaryDataSource, SQLDialect.POSTGRES);
+            standbyProtectionEnabled = true;
+            final int configuredMaxConcurrent = controlPlaneConfig.standbyFallbackMaxConcurrent();
+            final int maxConcurrentPermits = configuredMaxConcurrent > 0
+                ? configuredMaxConcurrent
+                : PostgresControlPlaneConfig.defaultStandbyFallbackMaxConcurrent(
+                    controlPlaneConfig.readPrimaryConfig().maxConnections());
+            primaryReadLimiter = new Semaphore(maxConcurrentPermits);
+        } else if (readDataSource != null) {
+            // Keep `jobsDataSource` isolated for background and controller jobs instead of borrowing
+            // it for read fallback when `read.primary.*` is absent.
+            readJooqCtx = DSL.using(readDataSource, SQLDialect.POSTGRES);
+            primaryReadJooqCtx = readJooqCtx;
+            standbyProtectionEnabled = false;
+        } else if (readPrimaryDataSource != null) {
+            LOGGER.warn("Configured read.primary.* without read.*; routing all reads to read.primary and disabling standby protection");
+            readJooqCtx = DSL.using(readPrimaryDataSource, SQLDialect.POSTGRES);
+            primaryReadJooqCtx = readJooqCtx;
+            standbyProtectionEnabled = false;
         } else {
-            LOGGER.info("No separate write configuration found, using jobs context for reads");
+            LOGGER.info("No separate read configuration found, using jobs context for reads");
             readJooqCtx = jobsJooqCtx;
+            primaryReadJooqCtx = jobsJooqCtx;
+            standbyProtectionEnabled = false;
         }
     }
 
     /**
-     * Requires the default connection string, and the read or write connection string if either
-     * override is present at all, to exist and be non-empty.
+     * Requires the default connection string, and each override connection string whose prefix is
+     * present, to exist and be non-empty.
      *
-     * <p>A runtime reconfiguration may legitimately empty one of these three keys to take the
+     * <p>A runtime reconfiguration may legitimately empty one of these four keys to take the
      * control plane out of service; nothing else in this map may be missing or malformed without
      * it being a misconfiguration. Checking that structurally, against the raw keys and
      * values, keeps this from being confused with an unrelated {@link ConfigException}, such as a
@@ -148,8 +187,14 @@ public class PostgresControlPlane extends AbstractControlPlane {
      */
     private static void requireConnectionStringsConfigured(final Map<String, ?> configs) {
         requireConnectionString(configs, "");
-        if (hasAnyKeyWithPrefix(configs, PostgresControlPlaneConfig.READ_CONFIG_PREFIX)) {
+        final boolean hasReadKey = configs.keySet().stream()
+            .anyMatch(key -> key.startsWith(PostgresControlPlaneConfig.READ_CONFIG_PREFIX)
+                && !key.startsWith(PostgresControlPlaneConfig.READ_PRIMARY_CONFIG_PREFIX));
+        if (hasReadKey) {
             requireConnectionString(configs, PostgresControlPlaneConfig.READ_CONFIG_PREFIX);
+        }
+        if (hasAnyKeyWithPrefix(configs, PostgresControlPlaneConfig.READ_PRIMARY_CONFIG_PREFIX)) {
+            requireConnectionString(configs, PostgresControlPlaneConfig.READ_PRIMARY_CONFIG_PREFIX);
         }
         if (hasAnyKeyWithPrefix(configs, PostgresControlPlaneConfig.WRITE_CONFIG_PREFIX)) {
             requireConnectionString(configs, PostgresControlPlaneConfig.WRITE_CONFIG_PREFIX);
@@ -223,17 +268,102 @@ public class PostgresControlPlane extends AbstractControlPlane {
         final int fetchMaxBytes,
         final int maxBatchesPerPartition
     ) {
-        final FindBatchesJob job = new FindBatchesJob(
+        final List<FindBatchRequest> requestList = requests.toList();
+        final List<FindBatchResponse> responses = new FindBatchesJob(
             time, readJooqCtx, // use specific read context when finding batches
-            requests.toList(), fetchMaxBytes, maxBatchesPerPartition,
-            pgMetrics::onFindBatchesCompleted);
-        return job.call().iterator();
+            requestList, fetchMaxBytes, maxBatchesPerPartition,
+            pgMetrics::onFindBatchesCompleted).call();
+
+        if (!standbyProtectionEnabled) {
+            return responses.iterator();
+        }
+        return maybeRetryOutOfRangeOnPrimary(requestList, responses, fetchMaxBytes, maxBatchesPerPartition).iterator();
+    }
+
+    /**
+     * Retries the fetch against the primary read pool if any standby response reports
+     * {@code OFFSET_OUT_OF_RANGE} past the high watermark, so a lagging standby doesn't trigger
+     * consumer offset resets or consolidation log truncation.
+     */
+    private List<FindBatchResponse> maybeRetryOutOfRangeOnPrimary(
+        final List<FindBatchRequest> requestList,
+        final List<FindBatchResponse> standbyResponses,
+        final int fetchMaxBytes,
+        final int maxBatchesPerPartition
+    ) {
+        final List<Integer> positionsToConfirm = new ArrayList<>();
+        for (int i = 0; i < standbyResponses.size(); i++) {
+            final FindBatchResponse response = standbyResponses.get(i);
+            // Confirm `OFFSET_OUT_OF_RANGE` only when the requested offset exceeds the high watermark.
+            // Because `log_start_offset` moves forward monotonically, a lagging standby already answers
+            // below-LSO requests authoritatively.
+            if (response.errors() == Errors.OFFSET_OUT_OF_RANGE
+                && requestList.get(i).offset() > response.highWatermark()) {
+                positionsToConfirm.add(i);
+            }
+        }
+        if (positionsToConfirm.isEmpty()) {
+            return standbyResponses;
+        }
+
+        pgMetrics.onFindBatchesPrimaryConfirm(positionsToConfirm.size());
+        // Fail fast instead of blocking fetch threads behind `readPrimaryDataSource`: return
+        // retriable `KAFKA_STORAGE_ERROR` for only the unconfirmed partitions so callers retry
+        // without resetting offsets while healthy standby partitions in this fetch still succeed.
+        if (!primaryReadLimiter.tryAcquire()) {
+            pgMetrics.onPrimaryReadLimitRejected();
+            pgMetrics.onFindBatchesPrimaryConfirmFailed(positionsToConfirm.size());
+            return replaceWithKafkaStorageError(standbyResponses, positionsToConfirm);
+        }
+
+        // Re-run the full fetch on primary so `find_batches_v2` enforces `fetchMaxBytes`,
+        // per-partition limits, and the minimum-batch allowance in one pass with fresh watermarks.
+        // If primary fails, downgrade only the unconfirmed partitions to retriable
+        // `KAFKA_STORAGE_ERROR` so valid standby answers for the other partitions still succeed.
+        final List<FindBatchResponse> primaryResponses;
+        try {
+            primaryResponses = new FindBatchesJob(
+                time, primaryReadJooqCtx,
+                requestList, fetchMaxBytes, maxBatchesPerPartition,
+                pgMetrics::onFindBatchesPrimaryCompleted).call();
+        } catch (final RuntimeException e) {
+            LOGGER.warn("Failed to confirm {} above-HWM OFFSET_OUT_OF_RANGE partition(s) on primary; returning KAFKA_STORAGE_ERROR",
+                positionsToConfirm.size(), e);
+            pgMetrics.onFindBatchesPrimaryConfirmFailed(positionsToConfirm.size());
+            return replaceWithKafkaStorageError(standbyResponses, positionsToConfirm);
+        } finally {
+            primaryReadLimiter.release();
+        }
+
+        int overrideCount = 0;
+        for (final int position : positionsToConfirm) {
+            if (primaryResponses.get(position).errors() == Errors.NONE) {
+                overrideCount++;
+            }
+        }
+        if (overrideCount > 0) {
+            pgMetrics.onFindBatchesPrimaryOverride(overrideCount);
+        }
+        return primaryResponses;
+    }
+
+    private static List<FindBatchResponse> replaceWithKafkaStorageError(
+        final List<FindBatchResponse> responses,
+        final List<Integer> positions
+    ) {
+        final List<FindBatchResponse> merged = new ArrayList<>(responses);
+        for (final int position : positions) {
+            merged.set(position, FindBatchResponse.kafkaStorageError());
+        }
+        return merged;
     }
 
     @Override
     protected Iterator<ListOffsetsResponse> listOffsetsForExistingPartitions(Stream<ListOffsetsRequest> requests) {
+        // `list_offsets_v1` never returns `OFFSET_OUT_OF_RANGE`, so callers can't detect standby
+        // staleness from its response. Route directly to `primaryReadJooqCtx`.
         final ListOffsetsJob job = new ListOffsetsJob(
-            time, readJooqCtx,
+            time, primaryReadJooqCtx,
             requests.toList(),
             pgMetrics::onListOffsetsCompleted);
         return job.call().iterator();
@@ -286,7 +416,7 @@ public class PostgresControlPlane extends AbstractControlPlane {
     @Override
     public OptionalLong getCrossTierLogStart(final TopicIdPartition topicIdPartition) {
         try {
-            return new GetCrossTierLogStartJob(time, readJooqCtx, topicIdPartition, pgMetrics::onGetCrossTierLogStartCompleted).call();
+            return new GetCrossTierLogStartJob(time, primaryReadJooqCtx, topicIdPartition, pgMetrics::onGetCrossTierLogStartCompleted).call();
         } catch (final Exception e) {
             throw new ControlPlaneException("Failed to get cross-tier log start offset", e);
         }
@@ -342,7 +472,7 @@ public class PostgresControlPlane extends AbstractControlPlane {
     @Override
     public List<GetProducerStateResponse> getProducerState(final List<GetProducerStateRequest> requests) {
         try {
-            final GetProducerStateJob job = new GetProducerStateJob(time, readJooqCtx, requests, pgMetrics::onGetProducerStateCompleted);
+            final GetProducerStateJob job = new GetProducerStateJob(time, primaryReadJooqCtx, requests, pgMetrics::onGetProducerStateCompleted);
             return job.call();
         } catch (final Exception e) {
             if (e instanceof ControlPlaneException) {
@@ -370,6 +500,16 @@ public class PostgresControlPlane extends AbstractControlPlane {
         }
     }
 
+    // Visible for testing.
+    boolean standbyProtectionEnabled() {
+        return standbyProtectionEnabled;
+    }
+
+    // Visible for testing.
+    Semaphore primaryReadLimiter() {
+        return primaryReadLimiter;
+    }
+
     /**
      * Closes whatever {@link #configure} managed to open before this is discarded, whether that is
      * everything, nothing, because it failed before opening any pool, or something in between,
@@ -391,6 +531,9 @@ public class PostgresControlPlane extends AbstractControlPlane {
         }
         if (readDataSource != null) {
             readDataSource.close();
+        }
+        if (readPrimaryDataSource != null) {
+            readPrimaryDataSource.close();
         }
     }
 }

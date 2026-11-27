@@ -29,8 +29,9 @@ import org.apache.kafka.common.compress.Compression
 import org.apache.kafka.common.errors.RecordBatchTooLargeException
 import org.apache.kafka.common.message.FetchResponseData
 import org.apache.kafka.common.protocol.Errors
-import org.apache.kafka.common.requests.FetchRequest
+import org.apache.kafka.common.requests.{FetchRequest, ListOffsetsRequest}
 import org.apache.kafka.common.record.TimestampType
+import org.apache.kafka.common.record.internal.FileRecords.TimestampAndOffset
 import org.apache.kafka.common.record.internal.{BaseRecords, MemoryRecords, SimpleRecord}
 import org.apache.kafka.metadata.PartitionRegistration
 import org.apache.kafka.server.LeaderEndPoint
@@ -44,6 +45,7 @@ import org.apache.kafka.server.purgatory.DelayedOperationPurgatory
 import org.apache.kafka.server.storage.log.FetchPartitionData
 import org.apache.kafka.storage.internals.checkpoint.LeaderEpochCheckpointFile
 import org.apache.kafka.storage.internals.epoch.LeaderEpochFileCache
+import org.apache.kafka.storage.internals.log.OffsetResultHolder.FileRecordsOrError
 import org.apache.kafka.storage.internals.log.{EpochEntry, LogAppendInfo, LogDirFailureChannel, UnifiedLog}
 import io.aiven.inkless.control_plane.{BatchInfo, BatchMetadata, FindBatchResponse}
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats
@@ -51,7 +53,7 @@ import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.{AfterEach, BeforeEach, Test}
 import org.mockito.ArgumentCaptor
 import org.mockito.ArgumentMatchers.{any, anyInt, anyLong}
-import org.mockito.Mockito.{RETURNS_DEEP_STUBS, doAnswer, doNothing, mock, never, verify, when}
+import org.mockito.Mockito.{RETURNS_DEEP_STUBS, atLeastOnce, clearInvocations, doAnswer, doNothing, mock, never, verify, when}
 
 import java.nio.charset.StandardCharsets
 import java.util
@@ -586,6 +588,170 @@ class ConsolidationFetcherThreadTest {
 
     // The stale tail [seal, LEO) is truncated away: the follower truncates back to the committed seal.
     verify(partition).truncateTo(seal, isFuture = false)
+  }
+
+  private def runConsolidationFetchWithRealLog(
+    fetchResultError: Errors,
+    fetchResultHighWatermark: Long,
+    primaryLatestOffset: Long,
+    primaryEarliestOffset: Long = 0L
+  ): Unit = {
+    val topicId = Uuid.randomUuid()
+    val topicIdPartition = new TopicIdPartition(topicId, topicPartition)
+    val tempDir = TestUtils.tempDir()
+    val logDir = TestUtils.randomPartitionLogDir(tempDir)
+    val brokerTopicStats = new BrokerTopicStats
+    val mockTime = new MockTime()
+    val log = LogTestUtils.createLog(
+      logDir,
+      LogTestUtils.createLogConfig(segmentBytes = 64 * 1024, indexIntervalBytes = 1),
+      brokerTopicStats,
+      mockTime.scheduler,
+      mockTime
+    )
+
+    try {
+      // Populate local log with offsets 0..9 and advance local high watermark to 10.
+      val initialRecords = MemoryRecords.withRecords(
+        0L, Compression.NONE, 0,
+        (0 until 10).map(i => new SimpleRecord(1000L + i, s"val-$i".getBytes(StandardCharsets.UTF_8))): _*
+      )
+      log.appendAsFollower(initialRecords, 0)
+      log.updateHighWatermark(10L)
+      assertEquals(10L, log.logEndOffset)
+      assertEquals(10L, log.highWatermark)
+
+      val partition = partitionWithRealLog(log)
+      when(partition.topicPartition).thenReturn(topicPartition)
+      doAnswer { invocation =>
+        log.truncateTo(invocation.getArgument[Long](0))
+        null
+      }.when(partition).truncateTo(anyLong(), any[Boolean])
+
+      val replicaManager = mock(classOf[ReplicaManager], RETURNS_DEEP_STUBS)
+      when(replicaManager.localLogOrException(topicPartition)).thenReturn(log)
+      when(replicaManager.getPartitionOrException(topicPartition)).thenReturn(partition)
+      when(replicaManager.getPartitionOrError(topicPartition)).thenReturn(Right(partition))
+      when(replicaManager.brokerTopicStats).thenReturn(brokerTopicStats)
+      when(replicaManager.crossTierEarliestOffset(topicPartition)).thenReturn(OptionalLong.empty())
+      when(replicaManager.classicToDisklessStartOffset(topicPartition))
+        .thenReturn(PartitionRegistration.NO_CLASSIC_TO_DISKLESS_START_OFFSET)
+      when(replicaManager.disklessLeaderEpoch(topicPartition))
+        .thenReturn(PartitionRegistration.NO_DISKLESS_LEADER_EPOCH)
+      when(replicaManager.hasReadableRemoteLogCoverage(any(), anyLong()))
+        .thenReturn(Optional.of(java.lang.Boolean.FALSE))
+      when(replicaManager.consolidationRemotePrefixGeneration(any())).thenReturn(0L)
+
+      val purgatory = mock(classOf[DelayedOperationPurgatory[DelayedConsolidationFetch]])
+      when(purgatory.tryCompleteElseWatch(any(), any())).thenAnswer { invocation =>
+        invocation.getArgument(0, classOf[DelayedConsolidationFetch]).forceComplete()
+      }
+      when(replicaManager.delayedConsolidationFetchPurgatory).thenReturn(purgatory)
+
+      val fetchHandler = mock(classOf[FetchHandler])
+      val fetchData = new FetchPartitionData(
+        fetchResultError,
+        fetchResultHighWatermark,
+        0L,
+        MemoryRecords.EMPTY,
+        Optional.empty(),
+        OptionalLong.empty(),
+        Optional.empty(),
+        OptionalInt.empty(),
+        false
+      )
+      when(fetchHandler.handle(any(), any()))
+        .thenReturn(CompletableFuture.completedFuture(util.Map.of(topicIdPartition, fetchData)))
+
+      val fetchOffsetHandler = mock(classOf[FetchOffsetHandler])
+      when(fetchOffsetHandler.createJob()).thenAnswer { _ =>
+        val job = mock(classOf[FetchOffsetHandler.Job])
+        when(job.mustHandle(topicPartition.topic())).thenReturn(true)
+        doNothing().when(job).start()
+        when(job.add(any[TopicPartition], any())).thenAnswer { invocation =>
+          val req = invocation.getArgument[org.apache.kafka.common.message.ListOffsetsRequestData.ListOffsetsPartition](1)
+          val offset =
+            if (req.timestamp == ListOffsetsRequest.EARLIEST_TIMESTAMP) primaryEarliestOffset
+            else primaryLatestOffset
+          CompletableFuture.completedFuture(new FileRecordsOrError(
+            Optional.empty(),
+            Optional.of(new TimestampAndOffset(0L, offset, Optional.of(0)))
+          ))
+        }
+        job
+      }
+
+      val brokerEndPoint = new BrokerEndPoint(0, "localhost", 9092)
+      val props = TestUtils.createBrokerConfig(nodeId = 1)
+      props.put("replica.fetch.backoff.ms", "1")
+      val config = KafkaConfig.fromProps(props)
+
+      val endpoint = new DisklessLeaderEndPoint(
+        brokerEndPoint,
+        fetchHandler,
+        fetchOffsetHandler,
+        replicaManager,
+        config,
+        QuotaFactory.UNBOUNDED_QUOTA,
+        () => MetadataVersion.LATEST_PRODUCTION,
+        () => 1L
+      )
+
+      val thread = new ConsolidationFetcherThread(
+        "consolidation-fetcher-standby-protection-test",
+        endpoint,
+        config,
+        failedPartitions,
+        replicaManager,
+        QuotaFactory.UNBOUNDED_QUOTA,
+        "[ConsolidationFetcherStandbyProtectionTest] ",
+        None
+      )
+
+      thread.addPartitions(Map(
+        topicPartition -> InitialFetchState(Some(topicId), brokerEndPoint, currentLeaderEpoch = 0, initOffset = 10L)
+      ))
+
+      // First pass resolves initial TRUNCATING (no-op truncate at LEO=10) and executes fetch().
+      thread.doWork()
+      assertEquals(10L, log.logEndOffset)
+      assertEquals(10L, log.highWatermark)
+      clearInvocations(partition)
+
+      // Second pass runs fetch() again after error handling without truncating.
+      thread.doWork()
+
+      verify(fetchHandler, atLeastOnce()).handle(any(), any())
+      verify(partition, never()).truncateTo(anyLong(), any[Boolean])
+      assertEquals(10L, log.logEndOffset)
+      assertEquals(10L, log.highWatermark)
+    } finally {
+      Utils.closeQuietly(log, "UnifiedLog")
+      brokerTopicStats.close()
+      Utils.delete(tempDir)
+    }
+  }
+
+  @Test
+  def testConsolidationDoesNotTruncateOrRegressHighWatermarkOnKafkaStorageError(): Unit = {
+    // Primary confirmation failure or a full concurrency limiter returns retriable `KAFKA_STORAGE_ERROR`.
+    // The consolidation fetcher retries with backoff without truncating the local log or regressing HW.
+    runConsolidationFetchWithRealLog(
+      fetchResultError = Errors.KAFKA_STORAGE_ERROR,
+      fetchResultHighWatermark = -1L,
+      primaryLatestOffset = 15L
+    )
+  }
+
+  @Test
+  def testConsolidationDoesNotTruncateOrRegressHighWatermarkWhenPrimaryListOffsetsIsAhead(): Unit = {
+    // Even if `OFFSET_OUT_OF_RANGE` reaches `handleOutOfRangeError` while the read pool lags behind local LEO,
+    // `listOffsets` reads from the primary (15 >= local LEO 10), so the local log doesn't truncate and HW stays at 10.
+    runConsolidationFetchWithRealLog(
+      fetchResultError = Errors.OFFSET_OUT_OF_RANGE,
+      fetchResultHighWatermark = 5L,
+      primaryLatestOffset = 15L
+    )
   }
 
   @Test

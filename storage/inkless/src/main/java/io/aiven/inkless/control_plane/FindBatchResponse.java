@@ -53,6 +53,14 @@ public record FindBatchResponse(Errors errors,
             UNKNOWN_OFFSET);
     }
 
+    public static FindBatchResponse kafkaStorageError() {
+        return new FindBatchResponse(
+            Errors.KAFKA_STORAGE_ERROR,
+            null,
+            UNKNOWN_OFFSET,
+            UNKNOWN_OFFSET);
+    }
+
     /**
      * Returns the size in bytes of the batches returned by this response, considering only the offsets
      * from {@code startingOffset} onwards.

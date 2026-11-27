@@ -894,6 +894,7 @@ class DynamicConfigChangeUnitTest {
       util.Set.of(
         "inkless.control.plane.connection.string",
         "inkless.control.plane.read.connection.string",
+        "inkless.control.plane.read.primary.connection.string",
         "inkless.control.plane.write.connection.string"),
       reconfigurable.reconfigurableConfigs)
 
@@ -928,6 +929,39 @@ class DynamicConfigChangeUnitTest {
 
     val newProps = TestUtils.createBrokerConfig(0, port = 8181)
     newProps.put("inkless.control.plane.connection.string", "")
+    val newConfig = KafkaConfig.fromProps(newProps)
+
+    val reconfigurable = new DynamicInklessControlPlaneConfig(gate)
+    reconfigurable.validateReconfiguration(newConfig)
+    reconfigurable.reconfigure(oldConfig, newConfig)
+
+    assertEquals(1, takeOutOfServiceCalls.get())
+    assertEquals(ControlPlaneAvailability.State.UNAVAILABLE, gate.availability().state())
+    gate.close()
+  }
+
+  @Test
+  def testInklessControlPlaneReadPrimaryConnectionStringEmptiedTakesGateOutOfService(): Unit = {
+    val takeOutOfServiceCalls = new java.util.concurrent.atomic.AtomicInteger()
+    val gate = new AvailabilityGatedControlPlane(
+      () => new InklessConfig(java.util.Map.of("control.plane.class",
+        classOf[io.aiven.inkless.control_plane.InMemoryControlPlane].getCanonicalName)),
+      _ => throw new ControlPlaneNotConfiguredException("read.primary.connection.string is missing"),
+      org.apache.kafka.common.utils.Time.SYSTEM) {
+      override def takeOutOfService(reason: ControlPlaneAvailability.UnavailableReason): Unit = {
+        takeOutOfServiceCalls.incrementAndGet()
+        super.takeOutOfService(reason)
+      }
+    }
+
+    val baseProps = TestUtils.createBrokerConfig(0, port = 8181)
+    baseProps.put("inkless.control.plane.connection.string", "jdbc:postgresql://primary/db")
+    baseProps.put("inkless.control.plane.read.primary.connection.string", "jdbc:postgresql://primary/db-r")
+    val oldConfig = KafkaConfig.fromProps(baseProps)
+
+    val newProps = TestUtils.createBrokerConfig(0, port = 8181)
+    newProps.put("inkless.control.plane.connection.string", "jdbc:postgresql://primary/db")
+    newProps.put("inkless.control.plane.read.primary.connection.string", "")
     val newConfig = KafkaConfig.fromProps(newProps)
 
     val reconfigurable = new DynamicInklessControlPlaneConfig(gate)

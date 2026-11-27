@@ -22,11 +22,14 @@ import org.apache.kafka.server.metrics.KafkaYammerMetrics;
 
 import com.yammer.metrics.core.Gauge;
 import com.yammer.metrics.core.Histogram;
+import com.yammer.metrics.core.Meter;
 import com.yammer.metrics.core.Metric;
 
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -74,6 +77,38 @@ class PostgresControlPlaneMetricsTest {
         assertThat(gaugeValue("FindBatchesQueryRate")).isEqualTo(findBatchesBefore);
     }
 
+    @Test
+    void standbyProtectionMetricsUpdateAndAreDocumented() {
+        final long queryTimeCountBefore = ((Histogram) registered("FindBatchesPrimaryQueryTime")).count();
+        final long confirmBefore = meterCount("FindBatchesPrimaryConfirmRate");
+        final long overrideBefore = meterCount("FindBatchesPrimaryOverrideRate");
+        final long failureBefore = meterCount("FindBatchesPrimaryConfirmFailureRate");
+        final long rejectedBefore = meterCount("PrimaryReadLimitRejectedRate");
+
+        metrics.onFindBatchesPrimaryCompleted(25L);
+        metrics.onFindBatchesPrimaryConfirm(3L);
+        metrics.onFindBatchesPrimaryOverride(2L);
+        metrics.onFindBatchesPrimaryConfirmFailed(1L);
+        metrics.onPrimaryReadLimitRejected();
+
+        assertThat(((Histogram) registered("FindBatchesPrimaryQueryTime")).count()).isEqualTo(queryTimeCountBefore + 1);
+        assertThat(meterCount("FindBatchesPrimaryConfirmRate")).isEqualTo(confirmBefore + 3);
+        assertThat(meterCount("FindBatchesPrimaryOverrideRate")).isEqualTo(overrideBefore + 2);
+        assertThat(meterCount("FindBatchesPrimaryConfirmFailureRate")).isEqualTo(failureBefore + 1);
+        assertThat(meterCount("PrimaryReadLimitRejectedRate")).isEqualTo(rejectedBefore + 1);
+
+        final Set<String> documentedNames = PostgresControlPlaneMetrics.all().stream()
+            .map(template -> template.name())
+            .collect(Collectors.toSet());
+        assertThat(documentedNames).contains(
+            "FindBatchesPrimaryQueryTime",
+            "FindBatchesPrimaryConfirmRate",
+            "FindBatchesPrimaryOverrideRate",
+            "FindBatchesPrimaryConfirmFailureRate",
+            "PrimaryReadLimitRejectedRate"
+        );
+    }
+
     private static Metric registered(final String name) {
         final KafkaMetricsGroup group = new KafkaMetricsGroup(
             PostgresControlPlane.class.getPackageName(), PostgresControlPlane.class.getSimpleName());
@@ -82,5 +117,9 @@ class PostgresControlPlaneMetricsTest {
 
     private static Object gaugeValue(final String name) {
         return ((Gauge<?>) registered(name)).value();
+    }
+
+    private static long meterCount(final String name) {
+        return ((Meter) registered(name)).count();
     }
 }

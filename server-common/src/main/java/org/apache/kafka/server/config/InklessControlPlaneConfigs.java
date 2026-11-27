@@ -33,11 +33,13 @@ public final class InklessControlPlaneConfigs {
 
     public static final String CONNECTION_STRING_CONFIG = PREFIX + "connection.string";
     public static final String READ_CONNECTION_STRING_CONFIG = PREFIX + "read.connection.string";
+    public static final String READ_PRIMARY_CONNECTION_STRING_CONFIG = PREFIX + "read.primary.connection.string";
     public static final String WRITE_CONNECTION_STRING_CONFIG = PREFIX + "write.connection.string";
 
     public static final Set<String> RECONFIGURABLE_CONFIGS = Set.of(
             CONNECTION_STRING_CONFIG,
             READ_CONNECTION_STRING_CONFIG,
+            READ_PRIMARY_CONNECTION_STRING_CONFIG,
             WRITE_CONNECTION_STRING_CONFIG);
 
     private InklessControlPlaneConfigs() {

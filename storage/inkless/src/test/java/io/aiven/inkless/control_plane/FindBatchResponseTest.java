@@ -75,6 +75,15 @@ class FindBatchResponseTest {
         assertEquals(0, response.estimatedByteSize(400));
     }
 
+    @Test
+    void kafkaStorageErrorFactory() {
+        final var response = FindBatchResponse.kafkaStorageError();
+        assertEquals(Errors.KAFKA_STORAGE_ERROR, response.errors());
+        assertEquals(null, response.batches());
+        assertEquals(FindBatchResponse.UNKNOWN_OFFSET, response.logStartOffset());
+        assertEquals(FindBatchResponse.UNKNOWN_OFFSET, response.highWatermark());
+    }
+
     private BatchInfo batchInfo(long byteSize, long baseOffset, long lastOffset) {
         return new BatchInfo(
             0L, "object",

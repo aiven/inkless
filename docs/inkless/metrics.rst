@@ -394,6 +394,10 @@ FilesDeleteLastSuccessfulQueryAgeMs                Milliseconds since the last s
 FilesDeleteQueryRate                               Total number of FilesDelete queries executed                                                                               
 FilesDeleteQueryTime                               Time spent executing the FilesDelete query in milliseconds                                                                 
 FindBatchesLastSuccessfulQueryAgeMs                Milliseconds since the last successful FindBatches query completed; -1 if no query has succeeded since startup             
+FindBatchesPrimaryConfirmFailureRate               Rate of above-HWM OFFSET_OUT_OF_RANGE partitions whose primary confirmation fails or hits the concurrency limit per second 
+FindBatchesPrimaryConfirmRate                      Rate of above-HWM OFFSET_OUT_OF_RANGE partitions that the broker confirms on the primary database per second               
+FindBatchesPrimaryOverrideRate                     Rate of stale standby OFFSET_OUT_OF_RANGE partitions that the primary database overrides with valid data per second        
+FindBatchesPrimaryQueryTime                        Time in milliseconds spent executing the FindBatches query on the primary database                                         
 FindBatchesQueryRate                               Total number of FindBatches queries executed                                                                               
 FindBatchesQueryTime                               Time spent executing the FindBatches query in milliseconds                                                                 
 GetCrossTierLogStartLastSuccessfulQueryAgeMs       Milliseconds since the last successful GetCrossTierLogStart query completed; -1 if no query has succeeded since startup    
@@ -417,6 +421,7 @@ InitDisklessLogQueryTime                           Time spent executing the Init
 ListOffsetsLastSuccessfulQueryAgeMs                Milliseconds since the last successful ListOffsets query completed; -1 if no query has succeeded since startup             
 ListOffsetsQueryRate                               Total number of ListOffsets queries executed                                                                               
 ListOffsetsQueryTime                               Time spent executing the ListOffsets query in milliseconds                                                                 
+PrimaryReadLimitRejectedRate                       Rate of primary read fallback and confirmation calls rejected per second when the concurrency limiter is full              
 PruneDisklessLogsLastSuccessfulQueryAgeMs          Milliseconds since the last successful PruneDisklessLogs query completed; -1 if no query has succeeded since startup       
 PruneDisklessLogsQueryRate                         Total number of PruneDisklessLogs queries executed                                                                         
 PruneDisklessLogsQueryTime                         Time spent executing the PruneDisklessLogs query in milliseconds                                                           

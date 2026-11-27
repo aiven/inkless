@@ -19,11 +19,13 @@ package io.aiven.inkless.control_plane.postgres;
 
 import org.apache.kafka.common.config.ConfigDef;
 
+import java.util.HashMap;
 import java.util.Map;
 
 public class PostgresControlPlaneConfig extends PostgresConnectionConfig {
 
     public static final String READ_CONFIG_PREFIX = "read.";
+    public static final String READ_PRIMARY_CONFIG_PREFIX = "read.primary.";
     public static final String WRITE_CONFIG_PREFIX = "write.";
 
     public static final String BATCH_COALESCING_ENABLED_CONFIG = "batch.coalescing.enabled";
@@ -39,7 +41,15 @@ public class PostgresControlPlaneConfig extends PostgresConnectionConfig {
         + "so bounding it at the query timeout would kill it part-way through.";
     private static final long MIGRATION_TIMEOUT_MS_DEFAULT = 300_000;
 
+    public static final String STANDBY_FALLBACK_MAX_CONCURRENT_CONFIG = "standby.fallback.max.concurrent";
+    private static final String STANDBY_FALLBACK_MAX_CONCURRENT_DOC = "Maximum number of concurrent primary findBatches "
+        + "calls for standby confirmation and fallback. Caps findBatches fail-fast so confirmation and fallback bursts "
+        + "don't starve listOffsets, getCrossTierLogStart, and getProducerState on the read.primary pool. When set to 0, "
+        + "defaults to 90% of read.primary.max.connections (at least 1), reserving the remaining headroom for non-findBatches reads.";
+    private static final int STANDBY_FALLBACK_MAX_CONCURRENT_DEFAULT = 0;
+
     private PostgresConnectionConfig readConfig;
+    private PostgresConnectionConfig readPrimaryConfig;
     private PostgresConnectionConfig writeConfig;
 
     public PostgresControlPlaneConfig(final Map<?, ?> originals) {
@@ -65,6 +75,14 @@ public class PostgresControlPlaneConfig extends PostgresConnectionConfig {
                 ConfigDef.Range.atLeast(1_000),
                 ConfigDef.Importance.LOW,
                 MIGRATION_TIMEOUT_MS_DOC
+            )
+            .define(
+                STANDBY_FALLBACK_MAX_CONCURRENT_CONFIG,
+                ConfigDef.Type.INT,
+                STANDBY_FALLBACK_MAX_CONCURRENT_DEFAULT,
+                ConfigDef.Range.atLeast(0),
+                ConfigDef.Importance.MEDIUM,
+                STANDBY_FALLBACK_MAX_CONCURRENT_DOC
             );
     }
 
@@ -80,8 +98,33 @@ public class PostgresControlPlaneConfig extends PostgresConnectionConfig {
         return timeoutSeconds(migrationTimeoutMs());
     }
 
+    public int standbyFallbackMaxConcurrent() {
+        return getInt(STANDBY_FALLBACK_MAX_CONCURRENT_CONFIG);
+    }
+
+    /**
+     * Returns the default concurrency limit for primary {@code findBatches} confirmation and
+     * fallback calls: 90% of {@code maxConnections} (at least 1), leaving headroom for
+     * {@code listOffsets}, {@code getCrossTierLogStart}, and {@code getProducerState}.
+     */
+    static int defaultStandbyFallbackMaxConcurrent(final int maxConnections) {
+        return Math.max(1, (maxConnections * 9) / 10);
+    }
+
     public void initializeReadWriteConfigs() {
-        final Map<String, Object> readConfigs = originalsWithPrefix(READ_CONFIG_PREFIX);
+        final Map<String, Object> readPrimaryConfigs = originalsWithPrefix(READ_PRIMARY_CONFIG_PREFIX);
+        if (!readPrimaryConfigs.isEmpty()) {
+            this.readPrimaryConfig = new PostgresConnectionConfig(connectionConfigDef(), readPrimaryConfigs);
+        }
+
+        // Filter out `read.primary.*` keys from `read.*` so `AbstractConfig` doesn't warn on unknown `primary.*` keys.
+        final String readPrimarySubPrefix = READ_PRIMARY_CONFIG_PREFIX.substring(READ_CONFIG_PREFIX.length());
+        final Map<String, Object> readConfigs = new HashMap<>();
+        for (final Map.Entry<String, Object> entry : originalsWithPrefix(READ_CONFIG_PREFIX).entrySet()) {
+            if (!entry.getKey().startsWith(readPrimarySubPrefix)) {
+                readConfigs.put(entry.getKey(), entry.getValue());
+            }
+        }
         if (!readConfigs.isEmpty()) {
             this.readConfig = new PostgresConnectionConfig(connectionConfigDef(), readConfigs);
         }
@@ -94,6 +137,10 @@ public class PostgresControlPlaneConfig extends PostgresConnectionConfig {
 
     public PostgresConnectionConfig readConfig() {
         return readConfig;
+    }
+
+    public PostgresConnectionConfig readPrimaryConfig() {
+        return readPrimaryConfig;
     }
 
     public PostgresConnectionConfig writeConfig() {
