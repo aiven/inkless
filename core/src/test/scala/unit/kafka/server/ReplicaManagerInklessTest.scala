@@ -82,6 +82,7 @@ import org.mockito.{Answers, ArgumentCaptor, ArgumentMatchers, MockedConstructio
 
 import java.io.{ByteArrayInputStream, File, IOException}
 import java.net.InetAddress
+import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 import java.util
 import java.util.{Collections, Optional, OptionalInt, OptionalLong, Properties}
@@ -3808,6 +3809,38 @@ class ReplicaManagerInklessTest {
       assertEquals(1, result.size)
       val (_, partitionData) = result.head
       assertEquals(1024 - localRecords.sizeInBytes, partitionData.maxBytes)
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testBuildConsolidationSupplementFetchInfosSkipsWhenLocalReadEndsMidBatch(): Unit = {
+    val tp = disklessTopicPartition
+    // The local log grew past the log end offset captured at routing (20), so the last complete
+    // batch ends at 20 and passes the exhaustion guard. The byte budget cut the read inside the
+    // next batch, so the records end with a partial batch.
+    val supplements = mutable.HashMap(tp -> 20L)
+    def batch(baseOffset: Long) = MemoryRecords.withRecords(
+      2.toByte, baseOffset, Compression.NONE, TimestampType.CREATE_TIME, 123L, 0.toShort, 0, 0, false,
+      (0 until 10).map(i => new SimpleRecord(i, ("v" + i).getBytes())): _*)
+    val full = ByteBuffer.allocate(batch(0).sizeInBytes * 3)
+    Seq(0L, 10L, 20L).foreach(o => full.put(batch(o).buffer()))
+    full.flip()
+    val truncated = full.slice()
+    truncated.limit(truncated.limit() - 5)
+    val localRecords = MemoryRecords.readableRecords(truncated)
+    val fetchInfos = Seq(tp -> new PartitionData(tp.topicId(), 0L, 0L, 1024 * 1024, Optional.empty()))
+    val logReadResultMap = new util.HashMap[TopicIdPartition, LogReadResult]()
+    logReadResultMap.put(tp, new LogReadResult(
+      new FetchDataInfo(new LogOffsetMetadata(0L, 0L, 0), localRecords),
+      Optional.empty(), 0L, 0L, 0L, 0L, 0L, OptionalLong.empty(), Errors.NONE
+    ))
+
+    val replicaManager = createReplicaManager(List(tp.topic()))
+    try {
+      val result = replicaManager.buildConsolidationSupplementFetchInfos(supplements, fetchInfos, logReadResultMap)
+      assertTrue(result.isEmpty, s"Expected no supplement after a partial tail batch, got $result")
     } finally {
       replicaManager.shutdown(checkpointHW = false)
     }

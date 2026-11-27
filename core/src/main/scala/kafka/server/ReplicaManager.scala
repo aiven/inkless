@@ -2734,6 +2734,13 @@ class ReplicaManager(val config: KafkaConfig,
   private[server] def successfulSupplementBytes(data: Map[TopicIdPartition, FetchPartitionData]): Long =
     data.values.filter(_.error == Errors.NONE).map(_.records.sizeInBytes.toLong).sum
 
+  /** Returns true if the complete batches in `records` account for all of its bytes. */
+  private def endsOnBatchBoundaryOf(records: Records): Boolean = {
+    var completeBytes = 0L
+    records.batches().forEach(b => completeBytes += b.sizeInBytes())
+    completeBytes == records.sizeInBytes
+  }
+
   /**
    * Builds the diskless supplement fetch requests for consolidating partitions. For each tracked
    * partition, computes the remaining byte budget (original maxBytes minus what the local read
@@ -2768,6 +2775,10 @@ class ReplicaManager(val config: KafkaConfig,
         // Otherwise start where the local read stops. Diskless has the full range so it can serve from
         // any offset. This avoids a gap when the local read stopped at a segment boundary.
         val lastLocalBatch = readResult.map(_.info.records.lastBatch()).filter(_.isPresent).map(_.get())
+        // A byte-limited local read can end inside a batch. The batch iterator drops that tail, so the
+        // start offset points at the partial batch's base offset while the merge still keeps its bytes.
+        // A partial batch is only safe as the last bytes of a response, so skip the supplement.
+        val endsOnBatchBoundary = readResult.forall(r => endsOnBatchBoundaryOf(r.info.records))
         // Only supplement once the local log is exhausted: the local read must have reached the
         // local log end offset, which for a frozen consolidating log equals the classic->diskless
         // seal. If it stopped at an earlier segment boundary (supplementStartOffset < logEndOffset),
@@ -2776,7 +2787,7 @@ class ReplicaManager(val config: KafkaConfig,
         // the local prefix directly onto the diskless range (which starts at the seal) and silently
         // drop the committed range [supplementStartOffset, seal).
         lastLocalBatch.map(_.nextOffset()) match {
-          case Some(supplementStartOffset) if !localReadUnusable && remainingBytes > 0 && supplementStartOffset >= logEndOffset =>
+          case Some(supplementStartOffset) if !localReadUnusable && remainingBytes > 0 && endsOnBatchBoundary && supplementStartOffset >= logEndOffset =>
             Some(tp -> new PartitionData(tp.topicId(), supplementStartOffset, pd.logStartOffset, remainingBytes, pd.currentLeaderEpoch, pd.lastFetchedEpoch))
           case _ => None
         }
