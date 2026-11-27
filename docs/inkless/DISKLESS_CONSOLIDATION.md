@@ -339,7 +339,7 @@ When consolidation is enabled, the enforcer reads `isConsolidatingDisklessTopic`
 
 ### WAL pruning
 
-`ConsolidatedDisklessLogPruner` runs on each broker at `inkless.consolidation.cleanup.interval.ms` (default 1 minute). It handles each consolidating partition independently and skips partitions in `SWITCH_PENDING`:
+`ConsolidatedDisklessLogPruner` runs on each broker at `inkless.consolidation.cleanup.interval.ms` (default 1 minute). It handles each consolidating partition independently and skips partitions in `SWITCH_PENDING` or in phase 1 of the switch:
 
 1. It reads `highestOffsetInRemoteStorage` from the `UnifiedLog` (skips if negative: remote storage is not active yet).
 2. It computes a safe prune offset: for born-diskless topics that is `highestOffsetInRemoteStorage`; for switched topics it normally uses `partition.getSafeConsolidatedDisklessPruneOffset(...)`, which protects the seal and the partition's consolidation prune floor. If remote storage ends at `seal - 1` before that floor is ready, it uses `seal - 1` to initialize the cross-tier start without including any diskless batches.
@@ -349,6 +349,8 @@ When consolidation is enabled, the enforcer reads `isConsolidatingDisklessTopic`
 5. On success, `maybeAdvanceConsolidationPruneFloor` advances the partition's consolidation prune floor.
 
 The reconciler sets the prune floor to at least `max(seal, logStartOffset)` when it arms consolidation (`ensureConsolidationPruneFloorAtLeast`), so a switched partition's classic prefix is never pruned from the WAL before it is safely in remote storage.
+
+The pruner skips phase 1 because the first prune completes the cross-tier start handoff, and remote expiration waits for that handoff. In phase 1, the followers stopped fetching at the seal and serve the classic prefix from their local logs. If the leader uploads the prefix and the controller commits phase 2 late, a prune in that window lets remote expiration move the leader's log start while the followers keep theirs. The first pruner run in phase 2 completes the handoff.
 
 `highestOffsetInRemoteStorage` only grows. A truncation keeps it. A replica that led an older epoch can upload a classic tail past the seal before an unclean leader election replaces it. If that replica kept its log, the pruner on it would delete the diskless batches from the seal on before consolidation uploads them. In phase 2, the broker recreates a replica whose classic tail runs past the seal or whose highest offset in remote storage isn't below its log end offset. A remote log task that read the log before a truncation doesn't install the offset that it computed, so a log that the broker keeps never gets that offset. For more information, see [Divergent classic tails in phase 2](CLASSIC_TO_DISKLESS_SWITCH.md#divergent-classic-tails-in-phase-2).
 
