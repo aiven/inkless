@@ -2727,14 +2727,6 @@ class ReplicaManager(val config: KafkaConfig,
       originalParams.isolation, originalParams.clientMetadata, originalParams.shareFetchRequest)
   }
 
-  /**
-   * Build the diskless supplement fetch requests for consolidating partitions whose local log
-   * read did not satisfy minBytes. For each tracked partition, computes the remaining byte budget
-   * (original maxBytes minus what the local read already returned) and emits a PartitionData
-   * starting where the local read left off. Partitions whose remaining budget is zero, or whose
-   * local read has not yet reached the local log end offset (the classic->diskless seal), are
-   * dropped — see the exhaustion guard below.
-   */
   private[server] def recordConsolidationSupplementIssued(): Unit = consolidationSupplementRate.mark()
   private[server] def recordConsolidationSupplementBytes(bytes: Long): Unit = consolidationSupplementBytesPerSec.mark(bytes)
   private[server] def recordConsolidationLocalBytes(bytes: Long): Unit = consolidationLocalBytesPerSec.mark(bytes)
@@ -2742,6 +2734,16 @@ class ReplicaManager(val config: KafkaConfig,
   private[server] def successfulSupplementBytes(data: Map[TopicIdPartition, FetchPartitionData]): Long =
     data.values.filter(_.error == Errors.NONE).map(_.records.sizeInBytes.toLong).sum
 
+  /**
+   * Builds the diskless supplement fetch requests for consolidating partitions. For each tracked
+   * partition, computes the remaining byte budget (original maxBytes minus what the local read
+   * already returned) and emits a PartitionData starting where the local read stops. Partitions
+   * whose local read returned no complete batch, whose remaining budget is zero, whose local read
+   * hasn't reached the local log end offset (the classic->diskless seal), or whose local read was
+   * redirected elsewhere are dropped. The inline fetch path calls it only when the local reads
+   * fall short of minBytes. DelayedFetch.onComplete calls it on every completion without checking
+   * minBytes again.
+   */
   private[server] def buildConsolidationSupplementFetchInfos(
       supplements: Map[TopicIdPartition, Long],
       fetchInfos: Seq[(TopicIdPartition, PartitionData)],
@@ -2753,17 +2755,19 @@ class ReplicaManager(val config: KafkaConfig,
     fetchInfos.flatMap { case (tp, pd) =>
       supplements.get(tp).flatMap { logEndOffset =>
         val readResult = Option(logReadResultMap.get(tp))
-        val hasError = readResult.exists(_.error != Errors.NONE)
+        // A preferred read replica or a remote storage redirect means the local read did not serve this
+        // partition. The consumer switches replicas or waits for the remote read, so appending diskless
+        // records would put them after data it hasn't received.
+        val localReadUnusable = readResult.exists(r => r.error != Errors.NONE ||
+          r.preferredReadReplica.isPresent || r.info.delayedRemoteStorageFetch.isPresent)
         val alreadyRead = readResult.map(_.info.records.sizeInBytes).getOrElse(0)
         val remainingBytes = Math.max(pd.maxBytes - alreadyRead, 0)
-        // Start the supplement where the local read left off, not at logEndOffset.
-        // Diskless has the full range so it can serve from any offset. This avoids a gap
-        // when the local read stopped at a segment boundary before reaching logEndOffset.
-        val supplementStartOffset = readResult
-          .map(_.info.records.lastBatch())
-          .filter(_.isPresent)
-          .map(_.get().nextOffset())
-          .getOrElse(logEndOffset)
+        // The supplement continues the local read, so a read without a complete batch gets none. An
+        // empty read can come from an earlier partition using up the request byte budget, while the
+        // log still holds data at the fetch offset. Supplementing it would skip [fetchOffset, logEndOffset).
+        // Otherwise start where the local read stops. Diskless has the full range so it can serve from
+        // any offset. This avoids a gap when the local read stopped at a segment boundary.
+        val lastLocalBatch = readResult.map(_.info.records.lastBatch()).filter(_.isPresent).map(_.get())
         // Only supplement once the local log is exhausted: the local read must have reached the
         // local log end offset, which for a frozen consolidating log equals the classic->diskless
         // seal. If it stopped at an earlier segment boundary (supplementStartOffset < logEndOffset),
@@ -2771,10 +2775,11 @@ class ReplicaManager(val config: KafkaConfig,
         // it would for any classic multi-segment lag. Supplementing from below the seal would stitch
         // the local prefix directly onto the diskless range (which starts at the seal) and silently
         // drop the committed range [supplementStartOffset, seal).
-        if (!hasError && remainingBytes > 0 && supplementStartOffset >= logEndOffset)
-          Some(tp -> new PartitionData(tp.topicId(), supplementStartOffset, pd.logStartOffset, remainingBytes, pd.currentLeaderEpoch, pd.lastFetchedEpoch))
-        else
-          None
+        lastLocalBatch.map(_.nextOffset()) match {
+          case Some(supplementStartOffset) if !localReadUnusable && remainingBytes > 0 && supplementStartOffset >= logEndOffset =>
+            Some(tp -> new PartitionData(tp.topicId(), supplementStartOffset, pd.logStartOffset, remainingBytes, pd.currentLeaderEpoch, pd.lastFetchedEpoch))
+          case _ => None
+        }
       }
     }
   }
@@ -2938,10 +2943,9 @@ class ReplicaManager(val config: KafkaConfig,
                   disklessSwitchedPrefixMissingFetchRate.mark()
                 // Only a consumer read that starts inside the local log, at or above the seal, and
                 // reaches its end can take a supplement. Outside that window the anchor asks object
-                // storage for classic offsets, or an empty read passes the exhaustion guard in
-                // buildConsolidationSupplementFetchInfos. Below the seal, readFromLog refuses the
-                // local prefix, so an empty read there would anchor the supplement past records the
-                // consumer hasn't seen. A pending classic-to-diskless switch has no committed seal.
+                // storage for classic offsets. Below the seal, readFromLog doesn't serve the local
+                // prefix, so a supplement there would follow records the consumer never received.
+                // A pending classic-to-diskless switch has no committed seal.
                 if (inklessSharedState.isDefined &&
                   params.isFromConsumer &&
                   classicToDisklessStartOffset != PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING &&
