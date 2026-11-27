@@ -27,6 +27,7 @@ on:
 
 jobs:
   save-pr-number:
+    if: github.repository == 'apache/kafka'
     name: Save PR Number
     runs-on: ubuntu-latest
     steps:
