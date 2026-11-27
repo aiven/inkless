@@ -16,10 +16,10 @@
  */
 package kafka.api
 
-import kafka.security.JaasTestUtils
 import kafka.utils.TestInfoUtils
 import org.apache.kafka.common.security.auth._
 import org.apache.kafka.common.test.api.Flaky
+import org.apache.kafka.security.JaasTestUtils
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.MethodSource
 

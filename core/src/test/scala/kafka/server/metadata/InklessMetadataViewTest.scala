@@ -314,7 +314,7 @@ class InklessMetadataViewTest {
                                configs: Map[String, Properties],
                                topics: Map[String, (Uuid, Int)] = Map.empty,
                                replicas: Map[String, util.List[Integer]] = Map.empty): Unit = {
-    val delta = new MetadataDelta(MetadataImage.EMPTY)
+    val delta = new MetadataDelta.Builder().setImage(MetadataImage.EMPTY).build()
     topics.foreach { case (topic, (topicId, partitionCount)) =>
       delta.replay(new TopicRecord().setName(topic).setTopicId(topicId))
       (0 until partitionCount).foreach { partitionId =>

@@ -18,10 +18,6 @@
 package org.apache.kafka.streams.state.internals;
 
 import org.apache.kafka.streams.errors.ProcessorStateException;
-import org.apache.kafka.streams.query.PositionBound;
-import org.apache.kafka.streams.query.Query;
-import org.apache.kafka.streams.query.QueryConfig;
-import org.apache.kafka.streams.query.QueryResult;
 import org.apache.kafka.streams.state.HeadersBytesStore;
 import org.apache.kafka.streams.state.internals.metrics.RocksDBMetricsRecorder;
 
@@ -73,7 +69,7 @@ public class RocksDBTimestampedStoreWithHeaders extends RocksDBStore implements 
                      final ColumnFamilyOptions columnFamilyOptions) {
         // Check if we're upgrading from RocksDBTimestampedStore or from plain RocksDBStore
         final List<byte[]> existingCFs;
-        try (final Options options = new Options(dbOptions, new ColumnFamilyOptions())) {
+        try (final Options options = new Options(dbOptions, columnFamilyOptions)) {
             existingCFs = RocksDB.listColumnFamilies(options, dbDir.getAbsolutePath());
         } catch (final RocksDBException e) {
             throw new ProcessorStateException("Error listing column families for store " + name, e);
@@ -98,7 +94,7 @@ public class RocksDBTimestampedStoreWithHeaders extends RocksDBStore implements 
             dbOptions,
             new ColumnFamilyDescriptor(RocksDB.DEFAULT_COLUMN_FAMILY, columnFamilyOptions),
             new ColumnFamilyDescriptor(TIMESTAMPED_VALUES_WITH_HEADERS_CF_NAME, columnFamilyOptions),
-            new ColumnFamilyDescriptor(OFFSETS_COLUMN_FAMILY_NAME, columnFamilyOptions)
+            new ColumnFamilyDescriptor(OFFSETS_COLUMN_FAMILY_NAME, offsetsCFOptions())
         );
 
         final ColumnFamilyHandle defaultCf = columnFamilies.get(0);
@@ -116,13 +112,18 @@ public class RocksDBTimestampedStoreWithHeaders extends RocksDBStore implements 
                     headersCf,
                     HeadersBytesStore::convertFromPlainToHeaderFormat,
                     this,
-                        open
+                    open
                 );
             } else {
                 log.info("Opening store {} in regular headers-aware mode", name);
                 cfAccessor = new SingleColumnFamilyAccessor(offsetsCf, headersCf);
                 defaultCf.close();
             }
+        } catch (final RuntimeException e) {
+            for (final ColumnFamilyHandle handle : columnFamilies) {
+                handle.close();
+            }
+            throw e;
         }
     }
 
@@ -134,78 +135,59 @@ public class RocksDBTimestampedStoreWithHeaders extends RocksDBStore implements 
             new ColumnFamilyDescriptor(RocksDB.DEFAULT_COLUMN_FAMILY, columnFamilyOptions),
             new ColumnFamilyDescriptor(LEGACY_TIMESTAMPED_CF_NAME, columnFamilyOptions),
             new ColumnFamilyDescriptor(TIMESTAMPED_VALUES_WITH_HEADERS_CF_NAME, columnFamilyOptions),
-            new ColumnFamilyDescriptor(OFFSETS_COLUMN_FAMILY_NAME, columnFamilyOptions)
+            new ColumnFamilyDescriptor(OFFSETS_COLUMN_FAMILY_NAME, offsetsCFOptions())
         );
 
-        // verify and close empty Default ColumnFamily
-        try (final RocksIterator defaultIter = db.newIterator(columnFamilies.get(0))) {
-            defaultIter.seekToFirst();
-            if (defaultIter.isValid()) {
-                // Close all column family handles before throwing
-                columnFamilies.get(0).close();
-                columnFamilies.get(1).close();
-                columnFamilies.get(2).close();
-                throw new ProcessorStateException(
-                    "Inconsistent store state for " + name + ". " +
-                        "Cannot have both plain (DEFAULT) and timestamped data simultaneously. " +
-                        "Headers store can upgrade from either plain or timestamped format, but not both."
-                );
+        try {
+            // verify and close empty Default ColumnFamily
+            try (final RocksIterator defaultIter = db.newIterator(columnFamilies.get(0))) {
+                defaultIter.seekToFirst();
+                if (defaultIter.isValid()) {
+                    throw new ProcessorStateException(
+                        "Inconsistent store state for " + name + ". " +
+                            "Cannot have both plain (DEFAULT) and timestamped data simultaneously. " +
+                            "Headers store can upgrade from either plain or timestamped format, but not both."
+                    );
+                }
             }
             // close default column family handle
             columnFamilies.get(0).close();
-        }
 
-        final ColumnFamilyHandle legacyTimestampedCf = columnFamilies.get(1);
-        final ColumnFamilyHandle headersCf = columnFamilies.get(2);
-        final ColumnFamilyHandle offsetsCf = columnFamilies.get(3);
+            final ColumnFamilyHandle legacyTimestampedCf = columnFamilies.get(1);
+            final ColumnFamilyHandle headersCf = columnFamilies.get(2);
+            final ColumnFamilyHandle offsetsCf = columnFamilies.get(3);
 
-
-        // Check if legacy timestamped CF has data
-        try (final RocksIterator legacyIter = db.newIterator(legacyTimestampedCf)) {
-            legacyIter.seekToFirst();
-            if (legacyIter.isValid()) {
-                log.info("Opening store {} in upgrade mode from timestamped store", name);
-                cfAccessor = new DualColumnFamilyAccessor(
-                    offsetsCf,
-                    legacyTimestampedCf,
-                    headersCf,
-                    HeadersBytesStore::convertToHeaderFormat,
-                    this,
-                        open
-                );
-            } else {
-                log.info("Opening store {} in regular headers-aware mode", name);
-                cfAccessor = new SingleColumnFamilyAccessor(offsetsCf, headersCf);
-                try {
-                    db.dropColumnFamily(legacyTimestampedCf);
-                } catch (final RocksDBException e) {
-                    throw new RuntimeException(e);
-                } finally {
-                    legacyTimestampedCf.close();
+            // Check if legacy timestamped CF has data
+            try (final RocksIterator legacyIter = db.newIterator(legacyTimestampedCf)) {
+                legacyIter.seekToFirst();
+                if (legacyIter.isValid()) {
+                    log.info("Opening store {} in upgrade mode from timestamped store", name);
+                    cfAccessor = new DualColumnFamilyAccessor(
+                        offsetsCf,
+                        legacyTimestampedCf,
+                        headersCf,
+                        HeadersBytesStore::convertToHeaderFormat,
+                        this,
+                            open
+                    );
+                } else {
+                    log.info("Opening store {} in regular headers-aware mode", name);
+                    cfAccessor = new SingleColumnFamilyAccessor(offsetsCf, headersCf);
+                    try {
+                        db.dropColumnFamily(legacyTimestampedCf);
+                    } catch (final RocksDBException e) {
+                        throw new RuntimeException(e);
+                    } finally {
+                        legacyTimestampedCf.close();
+                    }
                 }
             }
-        }
-    }
-
-    @SuppressWarnings("SynchronizeOnNonFinalField")
-    @Override
-    public <R> QueryResult<R> query(final Query<R> query,
-                                    final PositionBound positionBound,
-                                    final QueryConfig config) {
-        final long start = config.isCollectExecutionInfo() ? System.nanoTime() : -1L;
-        final QueryResult<R> result;
-
-        synchronized (position) {
-            result = QueryResult.forUnknownQueryType(query, this);
-
-            if (config.isCollectExecutionInfo()) {
-                result.addExecutionInfo(
-                    "Handled in " + this.getClass() + " in " + (System.nanoTime() - start) + "ns"
-                );
+        } catch (final RuntimeException e) {
+            for (final ColumnFamilyHandle handle : columnFamilies) {
+                handle.close();
             }
-            result.setPosition(position.copy());
+            throw e;
         }
-        return result;
     }
 
 }

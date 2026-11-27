@@ -55,6 +55,7 @@ import org.apache.kafka.common.Metric;
 import org.apache.kafka.common.MetricName;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
+import org.apache.kafka.common.errors.BootstrapResolutionException;
 import org.apache.kafka.common.errors.GroupAuthorizationException;
 import org.apache.kafka.common.errors.InterruptException;
 import org.apache.kafka.common.errors.InvalidGroupIdException;
@@ -68,19 +69,19 @@ import org.apache.kafka.common.metrics.MetricsReporter;
 import org.apache.kafka.common.serialization.Deserializer;
 import org.apache.kafka.common.telemetry.internals.ClientTelemetryReporter;
 import org.apache.kafka.common.telemetry.internals.ClientTelemetryUtils;
-import org.apache.kafka.common.utils.AppInfoParser;
-import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.common.utils.Timer;
 import org.apache.kafka.common.utils.Utils;
+import org.apache.kafka.common.utils.internals.AppInfoParser;
+import org.apache.kafka.common.utils.internals.LogContext;
 
 import org.slf4j.Logger;
 import org.slf4j.event.Level;
 
-import java.net.InetSocketAddress;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.ConcurrentModificationException;
 import java.util.HashMap;
 import java.util.LinkedList;
@@ -168,6 +169,7 @@ public class ShareConsumerImpl<K, V> implements ShareConsumerDelegate<K, V> {
 
     private final ApplicationEventHandler applicationEventHandler;
     private final Time time;
+    private final ShareFetchMetricsManager shareFetchMetricsManager;
     private final KafkaShareConsumerMetrics kafkaShareConsumerMetrics;
     private final AsyncConsumerMetrics asyncConsumerMetrics;
     private Logger log;
@@ -270,10 +272,8 @@ public class ShareConsumerImpl<K, V> implements ShareConsumerDelegate<K, V> {
                     metrics.reporters(),
                     Arrays.asList(deserializers.keyDeserializer(), deserializers.valueDeserializer()));
             this.metadata = new ShareConsumerMetadata(config, subscriptions, logContext, clusterResourceListeners);
-            final List<InetSocketAddress> addresses = ClientUtils.parseAndValidateAddresses(config);
-            metadata.bootstrap(addresses);
 
-            ShareFetchMetricsManager shareFetchMetricsManager = createShareFetchMetricsManager(metrics);
+            this.shareFetchMetricsManager = createShareFetchMetricsManager(metrics);
             ApiVersions apiVersions = new ApiVersions();
             final BlockingQueue<ApplicationEvent> applicationEventQueue = new LinkedBlockingQueue<>();
             this.acknowledgementEventHandler = new ShareAcknowledgementEventHandler(acknowledgementEventQueue);
@@ -384,7 +384,7 @@ public class ShareConsumerImpl<K, V> implements ShareConsumerDelegate<K, V> {
         this.completedAcknowledgements = new LinkedList<>();
 
         ShareConsumerMetrics metricsRegistry = new ShareConsumerMetrics();
-        ShareFetchMetricsManager shareFetchMetricsManager = new ShareFetchMetricsManager(metrics, metricsRegistry.shareFetchMetrics);
+        this.shareFetchMetricsManager = new ShareFetchMetricsManager(metrics, metricsRegistry.shareFetchMetrics);
         this.fetchCollector = new ShareFetchCollector<>(
                 logContext,
                 metadata,
@@ -456,6 +456,7 @@ public class ShareConsumerImpl<K, V> implements ShareConsumerDelegate<K, V> {
                       final Deserializer<V> valueDeserializer,
                       final ShareFetchBuffer fetchBuffer,
                       final ShareFetchCollector<K, V> fetchCollector,
+                      final ShareFetchMetricsManager shareFetchMetricsManager,
                       final Time time,
                       final ApplicationEventHandler applicationEventHandler,
                       final BlockingQueue<ShareAcknowledgementEvent> acknowledgementEventQueue,
@@ -474,6 +475,7 @@ public class ShareConsumerImpl<K, V> implements ShareConsumerDelegate<K, V> {
         this.groupId = groupId;
         this.fetchBuffer = fetchBuffer;
         this.fetchCollector = fetchCollector;
+        this.shareFetchMetricsManager = shareFetchMetricsManager;
         this.time = time;
         this.acknowledgementEventQueue = acknowledgementEventQueue;
         this.acknowledgementEventProcessor = new ShareAcknowledgementEventProcessor();
@@ -955,7 +957,7 @@ public class ShareConsumerImpl<K, V> implements ShareConsumerDelegate<K, V> {
      */
     @Override
     public Map<MetricName, ? extends Metric> metrics() {
-        return Map.copyOf(metrics.metrics());
+        return Collections.unmodifiableMap(metrics.metrics());
     }
 
     /**
@@ -1041,6 +1043,7 @@ public class ShareConsumerImpl<K, V> implements ShareConsumerDelegate<K, V> {
 
         closeQuietly(kafkaShareConsumerMetrics, "kafka share consumer metrics", firstException);
         closeQuietly(asyncConsumerMetrics, "kafka async consumer metrics", firstException);
+        closeQuietly(shareFetchMetricsManager, "kafka share consumer fetch metrics", firstException);
         closeQuietly(metrics, "consumer metrics", firstException);
         closeQuietly(deserializers, "consumer deserializers", firstException);
         clientTelemetryReporter.ifPresent(reporter -> closeQuietly(reporter, "consumer telemetry reporter", firstException));
@@ -1090,8 +1093,11 @@ public class ShareConsumerImpl<K, V> implements ShareConsumerDelegate<K, V> {
         try {
             // If users have fatal error, they will get some exceptions in the background queue.
             // When running unsubscribe, these exceptions should be ignored, or users can't unsubscribe successfully.
+            // BootstrapResolutionException is also ignored here: a permanent DNS failure prevents the
+            // unsubscribe from completing normally, but it is not actionable during close.
             processBackgroundEvents(unsubscribeEvent.future(), timer, e -> (e instanceof GroupAuthorizationException
-                || e instanceof TopicAuthorizationException || e instanceof InvalidTopicException));
+                || e instanceof TopicAuthorizationException || e instanceof InvalidTopicException
+                || e instanceof BootstrapResolutionException));
             log.info("Completed releasing assignment and leaving group to close consumer.");
         } catch (TimeoutException e) {
             log.warn("Consumer triggered an unsubscribe event to leave the group but couldn't " +
@@ -1119,6 +1125,12 @@ public class ShareConsumerImpl<K, V> implements ShareConsumerDelegate<K, V> {
         if (this.closed) {
             release();
             throw new IllegalStateException("This consumer has already been closed.");
+        }
+        try {
+            metadata.maybeThrowBootstrapFatalException();
+        } catch (RuntimeException e) {
+            release();
+            throw e;
         }
     }
 

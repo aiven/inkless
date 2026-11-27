@@ -58,7 +58,7 @@ class DisklessRemoteStorageDeleteConfigTest {
       TopicConfig.REMOTE_LOG_DELETE_ON_DISABLE_CONFIG,
       enableDeleteOnDisable
     )
-    val result = manager.incrementalAlterConfigs(util.Map.of(resource, changes), false)
+    val result = manager.incrementalAlterConfigs(util.Map.of(resource, changes), false, false)
 
     assertRejectedWithoutRecords(result)
     assertConsolidatedConfigsUnchanged(manager)
@@ -75,7 +75,7 @@ class DisklessRemoteStorageDeleteConfigTest {
         TopicConfig.REMOTE_LOG_DELETE_ON_DISABLE_CONFIG, "true"
       )),
       false
-    )
+    , false)
 
     assertRejectedWithoutRecords(result)
     assertConsolidatedConfigsUnchanged(manager)

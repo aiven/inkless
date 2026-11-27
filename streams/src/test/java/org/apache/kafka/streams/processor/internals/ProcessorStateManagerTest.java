@@ -19,9 +19,9 @@ package org.apache.kafka.streams.processor.internals;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.utils.LogCaptureAppender;
-import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Utils;
+import org.apache.kafka.common.utils.internals.LogContext;
 import org.apache.kafka.streams.KeyValue;
 import org.apache.kafka.streams.StreamsConfig;
 import org.apache.kafka.streams.errors.ProcessorStateException;
@@ -45,7 +45,6 @@ import org.apache.kafka.test.MockKeyValueStore;
 import org.apache.kafka.test.MockRestoreCallback;
 import org.apache.kafka.test.TestUtils;
 
-import org.hamcrest.Matchers;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -81,6 +80,7 @@ import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.equalTo;
 import static org.hamcrest.CoreMatchers.notNullValue;
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.lessThan;
 import static org.hamcrest.core.Is.is;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -131,6 +131,7 @@ public class ProcessorStateManagerTest {
     private File checkpointFile;
     private OffsetCheckpoint checkpoint;
     private StateDirectory stateDirectory;
+    private final MockTime time = new MockTime();
 
     @Mock
     private StateStoreMetadata storeMetadata;
@@ -147,7 +148,7 @@ public class ProcessorStateManagerTest {
                 put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, "dummy:1234");
                 put(StreamsConfig.STATE_DIR_CONFIG, baseDir.getPath());
             }
-        }), new MockTime(), true, true);
+        }), time, true, true);
         checkpointFile = new File(stateDirectory.getOrCreateDirectoryForTask(taskId), CHECKPOINT_FILE_NAME);
         checkpoint = new OffsetCheckpoint(checkpointFile);
     }
@@ -203,8 +204,10 @@ public class ProcessorStateManagerTest {
             taskId,
             Task.TaskType.STANDBY,
             false,
+            false,
             logContext,
             stateDirectory,
+            time,
             mkMap(
                 mkEntry(persistentStoreName, persistentStoreTopicName),
                 mkEntry(persistentStoreTwoName, persistentStoreTwoTopicName),
@@ -223,8 +226,10 @@ public class ProcessorStateManagerTest {
             taskId,
             Task.TaskType.STANDBY,
             false,
+            false,
             logContext,
             stateDirectory,
+            time,
             mkMap(
                 mkEntry(persistentStoreName, persistentStoreTopicName),
                 mkEntry(persistentStoreTwoName, persistentStoreTopicName)
@@ -323,6 +328,50 @@ public class ProcessorStateManagerTest {
     }
 
     @Test
+    public void shouldRefreshTaskDirectoryModificationTimeOnClose() {
+        final ProcessorStateManager stateMgr = getStateManager(Task.TaskType.ACTIVE);
+        final StateStore store = mock(StateStore.class);
+        when(store.name()).thenReturn(persistentStoreName);
+
+        stateMgr.registerStateStores(singletonList(store), context);
+        stateMgr.registerStore(store, noopStateRestoreCallback, null);
+
+        final File taskDir = stateDirectory.getOrCreateDirectoryForTask(taskId);
+        final long staleTime = time.milliseconds() - 60_000L;
+        assertTrue(taskDir.setLastModified(staleTime));
+        assertThat(taskDir.lastModified(), is(staleTime));
+
+        stateMgr.close();
+
+        assertThat(taskDir.lastModified(), is(time.milliseconds()));
+    }
+
+    @Test
+    public void shouldNotRefreshTaskDirectoryModificationTimeWhenClosingStartupTask() {
+        final ProcessorStateManager stateMgr = ProcessorStateManager.createStartupTaskStateManager(
+            taskId,
+            false,
+            logContext,
+            stateDirectory,
+            time,
+            mkMap(mkEntry(persistentStoreName, persistentStoreTopicName)),
+            emptySet());
+        final StateStore store = mock(StateStore.class);
+        when(store.name()).thenReturn(persistentStoreName);
+
+        stateMgr.registerStateStores(singletonList(store), context);
+        stateMgr.registerStore(store, noopStateRestoreCallback, null);
+
+        final File taskDir = stateDirectory.getOrCreateDirectoryForTask(taskId);
+        final long staleTime = time.milliseconds() - 60_000L;
+        assertTrue(taskDir.setLastModified(staleTime));
+
+        stateMgr.close();
+
+        assertThat(taskDir.lastModified(), is(staleTime));
+    }
+
+    @Test
     public void shouldRecycleAndReinitializeStore() {
         final ProcessorStateManager stateMgr = getStateManager(Task.TaskType.ACTIVE);
         final StateStore store = mock(StateStore.class);
@@ -398,8 +447,10 @@ public class ProcessorStateManagerTest {
             taskId,
             Task.TaskType.ACTIVE,
             false,
+            false,
             logContext,
             stateDirectory,
+            time,
             emptyMap(),
             emptySet()
         );
@@ -496,6 +547,69 @@ public class ProcessorStateManagerTest {
     }
 
     @Test
+    public void shouldNotTrackInMemoryStoreOffsetsInStateDirectory() {
+        final ProcessorStateManager stateMgr = getStateManager(Task.TaskType.ACTIVE);
+        contextRegistersStateStore(stateMgr);
+
+        try {
+            stateMgr.registerStateStores(Arrays.asList(persistentStore, nonPersistentStore), context);
+            stateMgr.initializeStoreOffsets(true);
+            stateMgr.updateChangelogOffsets(mkMap(
+                mkEntry(persistentStorePartition, 100L),
+                mkEntry(nonPersistentStorePartition, 200L)));
+
+            // the shared sums outlive this task, so they must only count state that outlives it too (KAFKA-20893);
+            // the in-memory store's 201 is reported from the live task by TaskManager instead
+            assertThat(stateDirectory.taskOffsetSums(), is(mkMap(mkEntry(taskId, 101L))));
+            assertThat(stateMgr.changelogOffsets(), is(mkMap(
+                mkEntry(persistentStorePartition, 101L),
+                mkEntry(nonPersistentStorePartition, 201L))));
+        } finally {
+            stateMgr.close();
+        }
+
+        assertThat(stateDirectory.taskOffsetSums(), is(mkMap(mkEntry(taskId, 101L))));
+    }
+
+    @Test
+    public void shouldNotTrackOffsetsInStateDirectoryWhenNoStoreIsPersistent() {
+        final ProcessorStateManager stateMgr = getStateManager(Task.TaskType.ACTIVE);
+        contextRegistersStateStore(stateMgr);
+
+        try {
+            stateMgr.registerStateStores(Collections.singletonList(nonPersistentStore), context);
+            stateMgr.initializeStoreOffsets(true);
+            stateMgr.updateChangelogOffsets(Collections.singletonMap(nonPersistentStorePartition, 200L));
+
+            assertThat(stateDirectory.taskOffsetSums(), is(Collections.emptyMap()));
+        } finally {
+            stateMgr.close();
+        }
+
+        assertThat(stateDirectory.taskOffsetSums(), is(Collections.emptyMap()));
+    }
+
+    @Test
+    public void shouldTrackPersistentStoreOffsetsInStateDirectory() {
+        final ProcessorStateManager stateMgr = getStateManager(Task.TaskType.ACTIVE);
+        contextRegistersStateStore(stateMgr);
+
+        try {
+            stateMgr.registerStateStores(Arrays.asList(persistentStore, persistentStoreTwo), context);
+            stateMgr.initializeStoreOffsets(true);
+            stateMgr.updateChangelogOffsets(mkMap(
+                mkEntry(persistentStorePartition, 100L),
+                mkEntry(persistentStoreTwoPartition, 200L)));
+
+            assertThat(stateDirectory.taskOffsetSums(), is(mkMap(mkEntry(taskId, 302L))));
+        } finally {
+            stateMgr.close();
+        }
+
+        assertThat(stateDirectory.taskOffsetSums(), is(mkMap(mkEntry(taskId, 302L))));
+    }
+
+    @Test
     public void shouldGetRegisteredStore() {
         final ProcessorStateManager stateMgr = getStateManager(Task.TaskType.ACTIVE);
         try {
@@ -574,7 +688,7 @@ public class ProcessorStateManagerTest {
             assertTrue(nonPersistentStore.committed);
 
             // make sure that flush is called in the proper order
-            assertThat(persistentStore.getLastCommitCount(), Matchers.lessThan(nonPersistentStore.getLastCommitCount()));
+            assertThat(persistentStore.getLastCommitCount(), lessThan(nonPersistentStore.getLastCommitCount()));
 
             stateMgr.updateChangelogOffsets(ackedOffsets);
             stateMgr.commit();
@@ -590,6 +704,57 @@ public class ProcessorStateManagerTest {
 
             assertTrue(persistentStore.closed);
             assertTrue(nonPersistentStore.closed);
+        }
+    }
+
+    @Test
+    public void shouldCommitAndCloseLegacyStoresWithUnknownOffsetPositions() throws Exception {
+        checkpoint.write(emptyMap());
+
+        final File storeCheckpointFile = new File(stateDirectory.getOrCreateDirectoryForTask(taskId), CHECKPOINT_FILE_NAME + "_" + persistentStore.name());
+
+        // set up ack'ed offsets
+        final HashMap<TopicPartition, Long> ackedOffsets = new HashMap<>();
+        ackedOffsets.put(persistentStorePartition, null);
+        ackedOffsets.put(nonPersistentStorePartition, 456L);
+        ackedOffsets.put(new TopicPartition("nonRegisteredTopic", 1), 789L);
+
+        final ProcessorStateManager stateMgr = getStateManager(Task.TaskType.ACTIVE);
+        contextRegistersStateStore(stateMgr);
+        try {
+            // make sure the checkpoint file is not written yet
+            assertFalse(storeCheckpointFile.exists());
+
+            stateMgr.registerStateStores(Arrays.asList(persistentStore, nonPersistentStore), context);
+        } finally {
+            stateMgr.commit();
+
+            assertTrue(persistentStore.committed);
+            assertTrue(nonPersistentStore.committed);
+
+            // make sure that flush is called in the proper order
+            assertThat(persistentStore.getLastCommitCount(), lessThan(nonPersistentStore.getLastCommitCount()));
+
+            stateMgr.updateChangelogOffsets(ackedOffsets);
+            stateMgr.commit();
+            stateMgr.close();
+            assertTrue(persistentStore.closed);
+            assertTrue(nonPersistentStore.closed);
+
+            assertTrue(storeCheckpointFile.exists());
+
+            // the checkpoint file should contain an offset from the persistent store only.
+            final OffsetCheckpoint storeCheckpoint = new OffsetCheckpoint(storeCheckpointFile);
+            final Map<TopicPartition, Long> checkpointedOffsets = storeCheckpoint.read();
+            assertThat(checkpointedOffsets, is(singletonMap(new TopicPartition(persistentStoreTopicName, 1), -4L)));
+
+            try {
+                // Reopen to verify null committed offset
+                stateMgr.registerStateStores(Arrays.asList(persistentStore, nonPersistentStore), context);
+                assertNull(stateMgr.storeMetadata(persistentStorePartition).offset());
+            } finally {
+                stateMgr.close();
+            }
         }
     }
 
@@ -632,8 +797,10 @@ public class ProcessorStateManagerTest {
             taskId,
             Task.TaskType.STANDBY,
             false,
+            false,
             logContext,
             stateDirectory,
+            time,
             emptyMap(),
             emptySet());
 
@@ -1210,13 +1377,73 @@ public class ProcessorStateManagerTest {
         assertEquals(200L, written.get(persistentStoreTwoPartition));
     }
 
+    @Test
+    public void shouldReportHasCorruptedStores() throws IOException {
+        final ProcessorStateManager stateMgr = getStateManager(Task.TaskType.ACTIVE, true, null);
+        try {
+            stateMgr.registerStore(persistentStore, persistentStore.stateRestoreCallback, null);
+            assertFalse(stateMgr.hasCorruptedStores());
+            stateMgr.markChangelogAsCorrupted(Collections.singleton(persistentStorePartition));
+            assertTrue(stateMgr.hasCorruptedStores());
+        } finally {
+            stateMgr.close();
+        }
+    }
+
+    @Test
+    public void shouldNotThrowTaskCorruptedWithoutCheckpointAndNonEmptyDirWhenTransactional() throws IOException {
+        // With transactional state stores + EOS, a missing checkpoint on a non-empty store dir should NOT
+        // be treated as corruption — uncommitted data is never written to the base store.
+        final long checkpointOffset = 10L;
+
+        final Map<TopicPartition, Long> offsets = mkMap(
+            mkEntry(persistentStorePartition, checkpointOffset),
+            mkEntry(nonPersistentStorePartition, checkpointOffset),
+            mkEntry(irrelevantPartition, 999L)
+        );
+        checkpoint.write(offsets);
+
+        final ProcessorStateManager stateMgr = getStateManager(Task.TaskType.ACTIVE, true, true, null);
+
+        try {
+            stateMgr.registerStore(persistentStore, persistentStore.stateRestoreCallback, null);
+            stateMgr.registerStore(persistentStoreTwo, persistentStoreTwo.stateRestoreCallback, null);
+            stateMgr.registerStore(nonPersistentStore, nonPersistentStore.stateRestoreCallback, null);
+
+            // should not throw TaskCorruptedException
+            stateMgr.initializeStoreOffsets(false);
+        } finally {
+            stateMgr.close();
+        }
+    }
+
+    private ProcessorStateManager getStateManager(final Task.TaskType taskType, final boolean eosEnabled, final boolean transactionalStateStoresEnabled, final UpgradeFromValues upgradeFrom) {
+        return new ProcessorStateManager(
+            taskId,
+            taskType,
+            eosEnabled,
+            transactionalStateStoresEnabled,
+            logContext,
+            stateDirectory,
+            time,
+            mkMap(
+                mkEntry(persistentStoreName, persistentStoreTopicName),
+                mkEntry(persistentStoreTwoName, persistentStoreTwoTopicName),
+                mkEntry(nonPersistentStoreName, nonPersistentStoreTopicName)
+            ),
+            emptySet(),
+            upgradeFrom);
+    }
+
     private ProcessorStateManager getStateManager(final Task.TaskType taskType, final boolean eosEnabled, final UpgradeFromValues upgradeFrom) {
         return new ProcessorStateManager(
             taskId,
             taskType,
             eosEnabled,
+            false,
             logContext,
             stateDirectory,
+            time,
             mkMap(
                 mkEntry(persistentStoreName, persistentStoreTopicName),
                 mkEntry(persistentStoreTwoName, persistentStoreTwoTopicName),

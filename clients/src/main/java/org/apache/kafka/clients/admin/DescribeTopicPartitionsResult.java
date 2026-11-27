@@ -17,6 +17,8 @@
 package org.apache.kafka.clients.admin;
 
 import org.apache.kafka.common.KafkaFuture;
+import org.apache.kafka.common.annotation.InterfaceAudience;
+import org.apache.kafka.common.annotation.SuppressKafkaInternalApiUsage;
 import org.apache.kafka.common.message.DescribeTopicPartitionsResponseData;
 
 /**
@@ -24,10 +26,12 @@ import org.apache.kafka.common.message.DescribeTopicPartitionsResponseData;
  * This exposes the raw protocol response data directly rather than a typed model.
  * The returned data is mutable and may contain embedded errors that callers must inspect.
  */
+@InterfaceAudience.Public
 public class DescribeTopicPartitionsResult {
 
     private final KafkaFuture<DescribeTopicPartitionsResponseData> future;
 
+    @SuppressKafkaInternalApiUsage("Inkless: exposes the raw DescribeTopicPartitions protocol response by design")
     public DescribeTopicPartitionsResult(KafkaFuture<DescribeTopicPartitionsResponseData> future) {
         this.future = future;
     }
@@ -37,6 +41,7 @@ public class DescribeTopicPartitionsResult {
      * Topic-level and partition-level errors are checked during accumulation and will cause the future
      * to complete exceptionally. The returned data is mutable.
      */
+    @SuppressKafkaInternalApiUsage("Inkless: exposes the raw DescribeTopicPartitions protocol response by design")
     public KafkaFuture<DescribeTopicPartitionsResponseData> rawResponse() {
         return future;
     }

@@ -34,12 +34,14 @@ import org.apache.kafka.common.quota.ClientQuotaEntity.{CLIENT_ID, IP, USER}
 import org.apache.kafka.common.quota.{ClientQuotaAlteration, ClientQuotaEntity}
 import org.apache.kafka.common.security.auth.KafkaPrincipal
 import org.apache.kafka.common.{TopicPartition, Uuid}
+import java.util.Optional
 import org.apache.kafka.coordinator.group.{GroupConfig, GroupCoordinatorConfig}
 import org.apache.kafka.coordinator.share.ShareCoordinatorConfig
 import org.apache.kafka.metadata.{KRaftMetadataCache, MetadataCache}
 import org.apache.kafka.server.config.{QuotaConfig, ServerConfigs, ServerLogConfigs}
 import org.apache.kafka.server.log.remote.TopicPartitionLog
 import org.apache.kafka.server.log.remote.storage.RemoteLogManager
+import org.apache.kafka.server.quota.ReplicationQuotaManager
 import org.apache.kafka.storage.internals.log.{LogConfig, UnifiedLog}
 import org.apache.kafka.test.TestUtils.assertFutureThrows
 import org.junit.jupiter.api.Assertions._
@@ -57,6 +59,7 @@ import java.util.concurrent.ExecutionException
 import java.util.{Collections, Properties}
 import scala.collection.{Map, Seq}
 import scala.jdk.CollectionConverters._
+import org.apache.kafka.server.quota.QuotaFactory
 
 @Timeout(100)
 class DynamicConfigChangeTest extends KafkaServerTestHarness {
@@ -70,12 +73,11 @@ class DynamicConfigChangeTest extends KafkaServerTestHarness {
     val oldVal: java.lang.Long = 100000L
     val newVal: java.lang.Long = 200000L
     val tp = new TopicPartition("test", 0)
-    val logProps = new Properties()
-    logProps.put(TopicConfig.FLUSH_MESSAGES_INTERVAL_CONFIG, oldVal.toString)
-    createTopic(tp.topic, 1, 1, logProps)
+    val logConfigs = util.Map.of(TopicConfig.FLUSH_MESSAGES_INTERVAL_CONFIG, oldVal.toString)
+    createTopic(tp.topic, 1, 1, logConfigs)
     TestUtils.retry(10000) {
       val logOpt = this.brokers.head.logManager.getLog(tp)
-      assertTrue(logOpt.isDefined)
+      assertTrue(logOpt.isPresent)
       assertEquals(oldVal, logOpt.get.config.flushInterval)
     }
     val admin = createAdminClient()
@@ -102,12 +104,11 @@ class DynamicConfigChangeTest extends KafkaServerTestHarness {
   def testDynamicTopicConfigChange(): Unit = {
     val tp = new TopicPartition("test", 0)
     val oldSegmentSize = 2 * 1024 * 1024
-    val logProps = new Properties()
-    logProps.put(TopicConfig.SEGMENT_BYTES_CONFIG, oldSegmentSize.toString)
-    createTopic(tp.topic, 1, 1, logProps)
+    val logConfigs = util.Map.of(TopicConfig.SEGMENT_BYTES_CONFIG, oldSegmentSize.toString)
+    createTopic(tp.topic, 1, 1, logConfigs)
     TestUtils.retry(10000) {
       val logOpt = this.brokers.head.logManager.getLog(tp)
-      assertTrue(logOpt.isDefined)
+      assertTrue(logOpt.isPresent)
       assertEquals(oldSegmentSize, logOpt.get.config.segmentSize())
     }
 
@@ -423,7 +424,7 @@ class DynamicConfigChangeTest extends KafkaServerTestHarness {
     }
 
     val groupConfig = brokerServers.head.groupCoordinator.groupConfig(consumerGroupId).get()
-    assertEquals(newSessionTimeoutMs, groupConfig.consumerSessionTimeoutMs())
+    assertEquals(Optional.of(newSessionTimeoutMs), groupConfig.consumerSessionTimeoutMs())
   }
 
   @Test
@@ -449,7 +450,7 @@ class DynamicConfigChangeTest extends KafkaServerTestHarness {
     }
 
     val groupConfig = brokerServers.head.groupCoordinator.groupConfig(shareGroupId).get()
-    assertEquals(newRecordLockDurationMs, groupConfig.shareRecordLockDurationMs)
+    assertEquals(Optional.of(newRecordLockDurationMs), groupConfig.shareRecordLockDurationMs)
   }
 
   @Test
@@ -646,13 +647,13 @@ class DynamicConfigChangeUnitTest {
   @Test
   def testDisklessTopicConfigUpdateCallsInklessMetadataView(): Unit = {
     val topic = "diskless-topic"
-    val logManager = mock(classOf[kafka.log.LogManager])
+    val logManager = mock(classOf[org.apache.kafka.storage.internals.log.LogManager])
     val replicaManager: ReplicaManager = mock(classOf[ReplicaManager])
     val inklessMetadataView = mock(classOf[kafka.server.metadata.InklessMetadataView])
     when(replicaManager.logManager).thenReturn(logManager)
     when(replicaManager.inklessMetadataView()).thenReturn(inklessMetadataView)
     // No local logs — simulates a diskless topic
-    when(logManager.logsByTopic(topic)).thenReturn(Seq.empty)
+    when(logManager.logsByTopic(topic)).thenReturn(util.List.of[UnifiedLog]())
 
     val quotas = mock(classOf[QuotaFactory.QuotaManagers])
     when(quotas.leader).thenReturn(mock(classOf[ReplicationQuotaManager]))
@@ -685,8 +686,8 @@ class DynamicConfigChangeUnitTest {
     when(metadataCache.topicConfig(topic)).thenReturn(publishedTopicConfig)
     val inklessMetadataView = new InklessMetadataView(metadataCache, () => brokerDefaults)
 
-    val logManager = mock(classOf[kafka.log.LogManager])
-    when(logManager.logsByTopic(topic)).thenReturn(localLogs)
+    val logManager = mock(classOf[org.apache.kafka.storage.internals.log.LogManager])
+    when(logManager.logsByTopic(topic)).thenReturn(localLogs.asJava)
     val replicaManager: ReplicaManager = mock(classOf[ReplicaManager])
     when(replicaManager.logManager).thenReturn(logManager)
     when(replicaManager.inklessMetadataView()).thenReturn(inklessMetadataView)

@@ -88,7 +88,6 @@ import io.aiven.inkless.test_utils.InklessPostgreSQLContainer;
 import io.aiven.inkless.test_utils.MinioContainer;
 import io.aiven.inkless.test_utils.PostgreSQLTestContainer;
 import io.aiven.inkless.test_utils.S3TestContainer;
-import scala.Option;
 
 import static org.apache.kafka.common.config.TopicConfig.DISKLESS_ENABLE_CONFIG;
 import static org.apache.kafka.common.config.TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG;
@@ -634,7 +633,7 @@ public class InklessUntieredDisklessMigrationTest {
         TestUtils.waitForCondition(
             () -> brokerIds.stream().allMatch(id -> {
                 final var log = cluster.brokers().get(id).logManager().getLog(partition, false);
-                return log.isDefined() && ((UnifiedLog) log.get()).logEndOffset() >= expected;
+                return log.isPresent() && log.get().logEndOffset() >= expected;
             }),
             TIMEOUT_MS * 2,
             () -> "Replicas " + brokerIds + " of " + partition + " should reach the end offset " + expected);
@@ -643,8 +642,8 @@ public class InklessUntieredDisklessMigrationTest {
     private static Optional<UnifiedLog> longestLocalLog(KafkaClusterTestKit cluster, TopicPartition partition) {
         return cluster.brokers().values().stream()
             .map(broker -> broker.logManager().getLog(partition, false))
-            .filter(Option::isDefined)
-            .map(log -> (UnifiedLog) log.get())
+            .filter(Optional::isPresent)
+            .map(Optional::get)
             .max(Comparator.comparingLong(UnifiedLog::logEndOffset));
     }
 
@@ -655,8 +654,8 @@ public class InklessUntieredDisklessMigrationTest {
     private static OptionalLong maxLogEndOffset(KafkaClusterTestKit cluster, TopicPartition partition, List<Integer> brokerIds) {
         return brokerIds.stream()
             .map(id -> cluster.brokers().get(id).logManager().getLog(partition, false))
-            .filter(Option::isDefined)
-            .mapToLong(log -> ((UnifiedLog) log.get()).logEndOffset())
+            .filter(Optional::isPresent)
+            .mapToLong(log -> log.get().logEndOffset())
             .max();
     }
 

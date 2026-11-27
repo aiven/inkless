@@ -20,7 +20,7 @@ package io.aiven.inkless.consolidation
 
 import kafka.cluster.Partition
 import kafka.server.metadata.InklessMetadataView
-import kafka.server.{InitialFetchState, ReplicaManager, ReplicationQuotaManager}
+import kafka.server.{InitialFetchState, ReplicaManager}
 import org.apache.kafka.common.{TopicPartition, Uuid}
 import org.apache.kafka.logger.StateChangeLogger
 import org.apache.kafka.metadata.PartitionRegistration
@@ -33,6 +33,7 @@ import org.mockito.Mockito._
 
 import java.util.Optional
 import scala.collection.mutable
+import org.apache.kafka.server.quota.ReplicationQuotaManager
 
 class ConsolidationReconcilerTest {
 

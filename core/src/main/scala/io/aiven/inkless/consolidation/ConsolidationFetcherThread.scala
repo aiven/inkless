@@ -19,7 +19,8 @@
 package io.aiven.inkless.consolidation
 
 import io.aiven.inkless.consume.ConcatenatedRecords
-import kafka.server.{FailedPartitions, KafkaConfig, ReplicaFetcherThread, ReplicaManager, ReplicaQuota}
+import kafka.server.{FailedPartitions, KafkaConfig, ReplicaFetcherThread, ReplicaManager}
+import org.apache.kafka.server.quota.ReplicaQuota
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.errors.RecordBatchTooLargeException
 import org.apache.kafka.common.record.internal.{MemoryRecords, Records}

@@ -49,6 +49,9 @@ import java.io.File
 import java.util
 import java.util.{Collections, Optional, Properties}
 import scala.jdk.CollectionConverters._
+import org.apache.kafka.server.quota.QuotaFactory
+import org.apache.kafka.server.quota.ReplicationQuotaManager
+import org.apache.kafka.server.partition.AlterPartitionManager
 
 /**
  * Invariant tests for the diskless switch recovery paths.
@@ -99,7 +102,7 @@ class DisklessSwitchInvariantsTest {
     val tp = new TopicPartition(topicName, 0)
 
     replicaManager = createReplicaManager(List(topicName))
-    val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+    val log = replicaManager.logManager.getOrCreateLog(tp, true, false, Optional.of(topicId))
     populateLocalLogAtLeoAndCheckpointedHwm(replicaManager, tp, log, localLeo, checkpointHw)
 
     when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp))
@@ -137,7 +140,7 @@ class DisklessSwitchInvariantsTest {
       List(topicName),
       mockReplicaFetcherManager = Some(mockFetcherManager)
     ))
-    val log = replicaManager.logManager.getOrCreateLog(tp, isNew = true, topicId = Optional.of(topicId))
+    val log = replicaManager.logManager.getOrCreateLog(tp, true, false, Optional.of(topicId))
     populateLocalLogAtLeoAndCheckpointedHwm(replicaManager, tp, log, leo, checkpointHw)
 
     when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp))
@@ -266,7 +269,7 @@ class DisklessSwitchInvariantsTest {
     new MetadataImage(
       new MetadataProvenance(100L, 10, 1000L, true),
       new FeaturesImage(Collections.emptyMap(), MetadataVersion.latestProduction()),
-      ClusterImageTest.IMAGE1,
+      ClusterImageFixtures.IMAGE1,
       topicsImage,
       ConfigurationsImage.EMPTY,
       ClientQuotasImage.EMPTY,

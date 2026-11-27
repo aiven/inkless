@@ -55,6 +55,10 @@ public class LogicalKeyValueSegments extends AbstractSegments<LogicalKeyValueSeg
         this.physicalStore = new RocksDBStore(name, parentDir, metricsRecorder, false);
     }
 
+    RocksDBStore physicalStore() {
+        return physicalStore;
+    }
+
     @Override
     protected LogicalKeyValueSegment createSegment(final long segmentId, final String segmentName) {
         if (segmentId < 0) {
@@ -86,13 +90,14 @@ public class LogicalKeyValueSegments extends AbstractSegments<LogicalKeyValueSeg
     }
 
     // VisibleForTesting
-    LogicalKeyValueSegment getReservedSegment(final long segmentId) {
-        return reservedSegments.get(segmentId);
+    LogicalKeyValueSegment getReservedSegment() {
+        return reservedSegments.get(-1L);
     }
 
     @Override
     public void openExisting(final StateStoreContext context, final long streamTime) {
         metricsRecorder.init(ProcessorContextUtils.metricsImpl(context), context.taskId());
+        physicalStore.setTaskId(context.taskId());
         physicalStore.openDB(context.appConfigs(), context.stateDir());
         position.merge(physicalStore.getPosition());
     }
@@ -108,6 +113,7 @@ public class LogicalKeyValueSegments extends AbstractSegments<LogicalKeyValueSeg
     }
 
     @SuppressWarnings("deprecation")
+    @Deprecated
     @Override
     public boolean managesOffsets() {
         return physicalStore.managesOffsets();

@@ -21,7 +21,7 @@ import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.message.DeleteRecordsResponseData;
 import org.apache.kafka.common.protocol.Errors;
-import org.apache.kafka.common.utils.ThreadUtils;
+import org.apache.kafka.common.utils.internals.ThreadUtils;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

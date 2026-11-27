@@ -19,7 +19,8 @@
 package io.aiven.inkless.consolidation
 
 import io.aiven.inkless.consume.{FetchHandler, FetchOffsetHandler}
-import kafka.server.{KafkaConfig, ReplicaManager, ReplicaQuota}
+import kafka.server.{KafkaConfig, ReplicaManager}
+import org.apache.kafka.server.quota.ReplicaQuota
 import kafka.utils.Logging
 import org.apache.kafka.common.errors.{KafkaStorageException, UnknownTopicOrPartitionException}
 import org.apache.kafka.common.message.ListOffsetsRequestData.ListOffsetsPartition

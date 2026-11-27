@@ -19,9 +19,10 @@
 package io.aiven.inkless.consolidation
 
 import io.aiven.inkless.consume.{FetchHandler, FetchOffsetHandler}
-import kafka.server.{AbstractFetcherManager, KafkaConfig, ReplicaManager, ReplicationQuotaManager}
+import kafka.server.{AbstractFetcherManager, KafkaConfig, ReplicaManager}
+import org.apache.kafka.server.quota.ReplicationQuotaManager
 import org.apache.kafka.common.TopicPartition
-import org.apache.kafka.common.utils.LogContext
+import org.apache.kafka.common.utils.internals.LogContext
 import org.apache.kafka.server.PartitionFetchState
 import org.apache.kafka.server.network.BrokerEndPoint
 

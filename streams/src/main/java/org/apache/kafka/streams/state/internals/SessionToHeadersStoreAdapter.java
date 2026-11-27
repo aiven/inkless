@@ -138,7 +138,7 @@ public class SessionToHeadersStoreAdapter implements SessionStore<Bytes, byte[]>
 
     @Override
     public void put(final Windowed<Bytes> sessionKey, final byte[] aggregateWithHeader) {
-        store.put(sessionKey, AggregationWithHeadersDeserializer.rawAggregation(aggregateWithHeader));
+        store.put(sessionKey, Utils.rawAggregation(aggregateWithHeader));
     }
 
     @Override
@@ -165,6 +165,11 @@ public class SessionToHeadersStoreAdapter implements SessionStore<Bytes, byte[]>
     @Override
     public Long committedOffset(final TopicPartition partition) {
         return store.committedOffset(partition);
+    }
+
+    @Override
+    public long approximateNumUncommittedBytes() {
+        return store.approximateNumUncommittedBytes();
     }
 
     @Override

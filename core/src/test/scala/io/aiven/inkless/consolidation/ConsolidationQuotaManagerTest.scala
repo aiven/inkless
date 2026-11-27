@@ -19,7 +19,7 @@
 package io.aiven.inkless.consolidation
 
 import io.aiven.inkless.consume.{FetchHandler, FetchOffsetHandler}
-import kafka.server.{KafkaConfig, ReplicaManager, ReplicationQuotaManager}
+import kafka.server.{KafkaConfig, ReplicaManager}
 import kafka.utils.TestUtils
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.metrics.{MetricConfig, Metrics, Quota}
@@ -37,6 +37,7 @@ import org.mockito.Mockito.{mock, when}
 
 import java.util
 import java.util.{Collections, Optional}
+import org.apache.kafka.server.quota.ReplicationQuotaManager
 
 class ConsolidationQuotaManagerTest {
   private val brokerEndPoint = new BrokerEndPoint(1, "localhost", 9092)

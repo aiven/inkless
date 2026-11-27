@@ -21,7 +21,7 @@ package io.aiven.inkless.doc;
 import org.apache.kafka.common.MetricName;
 import org.apache.kafka.common.MetricNameTemplate;
 import org.apache.kafka.common.metrics.Metrics;
-import org.apache.kafka.common.utils.Sanitizer;
+import org.apache.kafka.common.utils.internals.Sanitizer;
 
 import java.util.LinkedHashMap;
 import java.util.Map;

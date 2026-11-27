@@ -64,7 +64,7 @@ LABEL ducker.creator=$ducker_creator
 # query the Postgres control plane (WAL batches / log_start_offset) and assert WAL pruning.
 RUN apt update && apt install -y sudo git netcat iptables rsync unzip wget curl jq coreutils openssh-server net-tools vim python3-pip python3-dev libffi-dev libssl-dev cmake pkg-config libfuse-dev iperf traceroute iproute2 iputils-ping postgresql-client && apt-get -y clean
 RUN python3 -m pip install -U pip==21.1.1;
-# NOTE: ducktape 0.13.0 supports py 3.9, 3.10, 3.11, 3.12 and 3.13
+# NOTE: ducktape 0.14.0 supports py 3.9, 3.10, 3.11, 3.12 and 3.13
 COPY requirements.txt requirements.txt
 RUN pip3 install --upgrade -r requirements.txt
 
@@ -98,7 +98,8 @@ RUN mkdir -p "/opt/kafka-3.8.1" && chmod a+rw /opt/kafka-3.8.1 && curl -s "$KAFK
 RUN mkdir -p "/opt/kafka-3.9.2" && chmod a+rw /opt/kafka-3.9.2 && curl -s "$KAFKA_MIRROR/kafka_2.13-3.9.2.tgz" | tar xz --strip-components=1 -C "/opt/kafka-3.9.2"
 RUN mkdir -p "/opt/kafka-4.0.1" && chmod a+rw /opt/kafka-4.0.1 && curl -s "$KAFKA_MIRROR/kafka_2.13-4.0.1.tgz" | tar xz --strip-components=1 -C "/opt/kafka-4.0.1"
 RUN mkdir -p "/opt/kafka-4.1.2" && chmod a+rw /opt/kafka-4.1.2 && curl -s "$KAFKA_MIRROR/kafka_2.13-4.1.2.tgz" | tar xz --strip-components=1 -C "/opt/kafka-4.1.2"
-RUN mkdir -p "/opt/kafka-4.2.0" && chmod a+rw /opt/kafka-4.2.0 && curl -s "$KAFKA_MIRROR/kafka_2.13-4.2.0.tgz" | tar xz --strip-components=1 -C "/opt/kafka-4.2.0"
+RUN mkdir -p "/opt/kafka-4.2.1" && chmod a+rw /opt/kafka-4.2.1 && curl -s "$KAFKA_MIRROR/kafka_2.13-4.2.1.tgz" | tar xz --strip-components=1 -C "/opt/kafka-4.2.1"
+RUN mkdir -p "/opt/kafka-4.3.1" && chmod a+rw /opt/kafka-4.3.1 && curl -s "$KAFKA_MIRROR/kafka_2.13-4.3.1.tgz" | tar xz --strip-components=1 -C "/opt/kafka-4.3.1"
 
 
 # Streams test dependencies
@@ -122,7 +123,8 @@ RUN curl -s "$KAFKA_MIRROR/kafka-streams-3.8.1-test.jar" -o /opt/kafka-3.8.1/lib
 RUN curl -s "$KAFKA_MIRROR/kafka-streams-3.9.2-test.jar" -o /opt/kafka-3.9.2/libs/kafka-streams-3.9.2-test.jar
 RUN curl -s "$KAFKA_MIRROR/kafka-streams-4.0.1-test.jar" -o /opt/kafka-4.0.1/libs/kafka-streams-4.0.1-test.jar
 RUN curl -s "$KAFKA_MIRROR/kafka-streams-4.1.2-test.jar" -o /opt/kafka-4.1.2/libs/kafka-streams-4.1.2-test.jar
-RUN curl -s "$KAFKA_MIRROR/kafka-streams-4.2.0-test.jar" -o /opt/kafka-4.2.0/libs/kafka-streams-4.2.0-test.jar
+RUN curl -s "$KAFKA_MIRROR/kafka-streams-4.2.1-test.jar" -o /opt/kafka-4.2.1/libs/kafka-streams-4.2.1-test.jar
+RUN curl -s "$KAFKA_MIRROR/kafka-streams-4.3.1-test.jar" -o /opt/kafka-4.3.1/libs/kafka-streams-4.3.1-test.jar
 
 # Aiven Tiered Storage plugin (for consolidation/remote storage in system tests).
 # Download explicitly with curl (-f fails on HTTP errors, -L follows the GitHub

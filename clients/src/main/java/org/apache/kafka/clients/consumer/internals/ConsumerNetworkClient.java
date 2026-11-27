@@ -29,9 +29,9 @@ import org.apache.kafka.common.errors.InterruptException;
 import org.apache.kafka.common.errors.TimeoutException;
 import org.apache.kafka.common.errors.WakeupException;
 import org.apache.kafka.common.requests.AbstractRequest;
-import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.common.utils.Timer;
+import org.apache.kafka.common.utils.internals.LogContext;
 
 import org.slf4j.Logger;
 
@@ -161,9 +161,20 @@ public class ConsumerNetworkClient implements Closeable {
      * @return true if update succeeded, false otherwise.
      */
     public boolean awaitMetadataUpdate(Timer timer) {
+        return awaitMetadataUpdate(timer, false);
+    }
+
+    /**
+     * Block waiting on the metadata refresh with a timeout.
+     *
+     * @param timer Timer bounding how long this method can block
+     * @param disableWakeup true if we should not check for wakeups, false otherwise
+     * @return true if update succeeded, false otherwise.
+     */
+    public boolean awaitMetadataUpdate(Timer timer, boolean disableWakeup) {
         int version = this.metadata.requestUpdate(false);
         do {
-            poll(timer);
+            poll(timer, null, disableWakeup);
         } while (this.metadata.updateVersion() == version && timer.notExpired());
         return this.metadata.updateVersion() > version;
     }

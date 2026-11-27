@@ -16,6 +16,8 @@
  */
 package org.apache.kafka.common.utils;
 
+import org.apache.kafka.common.utils.internals.AbstractIterator;
+
 import java.util.Iterator;
 import java.util.function.Function;
 

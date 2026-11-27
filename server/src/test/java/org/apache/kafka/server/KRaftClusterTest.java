@@ -34,18 +34,20 @@ import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.admin.QuorumInfo;
 import org.apache.kafka.clients.admin.SupportedVersionRange;
 import org.apache.kafka.clients.admin.TopicDescription;
-import org.apache.kafka.common.Cluster;
 import org.apache.kafka.common.Endpoint;
 import org.apache.kafka.common.KafkaFuture;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.Reconfigurable;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.TopicPartitionInfo;
+import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.acl.AclBinding;
 import org.apache.kafka.common.acl.AclBindingFilter;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.config.ConfigResource.Type;
+import org.apache.kafka.common.errors.ControllerIdNotRegisteredException;
 import org.apache.kafka.common.errors.InvalidPartitionsException;
+import org.apache.kafka.common.errors.InvalidRequestException;
 import org.apache.kafka.common.errors.PolicyViolationException;
 import org.apache.kafka.common.errors.UnsupportedVersionException;
 import org.apache.kafka.common.message.DescribeClusterRequestData;
@@ -128,6 +130,7 @@ import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
 import static org.apache.kafka.server.IntegrationTestUtils.connectAndReceive;
+import static org.apache.kafka.test.TestUtils.assertFutureThrows;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -673,6 +676,73 @@ public class KRaftClusterTest {
 
             TestUtils.waitForCondition(() -> brokerIsAbsent(clusterImage(cluster, 1), 0),
                 "Timed out waiting for broker 0 to be fenced.");
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testUnregisterController(boolean usingBootstrapControllers) throws Exception {
+        final var nodes = new TestKitNodes.Builder().
+            setNumBrokerNodes(3).
+            setNumControllerNodes(3).
+            build();
+        final Map<Integer, Uuid> initialVoters = new HashMap<>();
+        for (final var controllerNode : nodes.controllerNodes().values()) {
+            initialVoters.put(
+                controllerNode.id(),
+                controllerNode.metadataDirectoryId()
+            );
+        }
+
+        try (KafkaClusterTestKit cluster = new KafkaClusterTestKit.Builder(nodes).
+            setInitialVoterSet(initialVoters).
+            build()
+        ) {
+            cluster.format();
+            cluster.startup();
+            int controllerIdToUnregister = cluster.controllers().keySet().iterator().next();
+            cluster.controllers().get(controllerIdToUnregister).shutdown();
+            cluster.waitForActiveController();
+
+            try (Admin admin = createAdminClient(cluster, usingBootstrapControllers)) {
+                assertDoesNotThrow(() -> admin.unregisterController(controllerIdToUnregister).all().get());
+            }
+
+            TestUtils.waitForCondition(() -> !clusterImage(cluster, 1).controllers().containsKey(controllerIdToUnregister),
+                    "Timed out waiting for controller to be unregistered.");
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    public void testUnregisterControllerError(boolean usingBootstrapControllers) throws Exception {
+        try (KafkaClusterTestKit cluster = new KafkaClusterTestKit.Builder(
+            new TestKitNodes.Builder()
+                .setNumBrokerNodes(3)
+                .setNumControllerNodes(3)
+                .build()).build()) {
+            cluster.format();
+            cluster.startup();
+            int unknownId = 9999;
+            cluster.waitForActiveController();
+            int activeId = cluster.controllers().entrySet().stream()
+                    .filter(e -> e.getValue().controller().isActive())
+                    .map(Map.Entry::getKey)
+                    .findFirst()
+                    .orElseThrow();
+
+            try (Admin admin = createAdminClient(cluster, usingBootstrapControllers)) {
+                assertFutureThrows(
+                    ControllerIdNotRegisteredException.class,
+                    admin.unregisterController(unknownId).all(),
+                    String.format("Controller ID %s is not currently registered.", unknownId)
+                );
+                assertFutureThrows(
+                    InvalidRequestException.class,
+                    admin.unregisterController(activeId).all(),
+                    "Controller cannot unregister itself while it is active."
+                );
+            }
         }
     }
 
@@ -1454,7 +1524,7 @@ public class KRaftClusterTest {
 
                 // Wait until foo-0 is created on broker0.
                 TestUtils.retryOnExceptionWithTimeout(60000, () -> {
-                    assertTrue(broker0.logManager().getLog(foo0, false).isDefined());
+                    assertTrue(broker0.logManager().getLog(foo0, false).isPresent());
                 });
 
                 // Shut down broker0 and wait until the ISR of foo-0 is set to [1, 2]
@@ -1504,7 +1574,7 @@ public class KRaftClusterTest {
 
                 // Wait until foo-0 is created on broker0.
                 TestUtils.retryOnExceptionWithTimeout(60000, () -> 
-                    assertTrue(broker0.logManager().getLog(foo0, false).isDefined()));
+                    assertTrue(broker0.logManager().getLog(foo0, false).isPresent()));
 
                 // Shut down broker0 and wait until the ISR of foo-0 is set to [1, 2]
                 broker0.shutdown();
@@ -1554,7 +1624,7 @@ public class KRaftClusterTest {
 
                 // Wait until foo-0 is created on broker0.
                 TestUtils.retryOnExceptionWithTimeout(60000, () ->
-                    assertTrue(broker0.logManager().getLog(foo0, false).isDefined()));
+                    assertTrue(broker0.logManager().getLog(foo0, false).isPresent()));
 
                 // Shut down broker0 and wait until the ISR of foo-0 is set to [1, 2]
                 broker0.shutdown();
@@ -1777,11 +1847,6 @@ public class KRaftClusterTest {
         @Override
         public boolean quotaResetRequired(ClientQuotaType quotaType) {
             return true;
-        }
-
-        @Override
-        public boolean updateClusterMetadata(Cluster cluster) {
-            return false;
         }
 
         @Override
