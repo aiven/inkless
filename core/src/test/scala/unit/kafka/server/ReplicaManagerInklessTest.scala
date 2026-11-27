@@ -3516,8 +3516,8 @@ class ReplicaManagerInklessTest {
   }
 
   // An empty local read with no error (for example when an earlier partition used up the request
-  // byte budget) hasn't reached the log end offset. A supplement anchored at the log end offset
-  // would make the consumer skip [fetchOffset, logEndOffset).
+  // byte budget) gives the supplement nothing to continue. A supplement at the log end offset would
+  // make the consumer skip [fetchOffset, logEndOffset).
   @Test
   def testBuildConsolidationSupplementFetchInfosSkipsEmptyLocalReadBelowLogEndOffset(): Unit = {
     val tp = disklessTopicPartition
@@ -3550,10 +3550,10 @@ class ReplicaManagerInklessTest {
     }
   }
 
-  // The local log can hold nothing at fetchOffset only when fetchOffset is the log end offset. The
-  // supplement then starts at fetchOffset, so the response stays contiguous.
+  // Routing admits only fetches below the log end offset, but the builder doesn't rely on that: an
+  // empty read gets no supplement even when it starts at the log end offset.
   @Test
-  def testBuildConsolidationSupplementFetchInfosStartsAtFetchOffsetForEmptyLocalReadAtLogEndOffset(): Unit = {
+  def testBuildConsolidationSupplementFetchInfosSkipsEmptyLocalReadAtLogEndOffset(): Unit = {
     val tp = disklessTopicPartition
     val logEndOffset = 100L
     val supplements = mutable.HashMap(tp -> logEndOffset)
@@ -3564,11 +3564,7 @@ class ReplicaManagerInklessTest {
     val replicaManager = createReplicaManager(List(tp.topic()))
     try {
       val result = replicaManager.buildConsolidationSupplementFetchInfos(supplements, fetchInfos, logReadResultMap)
-      assertEquals(1, result.size)
-      val (resultTp, partitionData) = result.head
-      assertEquals(tp, resultTp)
-      assertEquals(logEndOffset, partitionData.fetchOffset)
-      assertEquals(1024, partitionData.maxBytes) // no local bytes read, so full budget remains
+      assertTrue(result.isEmpty, s"Expected no supplement for an empty local read at the log end offset, got $result")
     } finally {
       replicaManager.shutdown(checkpointHW = false)
     }

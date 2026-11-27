@@ -101,7 +101,7 @@ consumer fetch (offset O, minBytes M)
          +-- return local result
 ```
 
-The supplement starts where the local read stops, not at a fixed boundary, and the broker issues it only after the local read reaches `localLEO`. Supplementing from below the seal would stitch the local prefix directly onto the diskless range and silently drop the committed range `[supplementStart, seal)`. The broker suppresses the supplement there. An empty local read that starts below `localLEO` takes no supplement. A local read that returns a preferred read replica or a remote storage redirect also takes no supplement. In those cases, the consumer fetches again from its own offset. In `DelayedFetch.onComplete`, the broker doesn't check `M` again before it issues the supplement.
+The supplement starts where the local read stops, not at a fixed boundary, and the broker issues it only after the local read reaches `localLEO`. Supplementing from below the seal would stitch the local prefix directly onto the diskless range and silently drop the committed range `[supplementStart, seal)`. The broker suppresses the supplement there. An empty local read never takes a supplement, because there's nothing for the supplement to continue. A local read that returns a preferred read replica or a remote storage redirect also takes no supplement. In those cases, the consumer fetches again from its own offset. In `DelayedFetch.onComplete`, the broker doesn't check `M` again before it issues the supplement.
 
 #### Remote reads after WAL prune
 

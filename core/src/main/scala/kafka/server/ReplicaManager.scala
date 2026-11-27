@@ -2688,10 +2688,11 @@ class ReplicaManager(val config: KafkaConfig,
    * Builds the diskless supplement fetch requests for consolidating partitions. For each tracked
    * partition, computes the remaining byte budget (original maxBytes minus what the local read
    * already returned) and emits a PartitionData starting where the local read stops. Partitions
-   * whose remaining budget is zero, whose local read hasn't reached the local log end offset (the
-   * classic->diskless seal), or whose local read was redirected elsewhere are dropped. The inline
-   * fetch path calls it only when the local reads fall short of minBytes. DelayedFetch.onComplete
-   * calls it on every completion without checking minBytes again.
+   * whose local read returned no complete batch, whose remaining budget is zero, whose local read
+   * hasn't reached the local log end offset (the classic->diskless seal), or whose local read was
+   * redirected elsewhere are dropped. The inline fetch path calls it only when the local reads
+   * fall short of minBytes. DelayedFetch.onComplete calls it on every completion without checking
+   * minBytes again.
    */
   private[server] def buildConsolidationSupplementFetchInfos(
       supplements: Map[TopicIdPartition, Long],
@@ -2711,16 +2712,12 @@ class ReplicaManager(val config: KafkaConfig,
           r.preferredReadReplica.isPresent || r.info.delayedRemoteStorageFetch.isPresent)
         val alreadyRead = readResult.map(_.info.records.sizeInBytes).getOrElse(0)
         val remainingBytes = Math.max(pd.maxBytes - alreadyRead, 0)
-        // Start the supplement where the local read left off, not at logEndOffset.
-        // Diskless has the full range so it can serve from any offset. This avoids a gap
-        // when the local read stopped at a segment boundary before reaching logEndOffset.
-        // An empty read, for example when an earlier partition used up the request byte budget,
-        // stops at the fetch offset. Anchoring it at logEndOffset would skip [fetchOffset, logEndOffset).
-        val supplementStartOffset = readResult
-          .map(_.info.records.lastBatch())
-          .filter(_.isPresent)
-          .map(_.get().nextOffset())
-          .getOrElse(pd.fetchOffset)
+        // The supplement continues the local read, so a read without a complete batch gets none. An
+        // empty read can come from an earlier partition using up the request byte budget, while the
+        // log still holds data at the fetch offset. Supplementing it would skip [fetchOffset, logEndOffset).
+        // Otherwise start where the local read stops. Diskless has the full range so it can serve from
+        // any offset. This avoids a gap when the local read stopped at a segment boundary.
+        val lastLocalBatch = readResult.map(_.info.records.lastBatch()).filter(_.isPresent).map(_.get())
         // Only supplement once the local log is exhausted: the local read must have reached the
         // local log end offset, which for a frozen consolidating log equals the classic->diskless
         // seal. If it stopped at an earlier segment boundary (supplementStartOffset < logEndOffset),
@@ -2728,10 +2725,11 @@ class ReplicaManager(val config: KafkaConfig,
         // it would for any classic multi-segment lag. Supplementing from below the seal would stitch
         // the local prefix directly onto the diskless range (which starts at the seal) and silently
         // drop the committed range [supplementStartOffset, seal).
-        if (!localReadUnusable && remainingBytes > 0 && supplementStartOffset >= logEndOffset)
-          Some(tp -> new PartitionData(tp.topicId(), supplementStartOffset, pd.logStartOffset, remainingBytes, pd.currentLeaderEpoch, pd.lastFetchedEpoch))
-        else
-          None
+        lastLocalBatch.map(_.nextOffset()) match {
+          case Some(supplementStartOffset) if !localReadUnusable && remainingBytes > 0 && supplementStartOffset >= logEndOffset =>
+            Some(tp -> new PartitionData(tp.topicId(), supplementStartOffset, pd.logStartOffset, remainingBytes, pd.currentLeaderEpoch, pd.lastFetchedEpoch))
+          case _ => None
+        }
       }
     }
   }
