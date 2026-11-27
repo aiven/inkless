@@ -2735,6 +2735,21 @@ class ReplicaManager(val config: KafkaConfig,
     data.values.filter(_.error == Errors.NONE).map(_.records.sizeInBytes.toLong).sum
 
   /**
+   * Walks `records` once and returns the last complete batch, plus whether the complete batches
+   * account for all of its bytes. The batch iterator drops a partial tail, so a mismatch means the
+   * read ended inside a batch.
+   */
+  private def scanLocalRead(records: Records): (Option[RecordBatch], Boolean) = {
+    var last: RecordBatch = null
+    var completeBytes = 0L
+    records.batches().forEach { b =>
+      last = b
+      completeBytes += b.sizeInBytes()
+    }
+    (Option(last), completeBytes == records.sizeInBytes)
+  }
+
+  /**
    * Builds the diskless supplement fetch requests for consolidating partitions. For each tracked
    * partition, computes the remaining byte budget (original maxBytes minus what the local read
    * already returned) and emits a PartitionData starting where the local read stops. Partitions
@@ -2767,7 +2782,14 @@ class ReplicaManager(val config: KafkaConfig,
         // log still holds data at the fetch offset. Supplementing it would skip [fetchOffset, logEndOffset).
         // Otherwise start where the local read stops. Diskless has the full range so it can serve from
         // any offset. This avoids a gap when the local read stopped at a segment boundary.
-        val lastLocalBatch = readResult.map(_.info.records.lastBatch()).filter(_.isPresent).map(_.get())
+        // Scan the local read only when the cheap checks leave a supplement possible: for a file-backed
+        // read, each scan costs a channel read per batch.
+        val scan =
+          if (!localReadUnusable && remainingBytes > 0) readResult.map(r => scanLocalRead(r.info.records))
+          else None
+        // A byte-limited local read can end inside a batch. The batch iterator drops that tail, so the
+        // start offset points at the partial batch's base offset while the merge still keeps its bytes.
+        // A partial batch is only safe as the last bytes of a response, so skip the supplement.
         // Only supplement once the local log is exhausted: the local read must have reached the
         // local log end offset, which for a frozen consolidating log equals the classic->diskless
         // seal. If it stopped at an earlier segment boundary (supplementStartOffset < logEndOffset),
@@ -2775,9 +2797,9 @@ class ReplicaManager(val config: KafkaConfig,
         // it would for any classic multi-segment lag. Supplementing from below the seal would stitch
         // the local prefix directly onto the diskless range (which starts at the seal) and silently
         // drop the committed range [supplementStartOffset, seal).
-        lastLocalBatch.map(_.nextOffset()) match {
-          case Some(supplementStartOffset) if !localReadUnusable && remainingBytes > 0 && supplementStartOffset >= logEndOffset =>
-            Some(tp -> new PartitionData(tp.topicId(), supplementStartOffset, pd.logStartOffset, remainingBytes, pd.currentLeaderEpoch, pd.lastFetchedEpoch))
+        scan match {
+          case Some((Some(lastBatch), true)) if lastBatch.nextOffset() >= logEndOffset =>
+            Some(tp -> new PartitionData(tp.topicId(), lastBatch.nextOffset(), pd.logStartOffset, remainingBytes, pd.currentLeaderEpoch, pd.lastFetchedEpoch))
           case _ => None
         }
       }
