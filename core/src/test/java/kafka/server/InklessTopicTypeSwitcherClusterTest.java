@@ -28,6 +28,7 @@ import org.apache.kafka.clients.admin.CreateTopicsResult;
 import org.apache.kafka.clients.admin.ListOffsetsResult;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.admin.OffsetSpec;
+import org.apache.kafka.clients.admin.RecordsToDelete;
 import org.apache.kafka.clients.admin.TransactionDescription;
 import org.apache.kafka.clients.admin.TransactionState;
 import org.apache.kafka.clients.consumer.Consumer;
@@ -864,6 +865,81 @@ public class InklessTopicTypeSwitcherClusterTest {
             assertFalse(records.isEmpty(), "The consumer read no records");
             assertEquals(latest.offset(), records.iterator().next().offset(),
                 "The consumer didn't start at the offset and leader epoch from ListOffsets");
+        }
+    }
+
+    // DeleteRecords moves the log start of the leader only. In phase 1 the followers don't fetch, so they would keep
+    // serving the deleted records. The broker rejects the request until phase 2.
+    @Test
+    @Tag(BLOCKS_REMOTE_UPLOADS)
+    public void testDeleteRecordsIsRejectedUntilPhaseTwo() throws Exception {
+        final String topic = "switch-delete-records-" + UUID.randomUUID().toString().substring(0, 8);
+        final TopicPartition tp = new TopicPartition(topic, 0);
+        final int classicRecords = 20;
+        final long deleteBefore = 10;
+
+        try (Admin admin = AdminClient.create(baseClientConfigs())) {
+            admin.createTopics(List.of(new NewTopic(topic, 1, (short) 3)
+                .configs(Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "false")))).all().get(30, TimeUnit.SECONDS);
+            TopicMetadataProbe.awaitVisible(admin, topic);
+            produceRecords(topic, classicRecords);
+            alterTopicConfigWithIncrementalAlterConfigs(admin, topic, Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true"));
+            assertEquals(classicRecords, waitForSealOffset(admin, topic, 0, offset -> offset >= 0));
+            waitForIsrRecovery(admin, topic, 0, 3);
+            assertFalse(readClassicPrefixInRemoteStorage(admin, topic, 0));
+
+            final ExecutionException rejected = assertThrows(ExecutionException.class, () ->
+                admin.deleteRecords(Map.of(tp, RecordsToDelete.beforeOffset(deleteBefore)))
+                    .lowWatermarks().get(tp).get(30, TimeUnit.SECONDS));
+            assertInstanceOf(InvalidRequestException.class, rejected.getCause());
+            for (Map.Entry<Integer, BrokerServer> broker : cluster.brokers().entrySet()) {
+                assertEquals(0L, broker.getValue().replicaManager().getLog(tp).get().logStartOffset(),
+                    "Broker " + broker.getKey() + " moved its log start offset");
+            }
+            // Brokers 0, 1, and 2 are in az1, az2, and az3. Each consumer reads from the replica in its zone.
+            for (int zone = 1; zone <= 3; zone++) {
+                assertEquals(0L, firstOffsetReadFromTheStart(tp, "az" + zone), "The consumer in az" + zone);
+            }
+
+            // With the bucket in place, the leader uploads the classic prefix, and phase 2 starts.
+            try (var s3Client = s3Container.getS3Client()) {
+                s3Client.createBucket(request -> request.bucket(tieredStorageBucket));
+            }
+            // `Admin` reads the phase from one broker. The leader rejects the request until its own
+            // metadata shows phase 2, and the client doesn't retry `INVALID_REQUEST`.
+            waitForPhaseTwoOnEveryBroker(tp);
+            assertEquals(deleteBefore, admin.deleteRecords(Map.of(tp, RecordsToDelete.beforeOffset(deleteBefore)))
+                .lowWatermarks().get(tp).get(30, TimeUnit.SECONDS).lowWatermark());
+        }
+    }
+
+    private void waitForPhaseTwoOnEveryBroker(final TopicPartition tp) throws Exception {
+        final long deadline = System.currentTimeMillis() + Duration.ofSeconds(90).toMillis();
+        while (System.currentTimeMillis() < deadline) {
+            if (cluster.brokers().values().stream().allMatch(broker ->
+                    broker.replicaManager().inklessMetadataView().isClassicPrefixInRemoteStorage(tp))) {
+                return;
+            }
+            Thread.sleep(100);
+        }
+        throw new AssertionError("Not every broker applied phase 2 of " + tp + " within timeout");
+    }
+
+    private long firstOffsetReadFromTheStart(final TopicPartition tp, final String zone) {
+        final Map<String, Object> configs = baseConsumerConfigs();
+        configs.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
+        configs.put(ConsumerConfig.CLIENT_ID_CONFIG, "delete-records,diskless_az=" + zone);
+        try (Consumer<byte[], byte[]> consumer = new KafkaConsumer<>(configs)) {
+            consumer.assign(List.of(tp));
+            consumer.seek(tp, 0L);
+            final long deadline = System.currentTimeMillis() + Duration.ofSeconds(30).toMillis();
+            while (System.currentTimeMillis() < deadline) {
+                final ConsumerRecords<byte[], byte[]> records = consumer.poll(Duration.ofMillis(500));
+                if (!records.isEmpty()) {
+                    return records.iterator().next().offset();
+                }
+            }
+            throw new AssertionError("The consumer in " + zone + " read no record from " + tp);
         }
     }
 
