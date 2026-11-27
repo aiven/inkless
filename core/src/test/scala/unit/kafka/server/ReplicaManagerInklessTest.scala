@@ -45,7 +45,7 @@ import org.apache.kafka.common.message.OffsetForLeaderEpochRequestData.{OffsetFo
 import org.apache.kafka.common.message.OffsetForLeaderEpochResponseData.EpochEndOffset
 import org.apache.kafka.common.metadata.{PartitionChangeRecord, PartitionRecord, RemoveTopicRecord, TopicRecord}
 import org.apache.kafka.common.metrics.Metrics
-import org.apache.kafka.common.protocol.Errors
+import org.apache.kafka.common.protocol.{ApiKeys, Errors}
 import org.apache.kafka.common.record.TimestampType
 import org.apache.kafka.common.record.internal._
 import org.apache.kafka.common.replica.ClientMetadata.DefaultClientMetadata
@@ -6117,6 +6117,73 @@ class ReplicaManagerInklessTest {
 
     verify(jobMock).add(ArgumentMatchers.eq(disklessTopicPartition.topicPartition()), any())
     verify(replicaManager, never()).fetchOffsetForTimestamp(any(), anyLong(), any(), any(), anyBoolean())
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  // A consumer that takes its position and epoch from ListOffsets validates them with OffsetsForLeaderEpoch at the
+  // next leader epoch change. The control plane answers with the placeholder epoch 0, a classic epoch.
+  @Test
+  def testFetchOffsetLatestOnSwitchedPartitionReturnsAnEpochThatKeepsThePosition(): Unit = {
+    val disklessResult = new OffsetResultHolder.FileRecordsOrError(
+      Optional.empty(),
+      Optional.of(new FileRecords.TimestampAndOffset(RecordBatch.NO_TIMESTAMP, 150L, Optional.of[Integer](0))))
+    val jobMock = Mockito.mock(classOf[FetchOffsetHandler.Job])
+    when(jobMock.mustHandle(any())).thenReturn(true)
+    when(jobMock.add(any(), any())).thenReturn(CompletableFuture.completedFuture(disklessResult))
+    when(jobMock.cancelHandler()).thenReturn(new CompletableFuture[Void]())
+    doNothing().when(jobMock).start()
+
+    val fetchOffsetHandlerCtorInit: MockedConstruction.MockInitializer[FetchOffsetHandler] = {
+      case (handlerMock, _) =>
+        when(handlerMock.createJob()).thenReturn(jobMock)
+    }
+    val fetchOffsetHandlerCtor = mockConstruction(classOf[FetchOffsetHandler], fetchOffsetHandlerCtorInit)
+
+    val replicaManager = try {
+      createReplicaManager(List(disklessTopicPartition.topic()), disklessManagedReplicasEnabled = true)
+    } finally {
+      fetchOffsetHandlerCtor.close()
+    }
+    try {
+      val tp = disklessTopicPartition.topicPartition()
+      // The classic prefix [0, 101) is in leader epoch 0. Phase 2 moved the diskless leader epoch from 1 to 2.
+      setupHybridLeaderPartition(replicaManager, disklessTopicPartition, localEndOffset = 101L)
+      when(replicaManager.inklessMetadataView().getClassicToDisklessStartOffset(tp)).thenReturn(101L)
+      when(replicaManager.inklessMetadataView().getInitialDisklessLeaderEpoch(tp)).thenReturn(1)
+      when(replicaManager.inklessMetadataView().getDisklessLeaderEpoch(tp)).thenReturn(2)
+
+      @volatile var responseTopics: util.Collection[ListOffsetsTopicResponse] = null
+      replicaManager.fetchOffset(
+        Seq(new ListOffsetsTopic()
+          .setName(tp.topic)
+          .setPartitions(util.List.of(new ListOffsetsPartition()
+            .setPartitionIndex(tp.partition)
+            .setTimestamp(ListOffsetsRequest.LATEST_TIMESTAMP)
+            .setCurrentLeaderEpoch(ListOffsetsResponse.UNKNOWN_EPOCH)))),
+        Set.empty, IsolationLevel.READ_UNCOMMITTED, ListOffsetsRequest.CONSUMER_REPLICA_ID, "client", 0,
+        ApiKeys.LIST_OFFSETS.latestVersion,
+        (e, p) => new ListOffsetsPartitionResponse().setPartitionIndex(p.partitionIndex).setErrorCode(e.code),
+        (r: util.Collection[ListOffsetsTopicResponse]) => responseTopics = r)
+
+      assertNotNull(responseTopics)
+      val listOffsets = responseTopics.asScala.head.partitions().get(0)
+      assertEquals(Errors.NONE.code, listOffsets.errorCode())
+      assertEquals(150L, listOffsets.offset())
+      assertEquals(2, listOffsets.leaderEpoch())
+
+      val epochEndOffset = replicaManager.lastOffsetForLeaderEpoch(Seq(
+        new OffsetForLeaderTopic()
+          .setTopic(tp.topic)
+          .setPartitions(util.List.of(
+            new OffsetForLeaderPartition()
+              .setPartition(tp.partition)
+              .setLeaderEpoch(listOffsets.leaderEpoch())))
+      )).head.partitions().get(0)
+      assertEquals(Errors.NONE.code, epochEndOffset.errorCode())
+      assertTrue(epochEndOffset.endOffset() >= listOffsets.offset(),
+        s"end offset ${epochEndOffset.endOffset()} below the position ${listOffsets.offset()} truncates the consumer")
     } finally {
       replicaManager.shutdown(checkpointHW = false)
     }

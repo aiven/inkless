@@ -25,7 +25,9 @@ import org.apache.kafka.clients.admin.AlterConfigOp;
 import org.apache.kafka.clients.admin.AlterDisklessSwitchOptions;
 import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.clients.admin.CreateTopicsResult;
+import org.apache.kafka.clients.admin.ListOffsetsResult;
 import org.apache.kafka.clients.admin.NewTopic;
+import org.apache.kafka.clients.admin.OffsetSpec;
 import org.apache.kafka.clients.admin.TransactionDescription;
 import org.apache.kafka.clients.admin.TransactionState;
 import org.apache.kafka.clients.consumer.Consumer;
@@ -807,6 +809,61 @@ public class InklessTopicTypeSwitcherClusterTest {
                 s3Client.createBucket(request -> request.bucket(tieredStorageBucket));
             }
             waitForClassicPrefixInRemoteStorage(admin, topic);
+        }
+    }
+
+    // A consumer validates a position and its leader epoch with OffsetsForLeaderEpoch. For a classic epoch, the end
+    // offset in the response is at or below the seal, so ListOffsets must return a diskless epoch with a diskless offset.
+    @Test
+    @Tag(BLOCKS_REMOTE_UPLOADS)
+    public void testConsumerKeepsAPositionFromListOffsetsOnASwitchedPartition() throws Exception {
+        final String topic = "switch-list-offsets-epoch-" + UUID.randomUUID().toString().substring(0, 8);
+        final TopicPartition tp = new TopicPartition(topic, 0);
+        try (Admin admin = AdminClient.create(baseClientConfigs())) {
+            admin.createTopics(List.of(new NewTopic(topic, 1, (short) 3)
+                .configs(Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "false")))).all().get(30, TimeUnit.SECONDS);
+            TopicMetadataProbe.awaitVisible(admin, topic);
+            produceRecords(topic, 20);
+            alterTopicConfigWithIncrementalAlterConfigs(admin, topic, Map.of(TopicConfig.DISKLESS_ENABLE_CONFIG, "true"));
+            assertEquals(20L, waitForSealOffset(admin, topic, 0, offset -> offset >= 0));
+            produceRecords(topic, 30);
+
+            // Phase 1.
+            assertConsumerKeepsTheLatestPosition(admin, tp, 50L);
+
+            try (var s3Client = s3Container.getS3Client()) {
+                s3Client.createBucket(request -> request.bucket(tieredStorageBucket));
+            }
+            waitForClassicPrefixInRemoteStorage(admin, topic);
+
+            // Phase 2 set a new diskless leader epoch.
+            assertConsumerKeepsTheLatestPosition(admin, tp, 55L);
+        }
+    }
+
+    private void assertConsumerKeepsTheLatestPosition(final Admin admin,
+                                                      final TopicPartition tp,
+                                                      final long expectedLatest) throws Exception {
+        final ListOffsetsResult.ListOffsetsResultInfo latest = admin.listOffsets(Map.of(tp, OffsetSpec.latest()))
+            .partitionResult(tp).get(30, TimeUnit.SECONDS);
+        assertEquals(expectedLatest, latest.offset());
+        assertTrue(latest.leaderEpoch().isPresent(), "ListOffsets returned no leader epoch for a diskless offset");
+
+        final Map<String, Object> consumerConfigs = baseConsumerConfigs();
+        consumerConfigs.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
+        try (Consumer<byte[], byte[]> consumer = new KafkaConsumer<>(consumerConfigs)) {
+            consumer.assign(List.of(tp));
+            // librdkafka keeps the epoch of a ListOffsets reset. A Java client does the same with this seek.
+            consumer.seek(tp, new OffsetAndMetadata(latest.offset(), latest.leaderEpoch(), ""));
+            produceRecords(tp.topic(), 5);
+            final long deadline = System.currentTimeMillis() + Duration.ofSeconds(30).toMillis();
+            ConsumerRecords<byte[], byte[]> records = ConsumerRecords.empty();
+            while (records.isEmpty() && System.currentTimeMillis() < deadline) {
+                records = consumer.poll(Duration.ofMillis(500));
+            }
+            assertFalse(records.isEmpty(), "The consumer read no records");
+            assertEquals(latest.offset(), records.iterator().next().offset(),
+                "The consumer didn't start at the offset and leader epoch from ListOffsets");
         }
     }
 
