@@ -56,9 +56,17 @@ class ConsolidatedDisklessLogPruner(replicaManager: ReplicaManager,
     // Read the classic-to-diskless start offset once per partition and thread it through, so the
     // eligibility check and the per-partition prune decision always see the same value (no TOCTOU
     // between dropping SWITCH_PENDING and computing the safe prune offset).
+    // The pruner skips a partition in phase 1 of the switch too. Once the leader uploads the classic prefix,
+    // the prune at the seal makes the control plane store the remote log start, and remote retention waits
+    // for that value. If the controller commits phase 2 late, retention then moves the log start of the
+    // leader, while the followers stopped fetching at the seal and keep serving the prefix from their local
+    // logs.
     val eligiblePartitionsWithSeal = inklessMetadataView.getConsolidatingDisklessTopicPartitions.asScala
       .map(tip => (tip, inklessMetadataView.getClassicToDisklessStartOffset(tip.topicPartition)))
-      .filter { case (_, seal) => seal != PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING }
+      .filter { case (tip, seal) =>
+        seal != PartitionRegistration.CLASSIC_TO_DISKLESS_SWITCH_PENDING &&
+          !inklessMetadataView.isClassicPrefixOnlyOnLocalDisks(tip.topic, tip.partition)
+      }
       .map { case (tip, seal) => (replicaManager.getPartitionOrError(tip.topicPartition), seal) }
     eligiblePartitionsWithSeal
       .collect { case (Left(error), _) => error }

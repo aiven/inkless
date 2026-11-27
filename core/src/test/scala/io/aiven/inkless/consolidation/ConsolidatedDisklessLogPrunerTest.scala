@@ -322,6 +322,25 @@ class ConsolidatedDisklessLogPrunerTest {
     assertEquals(99L, captured.get(0).highestRemoteOffset())
   }
 
+  // The same state as the bootstrap, before the controller commits phase 2 of the switch.
+  @Test
+  def testRunOmitsSwitchedPartitionInPhaseOneWhenRemotePrefixEndsBeforeSeal(): Unit = {
+    val rm = mock(classOf[ReplicaManager])
+    val view = mock(classOf[InklessMetadataView])
+    val cp = mock(classOf[ControlPlane])
+
+    when(view.getConsolidatingDisklessTopicPartitions).thenReturn(util.Set.of(tip))
+    when(view.getClassicToDisklessStartOffset(topicPartition)).thenReturn(100L)
+    when(view.isClassicPrefixOnlyOnLocalDisks(topicPartition.topic, topicPartition.partition)).thenReturn(true)
+    val partition = readyPartition(99L)
+    when(rm.getPartitionOrError(topicPartition)).thenReturn(Right(partition))
+
+    newPruner(rm, view, cp).run()
+
+    verify(rm, never()).getPartitionOrError(topicPartition)
+    verify(cp, never()).pruneDisklessLogs(any(), anyInt())
+  }
+
   @Test
   def testRunOmitsPruneWhenHighestOffsetInRemoteStorageNegative(): Unit = {
     val rm = mock(classOf[ReplicaManager])
